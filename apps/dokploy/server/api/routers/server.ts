@@ -6,7 +6,9 @@ import {
 	findServersByUserId,
 	findUserById,
 	getAccessibleServerIds,
+	getAllContainerStats,
 	getDokployUrl,
+	getContainerProcesses,
 	getPublicIpWithFallback,
 	getWebServerSettings,
 	haveActiveServices,
@@ -736,5 +738,33 @@ export const serverRouter = createTRPCRouter({
 			} catch (error) {
 				throw error;
 			}
+		}),
+	getContainerResourceStats: withPermission("monitoring", "read").query(
+		async () => {
+			if (IS_CLOUD) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "Functionality not available in cloud version",
+				});
+			}
+
+			return await getAllContainerStats();
+		},
+	),
+	getContainerProcesses: withPermission("monitoring", "read")
+		.input(
+			z.object({
+				containerId: z.string().regex(/^[a-zA-Z0-9.\-_]+$/),
+			}),
+		)
+		.query(async ({ input }) => {
+			if (IS_CLOUD) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "Functionality not available in cloud version",
+				});
+			}
+
+			return await getContainerProcesses(input.containerId);
 		}),
 });
