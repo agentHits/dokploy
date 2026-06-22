@@ -1,9 +1,12 @@
 import {
+	assertGitProviderAccess,
 	createBitbucket,
 	findBitbucketById,
+	findBitbucketGitProviderId,
 	getAccessibleGitProviderIds,
 	getBitbucketBranches,
 	getBitbucketRepositories,
+	redactBitbucketProvider,
 	testBitbucketConnection,
 	updateBitbucket,
 } from "@dokploy/server";
@@ -51,8 +54,13 @@ export const bitbucketRouter = createTRPCRouter({
 		}),
 	one: protectedProcedure
 		.input(apiFindOneBitbucket)
-		.query(async ({ input }) => {
-			return await findBitbucketById(input.bitbucketId);
+		.query(async ({ input, ctx }) => {
+			const gitProviderId = await findBitbucketGitProviderId(input.bitbucketId);
+			await assertGitProviderAccess(gitProviderId, ctx.session);
+
+			return redactBitbucketProvider(
+				await findBitbucketById(input.bitbucketId),
+			);
 		}),
 	bitbucketProviders: protectedProcedure.query(async ({ ctx }) => {
 		const accessibleIds = await getAccessibleGitProviderIds(ctx.session);
@@ -78,17 +86,30 @@ export const bitbucketRouter = createTRPCRouter({
 
 	getBitbucketRepositories: protectedProcedure
 		.input(apiFindOneBitbucket)
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
+			const gitProviderId = await findBitbucketGitProviderId(input.bitbucketId);
+			await assertGitProviderAccess(gitProviderId, ctx.session);
+
 			return await getBitbucketRepositories(input.bitbucketId);
 		}),
 	getBitbucketBranches: protectedProcedure
 		.input(apiFindBitbucketBranches)
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
+			if (input.bitbucketId) {
+				const gitProviderId = await findBitbucketGitProviderId(
+					input.bitbucketId,
+				);
+				await assertGitProviderAccess(gitProviderId, ctx.session);
+			}
+
 			return await getBitbucketBranches(input);
 		}),
 	testConnection: protectedProcedure
 		.input(apiBitbucketTestConnection)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ input, ctx }) => {
+			const gitProviderId = await findBitbucketGitProviderId(input.bitbucketId);
+			await assertGitProviderAccess(gitProviderId, ctx.session);
+
 			try {
 				const result = await testBitbucketConnection(input);
 
@@ -103,6 +124,9 @@ export const bitbucketRouter = createTRPCRouter({
 	update: withPermission("gitProviders", "create")
 		.input(apiUpdateBitbucket)
 		.mutation(async ({ input, ctx }) => {
+			const gitProviderId = await findBitbucketGitProviderId(input.bitbucketId);
+			await assertGitProviderAccess(gitProviderId, ctx.session);
+
 			const result = await updateBitbucket(input.bitbucketId, {
 				...input,
 				organizationId: ctx.session.activeOrganizationId,

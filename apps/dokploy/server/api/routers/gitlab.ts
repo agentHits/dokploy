@@ -1,10 +1,13 @@
 import {
+	assertGitProviderAccess,
 	createGitlab,
 	findGitlabById,
+	findGitlabGitProviderId,
 	getAccessibleGitProviderIds,
 	getGitlabBranches,
 	getGitlabRepositories,
 	haveGitlabRequirements,
+	redactGitlabProvider,
 	testGitlabConnection,
 	updateGitlab,
 	updateGitProvider,
@@ -51,9 +54,14 @@ export const gitlabRouter = createTRPCRouter({
 				});
 			}
 		}),
-	one: protectedProcedure.input(apiFindOneGitlab).query(async ({ input }) => {
-		return await findGitlabById(input.gitlabId);
-	}),
+	one: protectedProcedure
+		.input(apiFindOneGitlab)
+		.query(async ({ input, ctx }) => {
+			const gitProviderId = await findGitlabGitProviderId(input.gitlabId);
+			await assertGitProviderAccess(gitProviderId, ctx.session);
+
+			return redactGitlabProvider(await findGitlabById(input.gitlabId));
+		}),
 	gitlabProviders: protectedProcedure.query(async ({ ctx }) => {
 		const accessibleIds = await getAccessibleGitProviderIds(ctx.session);
 
@@ -86,18 +94,29 @@ export const gitlabRouter = createTRPCRouter({
 	}),
 	getGitlabRepositories: protectedProcedure
 		.input(apiFindOneGitlab)
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
+			const gitProviderId = await findGitlabGitProviderId(input.gitlabId);
+			await assertGitProviderAccess(gitProviderId, ctx.session);
+
 			return await getGitlabRepositories(input.gitlabId);
 		}),
 
 	getGitlabBranches: protectedProcedure
 		.input(apiFindGitlabBranches)
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
+			if (input.gitlabId) {
+				const gitProviderId = await findGitlabGitProviderId(input.gitlabId);
+				await assertGitProviderAccess(gitProviderId, ctx.session);
+			}
+
 			return await getGitlabBranches(input);
 		}),
 	testConnection: protectedProcedure
 		.input(apiGitlabTestConnection)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ input, ctx }) => {
+			const gitProviderId = await findGitlabGitProviderId(input.gitlabId);
+			await assertGitProviderAccess(gitProviderId, ctx.session);
+
 			try {
 				const result = await testGitlabConnection(input);
 
@@ -112,25 +131,36 @@ export const gitlabRouter = createTRPCRouter({
 	update: withPermission("gitProviders", "create")
 		.input(apiUpdateGitlab)
 		.mutation(async ({ input, ctx }) => {
+			const gitProviderId = await findGitlabGitProviderId(input.gitlabId);
+			if (gitProviderId !== input.gitProviderId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to update this Git provider",
+				});
+			}
+			await assertGitProviderAccess(gitProviderId, ctx.session);
+
 			if (input.name) {
-				await updateGitProvider(input.gitProviderId, {
+				await updateGitProvider(gitProviderId, {
 					name: input.name,
 					organizationId: ctx.session.activeOrganizationId,
 				});
 
 				await updateGitlab(input.gitlabId, {
 					...input,
+					gitProviderId,
 				});
 			} else {
 				await updateGitlab(input.gitlabId, {
 					...input,
+					gitProviderId,
 				});
 			}
 
 			await audit(ctx, {
 				action: "update",
 				resourceType: "gitProvider",
-				resourceId: input.gitProviderId,
+				resourceId: gitProviderId,
 				resourceName: input.name,
 			});
 		}),

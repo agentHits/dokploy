@@ -33,7 +33,10 @@ import {
 	updateDeploymentStatus,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
-import { canEditDeployGitSource } from "@dokploy/server/services/git-provider";
+import {
+	canEditDeployGitSource,
+	redactGitProviderSecrets,
+} from "@dokploy/server/services/git-provider";
 import {
 	addNewService,
 	checkServiceAccess,
@@ -182,7 +185,7 @@ export const composeRouter = createTRPCRouter({
 			}
 
 			return {
-				...compose,
+				...redactGitProviderSecrets(compose),
 				hasGitProviderAccess,
 				unauthorizedProvider,
 			};

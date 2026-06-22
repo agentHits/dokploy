@@ -64,6 +64,24 @@ export const findGithubById = async (githubId: string) => {
 	return githubProviderResult;
 };
 
+export const findGithubGitProviderId = async (githubId: string) => {
+	const githubProviderResult = await db.query.github.findFirst({
+		where: eq(github.githubId, githubId),
+		columns: {
+			gitProviderId: true,
+		},
+	});
+
+	if (!githubProviderResult) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: "Github Provider not found",
+		});
+	}
+
+	return githubProviderResult.gitProviderId;
+};
+
 export const updateGithub = async (
 	githubId: string,
 	input: Partial<Github>,

@@ -1,9 +1,12 @@
 import {
+	assertGitProviderAccess,
 	findGithubById,
+	findGithubGitProviderId,
 	getAccessibleGitProviderIds,
 	getGithubBranches,
 	getGithubRepositories,
 	haveGithubRequirements,
+	redactGithubProvider,
 	updateGithub,
 	updateGitProvider,
 } from "@dokploy/server";
@@ -22,17 +25,30 @@ import {
 } from "@/server/db/schema";
 
 export const githubRouter = createTRPCRouter({
-	one: protectedProcedure.input(apiFindOneGithub).query(async ({ input }) => {
-		return await findGithubById(input.githubId);
-	}),
+	one: protectedProcedure
+		.input(apiFindOneGithub)
+		.query(async ({ input, ctx }) => {
+			const gitProviderId = await findGithubGitProviderId(input.githubId);
+			await assertGitProviderAccess(gitProviderId, ctx.session);
+
+			return redactGithubProvider(await findGithubById(input.githubId));
+		}),
 	getGithubRepositories: protectedProcedure
 		.input(apiFindOneGithub)
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
+			const gitProviderId = await findGithubGitProviderId(input.githubId);
+			await assertGitProviderAccess(gitProviderId, ctx.session);
+
 			return await getGithubRepositories(input.githubId);
 		}),
 	getGithubBranches: protectedProcedure
 		.input(apiFindGithubBranches)
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
+			if (input.githubId) {
+				const gitProviderId = await findGithubGitProviderId(input.githubId);
+				await assertGitProviderAccess(gitProviderId, ctx.session);
+			}
+
 			return await getGithubBranches(input);
 		}),
 	githubProviders: protectedProcedure.query(async ({ ctx }) => {
@@ -67,7 +83,10 @@ export const githubRouter = createTRPCRouter({
 
 	testConnection: protectedProcedure
 		.input(apiFindOneGithub)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ input, ctx }) => {
+			const gitProviderId = await findGithubGitProviderId(input.githubId);
+			await assertGitProviderAccess(gitProviderId, ctx.session);
+
 			try {
 				const result = await getGithubRepositories(input.githubId);
 				return `Found ${result.length} repositories`;
@@ -81,19 +100,29 @@ export const githubRouter = createTRPCRouter({
 	update: withPermission("gitProviders", "create")
 		.input(apiUpdateGithub)
 		.mutation(async ({ input, ctx }) => {
-			await updateGitProvider(input.gitProviderId, {
+			const gitProviderId = await findGithubGitProviderId(input.githubId);
+			if (gitProviderId !== input.gitProviderId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to update this Git provider",
+				});
+			}
+			await assertGitProviderAccess(gitProviderId, ctx.session);
+
+			await updateGitProvider(gitProviderId, {
 				name: input.name,
 				organizationId: ctx.session.activeOrganizationId,
 			});
 
 			await updateGithub(input.githubId, {
 				...input,
+				gitProviderId,
 			});
 
 			await audit(ctx, {
 				action: "update",
 				resourceType: "gitProvider",
-				resourceId: input.gitProviderId,
+				resourceId: gitProviderId,
 				resourceName: input.name,
 			});
 		}),
