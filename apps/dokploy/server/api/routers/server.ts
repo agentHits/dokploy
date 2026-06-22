@@ -7,6 +7,7 @@ import {
 	findUserById,
 	getAccessibleServerIds,
 	getPublicIpWithFallback,
+	getWebServerSettings,
 	haveActiveServices,
 	IS_CLOUD,
 	removeDeploymentsByServerId,
@@ -48,6 +49,83 @@ import {
 } from "@/server/db/schema";
 import { assertBuildsConcurrencyAllowed } from "@/server/queues/concurrency";
 import { applyDockerCleanupSchedule } from "@/server/utils/docker-cleanup";
+
+const getMetricsTarget = async (
+	input: { serverId?: string },
+	ctx: { session: Parameters<typeof getAccessibleServerIds>[0] },
+) => {
+	if (input.serverId) {
+		const accessibleIds = await getAccessibleServerIds(ctx.session);
+		if (!accessibleIds.has(input.serverId)) {
+			throw new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You are not authorized to access this server",
+			});
+		}
+
+		const currentServer = await findServerById(input.serverId);
+		if (currentServer.organizationId !== ctx.session.activeOrganizationId) {
+			throw new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You are not authorized to access this server",
+			});
+		}
+
+		return {
+			host: currentServer.ipAddress,
+			port: currentServer.metricsConfig?.server?.port,
+			token: currentServer.metricsConfig?.server?.token,
+		};
+	}
+
+	const settings = await getWebServerSettings();
+	return {
+		host: settings?.serverIp,
+		port: settings?.metricsConfig?.server?.port,
+		token: settings?.metricsConfig?.server?.token,
+	};
+};
+
+const buildMetricsRequest = ({
+	host,
+	port,
+	token,
+	dataPoints,
+}: {
+	host?: string | null;
+	port?: number | string | null;
+	token?: string | null;
+	dataPoints: string;
+}) => {
+	const normalizedHost = host?.trim();
+	const normalizedToken = token?.trim();
+	const normalizedPort = Number(port);
+
+	if (
+		!normalizedHost ||
+		!Number.isInteger(normalizedPort) ||
+		normalizedPort <= 0 ||
+		normalizedPort > 65535 ||
+		!normalizedToken
+	) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Monitoring metrics target is not configured",
+		});
+	}
+
+	const urlHost =
+		normalizedHost.includes(":") && !normalizedHost.startsWith("[")
+			? `[${normalizedHost}]`
+			: normalizedHost;
+	const url = new URL(`http://${urlHost}:${normalizedPort}/metrics`);
+	url.searchParams.append("limit", dataPoints);
+
+	return {
+		url,
+		token: normalizedToken,
+	};
+};
 
 export const serverRouter = createTRPCRouter({
 	create: withPermission("server", "create")
@@ -517,19 +595,24 @@ export const serverRouter = createTRPCRouter({
 	}),
 	getServerMetrics: withPermission("monitoring", "read")
 		.input(
-			z.object({
-				url: z.string(),
-				token: z.string(),
-				dataPoints: z.string(),
-			}),
+			z
+				.object({
+					serverId: z.string().optional(),
+					dataPoints: z.string(),
+				})
+				.strict(),
 		)
-		.query(async ({ input }) => {
+		.query(async ({ ctx, input }) => {
+			const target = await getMetricsTarget(input, ctx);
+			const request = buildMetricsRequest({
+				...target,
+				dataPoints: input.dataPoints,
+			});
+
 			try {
-				const url = new URL(input.url);
-				url.searchParams.append("limit", input.dataPoints);
-				const response = await fetch(url.toString(), {
+				const response = await fetch(request.url.toString(), {
 					headers: {
-						Authorization: `Bearer ${input.token}`,
+						Authorization: `Bearer ${request.token}`,
 					},
 				});
 				if (!response.ok) {
