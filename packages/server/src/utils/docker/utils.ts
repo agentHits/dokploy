@@ -13,6 +13,10 @@ import type { MongoNested } from "../databases/mongo";
 import type { MysqlNested } from "../databases/mysql";
 import type { PostgresNested } from "../databases/postgres";
 import type { RedisNested } from "../databases/redis";
+import {
+	quoteShellArg,
+	resolveFilePathInsideDirectory,
+} from "../filesystem/safe-path";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
 import { spawnAsync } from "../process/spawnAsync";
 import { getRemoteDocker } from "../servers/remote-docker";
@@ -671,10 +675,12 @@ export const generateFileMounts = (
 	return mounts
 		.filter((mount) => mount.type === "file")
 		.map((mount) => {
-			const fileName = mount.filePath;
 			const absoluteBasePath = path.resolve(APPLICATIONS_PATH);
 			const directory = path.join(absoluteBasePath, appName, "files");
-			const sourcePath = path.join(directory, fileName || "");
+			const { fullPath: sourcePath } = resolveFilePathInsideDirectory(
+				directory,
+				mount.filePath || "",
+			);
 			return {
 				Type: "bind" as const,
 				Source: sourcePath,
@@ -689,8 +695,11 @@ export const createFile = async (
 	content: string,
 ) => {
 	try {
-		const fullPath = path.join(outputPath, filePath);
-		if (fullPath.endsWith(path.sep) || filePath.endsWith("/")) {
+		const { fullPath, isDirectory } = resolveFilePathInsideDirectory(
+			outputPath,
+			filePath,
+		);
+		if (isDirectory) {
 			fs.mkdirSync(fullPath, { recursive: true });
 			return;
 		}
@@ -710,16 +719,21 @@ export const getCreateFileCommand = (
 	filePath: string,
 	content: string,
 ) => {
-	const fullPath = path.join(outputPath, filePath);
-	if (fullPath.endsWith(path.sep) || filePath.endsWith("/")) {
-		return `mkdir -p ${fullPath};`;
+	const { fullPath, isDirectory } = resolveFilePathInsideDirectory(
+		outputPath,
+		filePath,
+	);
+	const quotedFullPath = quoteShellArg(fullPath);
+	if (isDirectory) {
+		return `mkdir -p ${quotedFullPath};`;
 	}
 
 	const directory = path.dirname(fullPath);
 	const encodedContent = encodeBase64(content);
+	const quotedDirectory = quoteShellArg(directory);
 	return `
-		mkdir -p ${directory};
-		echo "${encodedContent}" | base64 -d > "${fullPath}";
+		mkdir -p ${quotedDirectory};
+		echo "${encodedContent}" | base64 -d > ${quotedFullPath};
 	`;
 };
 

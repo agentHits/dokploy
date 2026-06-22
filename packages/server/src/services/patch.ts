@@ -2,6 +2,11 @@ import { join } from "node:path";
 import { paths } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
 import { type apiCreatePatch, patch } from "@dokploy/server/db/schema";
+import {
+	normalizeRelativeFilePath,
+	quoteShellArg,
+	resolveFilePathInsideDirectory,
+} from "@dokploy/server/utils/filesystem/safe-path";
 import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
 import type { z } from "zod";
@@ -10,6 +15,17 @@ import { findApplicationById } from "./application";
 import { findComposeById } from "./compose";
 
 export type Patch = typeof patch.$inferSelect;
+
+const normalizePatchFilePath = (filePath: string) => {
+	try {
+		return normalizeRelativeFilePath(filePath);
+	} catch {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Invalid patch file path",
+		});
+	}
+};
 
 export const createPatch = async (input: z.infer<typeof apiCreatePatch>) => {
 	if (!input.applicationId && !input.composeId) {
@@ -23,6 +39,7 @@ export const createPatch = async (input: z.infer<typeof apiCreatePatch>) => {
 		.insert(patch)
 		.values({
 			...input,
+			filePath: normalizePatchFilePath(input.filePath),
 			content: input.content,
 			enabled: true,
 		})
@@ -72,23 +89,30 @@ export const findPatchByFilePath = async (
 	id: string,
 	type: "application" | "compose",
 ) => {
+	const normalizedFilePath = normalizePatchFilePath(filePath);
 	return await db.query.patch.findFirst({
 		where: and(
-			eq(patch.filePath, filePath),
+			eq(patch.filePath, normalizedFilePath),
 			eq(type === "application" ? patch.applicationId : patch.composeId, id),
 		),
 	});
 };
 
 export const updatePatch = async (patchId: string, data: Partial<Patch>) => {
+	const normalizedData = {
+		...data,
+		...(data.filePath && {
+			filePath: normalizePatchFilePath(data.filePath),
+		}),
+	};
 	const result = await db
 		.update(patch)
 		.set({
-			...data,
-			...(data.content && {
-				content: data.content.endsWith("\n")
-					? data.content
-					: `${data.content}\n`,
+			...normalizedData,
+			...(normalizedData.content && {
+				content: normalizedData.content.endsWith("\n")
+					? normalizedData.content
+					: `${normalizedData.content}\n`,
 			}),
 			updatedAt: new Date().toISOString(),
 		})
@@ -112,14 +136,19 @@ export const markPatchForDeletion = async (
 	entityId: string,
 	entityType: "application" | "compose",
 ) => {
-	const existing = await findPatchByFilePath(filePath, entityId, entityType);
+	const normalizedFilePath = normalizePatchFilePath(filePath);
+	const existing = await findPatchByFilePath(
+		normalizedFilePath,
+		entityId,
+		entityType,
+	);
 
 	if (existing) {
 		return await updatePatch(existing.patchId, { type: "delete", content: "" });
 	}
 
 	return await createPatch({
-		filePath,
+		filePath: normalizedFilePath,
 		content: "",
 		type: "delete",
 		applicationId: entityType === "application" ? entityId : undefined,
@@ -156,15 +185,19 @@ export const generateApplyPatchesCommand = async ({
 	let command = `echo "Applying ${patches.length} patch(es)...";`;
 
 	for (const p of patches) {
-		const filePath = join(codePath, p.filePath);
+		const { fullPath: filePath } = resolveFilePathInsideDirectory(
+			codePath,
+			p.filePath,
+		);
+		const quotedFilePath = quoteShellArg(filePath);
 
 		if (p.type === "delete") {
 			command += `
-			rm -f "${filePath}";
+			rm -f -- ${quotedFilePath};
 			`;
 		} else {
 			command += `
-file="${filePath}"
+file=${quotedFilePath}
 dir="$(dirname "$file")"
 mkdir -p "$dir"
 echo "${encodeBase64(p.content)}" | base64 -d > "$file"

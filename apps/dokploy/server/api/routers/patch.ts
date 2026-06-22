@@ -8,6 +8,7 @@ import {
 	findPatchByFilePath,
 	findPatchById,
 	findPatchesByEntityId,
+	getPatchRepoPath,
 	markPatchForDeletion,
 	readPatchRepoDirectory,
 	readPatchRepoFile,
@@ -198,7 +199,11 @@ export const patchRouter = createTRPCRouter({
 				const compose = await findComposeById(input.id);
 				serverId = compose.serverId;
 			}
-			return await readPatchRepoDirectory(input.repoPath, serverId);
+			const repoPath = await getPatchRepoPath({
+				type: input.type,
+				id: input.id,
+			});
+			return await readPatchRepoDirectory(repoPath, serverId);
 		}),
 
 	readRepoFile: protectedProcedure

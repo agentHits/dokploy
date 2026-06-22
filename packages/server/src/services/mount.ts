@@ -1,3 +1,4 @@
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import { paths } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
@@ -8,49 +9,79 @@ import {
 } from "@dokploy/server/db/schema";
 import {
 	createFile,
-	encodeBase64,
 	getCreateFileCommand,
 } from "@dokploy/server/utils/docker/utils";
-import { removeFileOrDirectory } from "@dokploy/server/utils/filesystem/directory";
 import {
-	execAsync,
-	execAsyncRemote,
-} from "@dokploy/server/utils/process/execAsync";
+	normalizeRelativeFilePath,
+	quoteShellArg,
+	resolveFilePathInsideDirectory,
+} from "@dokploy/server/utils/filesystem/safe-path";
+import { execAsyncRemote } from "@dokploy/server/utils/process/execAsync";
 import { TRPCError } from "@trpc/server";
 import { eq, type SQL, sql } from "drizzle-orm";
 import type { z } from "zod";
 
 export type Mount = typeof mounts.$inferSelect;
 
+const normalizeMountFilePath = (filePath: string | null | undefined) => {
+	if (!filePath) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "File path is required",
+		});
+	}
+
+	try {
+		return normalizeRelativeFilePath(filePath);
+	} catch {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Invalid file path",
+		});
+	}
+};
+
+const normalizeMountInput = <T extends Partial<Mount>>(input: T) => {
+	if (input.type === "file" || input.filePath) {
+		return {
+			...input,
+			filePath: normalizeMountFilePath(input.filePath),
+		};
+	}
+
+	return input;
+};
+
 export const createMount = async (input: z.infer<typeof apiCreateMount>) => {
 	try {
-		const { serviceId, ...rest } = input;
+		const normalizedInput = normalizeMountInput(input);
+		const { serviceId, ...rest } = normalizedInput;
 		const value = await db
 			.insert(mounts)
 			.values({
 				...rest,
-				...(input.serviceType === "application" && {
+				...(normalizedInput.serviceType === "application" && {
 					applicationId: serviceId,
 				}),
-				...(input.serviceType === "compose" && {
+				...(normalizedInput.serviceType === "compose" && {
 					composeId: serviceId,
 				}),
-				...(input.serviceType === "libsql" && {
+				...(normalizedInput.serviceType === "libsql" && {
 					libsqlId: serviceId,
 				}),
-				...(input.serviceType === "mariadb" && {
+				...(normalizedInput.serviceType === "mariadb" && {
 					mariadbId: serviceId,
 				}),
-				...(input.serviceType === "mongo" && {
+				...(normalizedInput.serviceType === "mongo" && {
 					mongoId: serviceId,
 				}),
-				...(input.serviceType === "mysql" && {
+				...(normalizedInput.serviceType === "mysql" && {
 					mysqlId: serviceId,
 				}),
-				...(input.serviceType === "postgres" && {
+				...(normalizedInput.serviceType === "postgres" && {
 					postgresId: serviceId,
 				}),
-				...(input.serviceType === "redis" && {
+				...(normalizedInput.serviceType === "redis" && {
 					redisId: serviceId,
 				}),
 			})
@@ -227,11 +258,12 @@ export const updateMount = async (
 	mountId: string,
 	mountData: Partial<Mount>,
 ) => {
+	const normalizedMountData = normalizeMountInput(mountData);
 	const mount = await db.transaction(async (tx) => {
 		const mount = await tx
 			.update(mounts)
 			.set({
-				...mountData,
+				...normalizedMountData,
 			})
 			.where(eq(mounts.mountId, mountId))
 			.returning()
@@ -310,18 +342,20 @@ export const deleteMount = async (mountId: string) => {
 
 export const updateFileMount = async (mountId: string) => {
 	const mount = await findMountById(mountId);
-	if (!mount || !mount.filePath) return;
+	if (!mount.filePath) return;
 	const basePath = await getBaseFilesPath(mountId);
-	const fullPath = path.join(basePath, mount.filePath);
 
 	try {
 		const serverId = await getServerId(mount);
-		const encodedContent = encodeBase64(mount.content || "");
-		const command = `echo "${encodedContent}" | base64 -d > ${fullPath}`;
 		if (serverId) {
+			const command = getCreateFileCommand(
+				basePath,
+				mount.filePath,
+				mount.content || "",
+			);
 			await execAsyncRemote(serverId, command);
 		} else {
-			await execAsync(command);
+			await createFile(basePath, mount.filePath, mount.content || "");
 		}
 	} catch {
 		console.log("Error updating file mount");
@@ -333,14 +367,14 @@ export const deleteFileMount = async (mountId: string) => {
 	if (!mount.filePath) return;
 	const basePath = await getBaseFilesPath(mountId);
 
-	const fullPath = path.join(basePath, mount.filePath);
+	const { fullPath } = resolveFilePathInsideDirectory(basePath, mount.filePath);
 	try {
 		const serverId = await getServerId(mount);
 		if (serverId) {
-			const command = `rm -rf ${fullPath}`;
+			const command = `rm -rf -- ${quoteShellArg(fullPath)}`;
 			await execAsyncRemote(serverId, command);
 		} else {
-			await removeFileOrDirectory(fullPath);
+			await fs.rm(fullPath, { force: true, recursive: true });
 		}
 	} catch {}
 };
