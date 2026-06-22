@@ -26,6 +26,7 @@ import {
 	getProviderHeaders,
 	getProviderName,
 	type Model,
+	normalizeAIProviderApiUrl,
 	selectAIProvider,
 } from "@dokploy/server/utils/ai/select-ai-provider";
 import { TRPCError } from "@trpc/server";
@@ -39,29 +40,43 @@ import {
 } from "@/server/api/trpc";
 import { generatePassword } from "@/templates/utils";
 
+const appendAIProviderPath = (apiUrl: string, pathname: string) =>
+	`${apiUrl.replace(/\/+$/, "")}/${pathname.replace(/^\/+/, "")}`;
+
 export const aiRouter = createTRPCRouter({
 	one: adminProcedure
 		.input(z.object({ aiId: z.string() }))
-		.query(async ({ input }) => {
-			return await getAiSettingById(input.aiId);
+		.query(async ({ ctx, input }) => {
+			return await getAiSettingById(
+				input.aiId,
+				ctx.session.activeOrganizationId,
+			);
 		}),
 
-	getModels: protectedProcedure
+	getModels: adminProcedure
 		.input(z.object({ apiUrl: z.string().min(1), apiKey: z.string() }))
 		.query(async ({ input }) => {
 			try {
-				const providerName = getProviderName(input.apiUrl);
-				const headers = getProviderHeaders(input.apiUrl, input.apiKey);
+				const apiUrl = normalizeAIProviderApiUrl(input.apiUrl);
+				const providerName = getProviderName(apiUrl);
+				const headers = getProviderHeaders(apiUrl, input.apiKey);
 				let response = null;
 				switch (providerName) {
 					case "ollama":
-						response = await fetch(`${input.apiUrl}/api/tags`, { headers });
+						response = await fetch(appendAIProviderPath(apiUrl, "api/tags"), {
+							headers,
+							redirect: "error",
+						});
 						break;
 					case "gemini":
-						response = await fetch(
-							`${input.apiUrl}/models?key=${encodeURIComponent(input.apiKey)}`,
-							{ headers: {} },
-						);
+						{
+							const modelsUrl = new URL(appendAIProviderPath(apiUrl, "models"));
+							modelsUrl.searchParams.set("key", input.apiKey);
+							response = await fetch(modelsUrl, {
+								headers: {},
+								redirect: "error",
+							});
+						}
 						break;
 					case "perplexity":
 						// Perplexity doesn't have a /models endpoint, return hardcoded list
@@ -127,7 +142,10 @@ export const aiRouter = createTRPCRouter({
 								code: "BAD_REQUEST",
 								message: "API key must contain at least 1 character(s)",
 							});
-						response = await fetch(`${input.apiUrl}/models`, { headers });
+						response = await fetch(appendAIProviderPath(apiUrl, "models"), {
+							headers,
+							redirect: "error",
+						});
 				}
 
 				if (!response.ok) {
@@ -190,14 +208,20 @@ export const aiRouter = createTRPCRouter({
 
 	get: adminProcedure
 		.input(z.object({ aiId: z.string() }))
-		.query(async ({ input }) => {
-			return await getAiSettingById(input.aiId);
+		.query(async ({ ctx, input }) => {
+			return await getAiSettingById(
+				input.aiId,
+				ctx.session.activeOrganizationId,
+			);
 		}),
 
 	delete: adminProcedure
 		.input(z.object({ aiId: z.string() }))
-		.mutation(async ({ input }) => {
-			return await deleteAiSettings(input.aiId);
+		.mutation(async ({ ctx, input }) => {
+			return await deleteAiSettings(
+				input.aiId,
+				ctx.session.activeOrganizationId,
+			);
 		}),
 
 	getEnabledProviders: protectedProcedure.query(async ({ ctx }) => {
@@ -219,18 +243,14 @@ export const aiRouter = createTRPCRouter({
 		)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				const aiSettings = await getAiSettingById(input.aiId);
+				const aiSettings = await getAiSettingById(
+					input.aiId,
+					ctx.session.activeOrganizationId,
+				);
 				if (!aiSettings?.isEnabled) {
 					throw new TRPCError({
 						code: "BAD_REQUEST",
 						message: "AI provider is not enabled",
-					});
-				}
-
-				if (aiSettings.organizationId !== ctx.session.activeOrganizationId) {
-					throw new TRPCError({
-						code: "FORBIDDEN",
-						message: "Access denied",
 					});
 				}
 
@@ -267,7 +287,7 @@ ${input.logs}`,
 			}
 		}),
 
-	testConnection: protectedProcedure
+	testConnection: adminProcedure
 		.input(
 			z.object({
 				apiUrl: z.string().min(1),

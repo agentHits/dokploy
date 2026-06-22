@@ -1,6 +1,9 @@
 import { db } from "@dokploy/server/db";
 import { ai } from "@dokploy/server/db/schema";
-import { selectAIProvider } from "@dokploy/server/utils/ai/select-ai-provider";
+import {
+	normalizeAIProviderApiUrl,
+	selectAIProvider,
+} from "@dokploy/server/utils/ai/select-ai-provider";
 import { TRPCError } from "@trpc/server";
 import { generateText, Output } from "ai";
 import { desc, eq } from "drizzle-orm";
@@ -35,7 +38,17 @@ export const getAiSettingsByOrganizationId = async (organizationId: string) => {
 	return aiSettings;
 };
 
-export const getAiSettingById = async (aiId: string) => {
+const throwAiSettingsNotFound = (): never => {
+	throw new TRPCError({
+		code: "NOT_FOUND",
+		message: "AI settings not found",
+	});
+};
+
+export const getAiSettingById = async (
+	aiId: string,
+	organizationId: string,
+) => {
 	const aiSetting = await db.query.ai.findFirst({
 		where: eq(ai.aiId, aiId),
 	});
@@ -45,28 +58,53 @@ export const getAiSettingById = async (aiId: string) => {
 			message: "AI settings not found",
 		});
 	}
+	if (aiSetting.organizationId !== organizationId) {
+		throwAiSettingsNotFound();
+	}
 	return aiSetting;
 };
 
 export const saveAiSettings = async (organizationId: string, settings: any) => {
 	const aiId = settings.aiId;
+	if (aiId) {
+		const existingAiSetting = await db.query.ai.findFirst({
+			where: eq(ai.aiId, aiId),
+		});
+		if (
+			existingAiSetting &&
+			existingAiSetting.organizationId !== organizationId
+		) {
+			throwAiSettingsNotFound();
+		}
+	}
+
+	const normalizedSettings = { ...settings };
+	if (normalizedSettings.apiUrl) {
+		normalizedSettings.apiUrl = normalizeAIProviderApiUrl(
+			normalizedSettings.apiUrl,
+		);
+	}
 
 	return db
 		.insert(ai)
 		.values({
 			aiId,
 			organizationId,
-			...settings,
+			...normalizedSettings,
 		})
 		.onConflictDoUpdate({
 			target: ai.aiId,
 			set: {
-				...settings,
+				...normalizedSettings,
 			},
 		});
 };
 
-export const deleteAiSettings = async (aiId: string) => {
+export const deleteAiSettings = async (
+	aiId: string,
+	organizationId: string,
+) => {
+	await getAiSettingById(aiId, organizationId);
 	return db.delete(ai).where(eq(ai.aiId, aiId));
 };
 
@@ -78,14 +116,14 @@ interface Props {
 }
 
 export const suggestVariants = async ({
-	organizationId: _organizationId,
+	organizationId,
 	aiId,
 	input,
 	serverId,
 }: Props) => {
 	try {
-		const aiSettings = await getAiSettingById(aiId);
-		if (!aiSettings || !aiSettings.isEnabled) {
+		const aiSettings = await getAiSettingById(aiId, organizationId);
+		if (!aiSettings?.isEnabled) {
 			throw new TRPCError({
 				code: "NOT_FOUND",
 				message: "AI features are not enabled for this configuration",
