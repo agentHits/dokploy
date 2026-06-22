@@ -14,6 +14,11 @@ import type {
 } from "@dokploy/server/db/schema";
 import nodemailer from "nodemailer";
 import { Resend } from "resend";
+import {
+	normalizeNotificationBaseUrl,
+	normalizeNotificationHttpUrl,
+	normalizeNotificationSmtpHost,
+} from "./security";
 
 export const sendEmailNotification = async (
 	connection: typeof email.$inferInsert,
@@ -31,7 +36,7 @@ export const sendEmailNotification = async (
 			toAddresses,
 		} = connection;
 		const transporter = nodemailer.createTransport({
-			host: smtpServer,
+			host: normalizeNotificationSmtpHost(smtpServer),
 			port: smtpPort,
 			auth: { user: username, pass: password },
 		});
@@ -83,10 +88,14 @@ export const sendDiscordNotification = async (
 	embed: any,
 ) => {
 	try {
-		const response = await fetch(connection.webhookUrl, {
+		const webhookUrl = normalizeNotificationHttpUrl(connection.webhookUrl, {
+			fieldName: "Discord webhook URL",
+		});
+		const response = await fetch(webhookUrl, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ embeds: [embed] }),
+			redirect: "error",
 		});
 		if (!response.ok) {
 			throw new Error(
@@ -135,10 +144,14 @@ export const sendSlackNotification = async (
 	message: any,
 ) => {
 	try {
-		const response = await fetch(connection.webhookUrl, {
+		const webhookUrl = normalizeNotificationHttpUrl(connection.webhookUrl, {
+			fieldName: "Slack webhook URL",
+		});
+		const response = await fetch(webhookUrl, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(message),
+			redirect: "error",
 		});
 		if (!response.ok) {
 			throw new Error(
@@ -158,7 +171,10 @@ export const sendGotifyNotification = async (
 	title: string,
 	message: string,
 ) => {
-	const response = await fetch(`${connection.serverUrl}/message`, {
+	const serverUrl = normalizeNotificationBaseUrl(connection.serverUrl, {
+		fieldName: "Gotify server URL",
+	});
+	const response = await fetch(`${serverUrl}/message`, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
@@ -174,6 +190,7 @@ export const sendGotifyNotification = async (
 				},
 			},
 		}),
+		redirect: "error",
 	});
 
 	if (!response.ok) {
@@ -190,7 +207,10 @@ export const sendNtfyNotification = async (
 	actions: string,
 	message: string,
 ) => {
-	const response = await fetch(`${connection.serverUrl}/${connection.topic}`, {
+	const serverUrl = normalizeNotificationBaseUrl(connection.serverUrl, {
+		fieldName: "ntfy server URL",
+	});
+	const response = await fetch(`${serverUrl}/${connection.topic}`, {
 		method: "POST",
 		headers: {
 			...(connection.accessToken && {
@@ -202,6 +222,7 @@ export const sendNtfyNotification = async (
 			"X-Actions": actions,
 		},
 		body: message,
+		redirect: "error",
 	});
 
 	if (!response.ok) {
@@ -223,10 +244,14 @@ export const sendMattermostNotification = async (
 		}),
 	};
 
-	const response = await fetch(connection.webhookUrl, {
+	const webhookUrl = normalizeNotificationHttpUrl(connection.webhookUrl, {
+		fieldName: "Mattermost webhook URL",
+	});
+	const response = await fetch(webhookUrl, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(payload),
+		redirect: "error",
 	});
 
 	if (!response.ok) {
@@ -250,10 +275,14 @@ export const sendCustomNotification = async (
 		// Default body with payload
 		const body = JSON.stringify(payload);
 
-		const response = await fetch(connection.endpoint, {
+		const endpoint = normalizeNotificationHttpUrl(connection.endpoint, {
+			fieldName: "Custom notification endpoint",
+		});
+		const response = await fetch(endpoint, {
 			method: "POST",
 			headers,
 			body,
+			redirect: "error",
 		});
 
 		if (!response.ok) {
@@ -274,10 +303,14 @@ export const sendLarkNotification = async (
 	message: any,
 ) => {
 	try {
-		await fetch(connection.webhookUrl, {
+		const webhookUrl = normalizeNotificationHttpUrl(connection.webhookUrl, {
+			fieldName: "Lark webhook URL",
+		});
+		await fetch(webhookUrl, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(message),
+			redirect: "error",
 		});
 	} catch (err) {
 		console.log(err);
@@ -343,10 +376,14 @@ export const sendTeamsNotification = async (
 			],
 		};
 
-		const response = await fetch(connection.webhookUrl, {
+		const webhookUrl = normalizeNotificationHttpUrl(connection.webhookUrl, {
+			fieldName: "Teams webhook URL",
+		});
+		const response = await fetch(webhookUrl, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(payload),
+			redirect: "error",
 		});
 
 		if (!response.ok) {
