@@ -1,7 +1,22 @@
+import { quoteShellArg } from "@dokploy/server/utils/filesystem/safe-path";
 import {
 	execAsync,
 	execAsyncRemote,
 } from "@dokploy/server/utils/process/execAsync";
+import { TRPCError } from "@trpc/server";
+
+const dockerNodeIdentifierRegex = /^[a-zA-Z0-9._-]+$/;
+
+const normalizeDockerNodeIdentifier = (nodeId: string) => {
+	if (!nodeId || !dockerNodeIdentifierRegex.test(nodeId)) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Invalid Docker node identifier",
+		});
+	}
+
+	return nodeId;
+};
 
 export const getContainers = async (serverId?: string | null) => {
 	try {
@@ -518,8 +533,10 @@ export const getSwarmNodes = async (serverId?: string) => {
 };
 
 export const getNodeInfo = async (nodeId: string, serverId?: string) => {
+	const safeNodeId = quoteShellArg(normalizeDockerNodeIdentifier(nodeId));
+
 	try {
-		const command = `docker node inspect ${nodeId} --format '{{json .}}'`;
+		const command = `docker node inspect ${safeNodeId} --format '{{json .}}'`;
 		let stdout = "";
 		let stderr = "";
 		if (serverId) {
