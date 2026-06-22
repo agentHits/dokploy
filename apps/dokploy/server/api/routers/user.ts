@@ -284,6 +284,7 @@ export const userRouter = createTRPCRouter({
 			if (IS_CLOUD) {
 				return true;
 			}
+			const activeOrganizationId = ctx.session?.activeOrganizationId || "";
 
 			// Ensure the acting user has admin privileges in the active organization
 			if (ctx.user.role !== "owner" && ctx.user.role !== "admin") {
@@ -297,7 +298,7 @@ export const userRouter = createTRPCRouter({
 			const targetMember = await db.query.member.findFirst({
 				where: and(
 					eq(member.userId, input.userId),
-					eq(member.organizationId, ctx.session?.activeOrganizationId || ""),
+					eq(member.organizationId, activeOrganizationId),
 				),
 			});
 
@@ -332,6 +333,25 @@ export const userRouter = createTRPCRouter({
 					code: "FORBIDDEN",
 					message:
 						"Only the organization owner can delete admins. Admins can only delete members.",
+				});
+			}
+
+			const targetMemberships = await db.query.member.findMany({
+				where: eq(member.userId, input.userId),
+				columns: {
+					organizationId: true,
+				},
+			});
+
+			if (
+				targetMemberships.some(
+					(targetMembership) =>
+						targetMembership.organizationId !== activeOrganizationId,
+				)
+			) {
+				throw new TRPCError({
+					code: "FORBIDDEN",
+					message: "Cannot delete a user that belongs to another organization",
 				});
 			}
 
