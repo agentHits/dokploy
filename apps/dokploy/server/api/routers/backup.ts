@@ -544,7 +544,7 @@ export const backupRouter = createTRPCRouter({
 			}
 		}),
 
-	restoreBackupWithLogs: protectedProcedure
+	restoreBackupWithLogs: withPermission("backup", "restore")
 		.meta({
 			openapi: {
 				enabled: false,
@@ -555,37 +555,61 @@ export const backupRouter = createTRPCRouter({
 		})
 		.input(apiRestoreBackup)
 		.subscription(async function* ({ input, ctx, signal }) {
-			if (input.databaseId) {
-				await checkServicePermissionAndAccess(ctx, input.databaseId, {
+			const destination = await findDestinationById(input.destinationId);
+			if (destination.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You don't have access to this destination.",
+				});
+			}
+
+			const isWebServerRestore =
+				input.backupType === "database" && input.databaseType === "web-server";
+			const databaseId = input.databaseId.trim();
+
+			if (isWebServerRestore) {
+				if (ctx.user.role !== "owner" && ctx.user.role !== "admin") {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You don't have access to restore server backups.",
+					});
+				}
+			} else {
+				if (!databaseId) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "Database id is required for restore.",
+					});
+				}
+				await checkServicePermissionAndAccess(ctx, databaseId, {
 					backup: ["restore"],
 				});
 			}
-			const destination = await findDestinationById(input.destinationId);
 			const queue: string[] = [];
 			let done = false;
 			const onLog = (log: string) => queue.push(log);
 			const runRestore = async () => {
 				if (input.backupType === "database") {
 					if (input.databaseType === "postgres") {
-						const postgres = await findPostgresById(input.databaseId);
+						const postgres = await findPostgresById(databaseId);
 						await restorePostgresBackup(postgres, destination, input, onLog);
 					} else if (input.databaseType === "mysql") {
-						const mysql = await findMySqlById(input.databaseId);
+						const mysql = await findMySqlById(databaseId);
 						await restoreMySqlBackup(mysql, destination, input, onLog);
 					} else if (input.databaseType === "mariadb") {
-						const mariadb = await findMariadbById(input.databaseId);
+						const mariadb = await findMariadbById(databaseId);
 						await restoreMariadbBackup(mariadb, destination, input, onLog);
 					} else if (input.databaseType === "mongo") {
-						const mongo = await findMongoById(input.databaseId);
+						const mongo = await findMongoById(databaseId);
 						await restoreMongoBackup(mongo, destination, input, onLog);
 					} else if (input.databaseType === "libsql") {
-						const libsql = await findLibsqlById(input.databaseId);
+						const libsql = await findLibsqlById(databaseId);
 						await restoreLibsqlBackup(libsql, destination, input, onLog);
 					} else if (input.databaseType === "web-server") {
 						await restoreWebServerBackup(destination, input.backupFile, onLog);
 					}
 				} else if (input.backupType === "compose") {
-					const compose = await findComposeById(input.databaseId);
+					const compose = await findComposeById(databaseId);
 					await restoreComposeBackup(compose, destination, input, onLog);
 				}
 			};

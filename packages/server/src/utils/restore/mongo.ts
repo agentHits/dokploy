@@ -4,6 +4,7 @@ import type { Mongo } from "@dokploy/server/services/mongo";
 import type { z } from "zod";
 import { getS3Credentials } from "../backups/utils";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
+import { normalizeRestoreBackupFile, quoteRestoreShellArg } from "./safe-input";
 import { getRestoreCommand } from "./utils";
 
 export const restoreMongoBackup = async (
@@ -17,8 +18,11 @@ export const restoreMongoBackup = async (
 
 		const rcloneFlags = getS3Credentials(destination);
 		const bucketPath = `:s3:${destination.bucket}`;
-		const backupPath = `${bucketPath}/${backupInput.backupFile}`;
-		const rcloneCommand = `rclone copy ${rcloneFlags.join(" ")} "${backupPath}"`;
+		const { objectPath } = normalizeRestoreBackupFile(backupInput.backupFile, [
+			".bson.gz",
+		]);
+		const backupPath = `${bucketPath}/${objectPath}`;
+		const rcloneCommand = `rclone copy ${rcloneFlags.join(" ")} ${quoteRestoreShellArg(backupPath)}`;
 
 		const command = getRestoreCommand({
 			appName,
@@ -30,13 +34,11 @@ export const restoreMongoBackup = async (
 			},
 			restoreType: "database",
 			rcloneCommand,
-			backupFile: backupInput.backupFile,
+			backupFile: objectPath,
 		});
 
 		emit("Starting restore...");
-		emit(
-			`Restoring database: ${backupInput.databaseName} from ${backupInput.backupFile}`,
-		);
+		emit(`Restoring database: ${backupInput.databaseName} from ${objectPath}`);
 
 		if (serverId) {
 			await execAsyncRemote(serverId, command);

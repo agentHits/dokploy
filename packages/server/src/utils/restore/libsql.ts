@@ -4,6 +4,7 @@ import type { Libsql } from "@dokploy/server/services/libsql";
 import type { z } from "zod";
 import { getS3Credentials, getServiceContainerCommand } from "../backups/utils";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
+import { normalizeRestoreBackupFile, quoteRestoreShellArg } from "./safe-input";
 
 export const restoreLibsqlBackup = async (
 	libsql: Libsql,
@@ -16,10 +17,13 @@ export const restoreLibsqlBackup = async (
 
 		const rcloneFlags = getS3Credentials(destination);
 		const bucketPath = `:s3:${destination.bucket}`;
+		const { objectPath } = normalizeRestoreBackupFile(backupInput.backupFile, [
+			".sql.gz",
+		]);
 
-		const backupPath = `${bucketPath}/${backupInput.backupFile}`;
+		const backupPath = `${bucketPath}/${objectPath}`;
 
-		const rcloneCommand = `rclone cat ${rcloneFlags.join(" ")} "${backupPath}"`;
+		const rcloneCommand = `rclone cat ${rcloneFlags.join(" ")} ${quoteRestoreShellArg(backupPath)}`;
 
 		const containerSearch = getServiceContainerCommand(appName);
 		const restoreCommand = `docker exec -i $CONTAINER_ID sh -c "tar xzf - -C /var/lib/sqld"`;
@@ -27,7 +31,7 @@ export const restoreLibsqlBackup = async (
 		const command = `CONTAINER_ID=$(${containerSearch}) && ${rcloneCommand} | ${restoreCommand}`;
 
 		emit("Starting restore...");
-		emit(`Restoring libsql from ${backupInput.backupFile}`);
+		emit(`Restoring libsql from ${objectPath}`);
 
 		if (serverId) {
 			await execAsyncRemote(serverId, command);
