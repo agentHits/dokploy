@@ -1,11 +1,35 @@
 import path from "node:path";
+import { paths } from "@dokploy/server/constants";
+import { findApplicationById } from "@dokploy/server/services/application";
+import { findComposeById } from "@dokploy/server/services/compose";
+import { findDestinationById } from "@dokploy/server/services/destination";
+import { getS3Credentials } from "@dokploy/server/utils/backups/utils";
 import {
-	findApplicationById,
-	findComposeById,
-	findDestinationById,
-	getS3Credentials,
-	paths,
-} from "../..";
+	normalizeRelativeFilePath,
+	quoteShellArg,
+} from "@dokploy/server/utils/filesystem/safe-path";
+
+const DOCKER_VOLUME_NAME_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+
+const normalizeDockerVolumeName = (volumeName: string) => {
+	const normalizedVolumeName = volumeName.trim();
+
+	if (!DOCKER_VOLUME_NAME_REGEX.test(normalizedVolumeName)) {
+		throw new Error("Invalid Docker volume name");
+	}
+
+	return normalizedVolumeName;
+};
+
+const normalizeBackupObjectPath = (backupFileName: string) => {
+	const backupObjectPath = normalizeRelativeFilePath(backupFileName);
+
+	if (!backupObjectPath.endsWith(".tar")) {
+		throw new Error("Invalid backup file path");
+	}
+
+	return backupObjectPath;
+};
 
 export const restoreVolume = async (
 	id: string,
@@ -15,39 +39,51 @@ export const restoreVolume = async (
 	serverId: string,
 	serviceType: "application" | "compose",
 ) => {
+	const safeVolumeName = normalizeDockerVolumeName(volumeName);
+	const backupObjectPath = normalizeBackupObjectPath(backupFileName);
+	const localBackupFileName = path.posix.basename(backupObjectPath);
 	const destination = await findDestinationById(destinationId);
 	const { VOLUME_BACKUPS_PATH } = paths(!!serverId);
-	const volumeBackupPath = path.join(VOLUME_BACKUPS_PATH, volumeName);
+	const volumeBackupPath = path.join(VOLUME_BACKUPS_PATH, safeVolumeName);
 	const rcloneFlags = getS3Credentials(destination);
 	const bucketPath = `:s3:${destination.bucket}`;
-	const backupPath = `${bucketPath}/${backupFileName}`;
+	const backupPath = `${bucketPath}/${backupObjectPath}`;
+	const localBackupPath = path.join(volumeBackupPath, localBackupFileName);
+	const backupFileInContainer = `/backup/${localBackupFileName}`;
+	const quotedVolumeName = quoteShellArg(safeVolumeName);
+	const quotedVolumeBackupPath = quoteShellArg(volumeBackupPath);
+	const quotedBackupPath = quoteShellArg(backupPath);
+	const quotedLocalBackupPath = quoteShellArg(localBackupPath);
+	const quotedVolumeMount = quoteShellArg(`${safeVolumeName}:/volume_data`);
+	const quotedBackupMount = quoteShellArg(`${volumeBackupPath}:/backup`);
+	const quotedBackupFileInContainer = quoteShellArg(backupFileInContainer);
 
 	// Command to download backup file from S3
-	const downloadCommand = `rclone copyto ${rcloneFlags.join(" ")} "${backupPath}" "${volumeBackupPath}/${backupFileName}"`;
+	const downloadCommand = `rclone copyto ${rcloneFlags.join(" ")} ${quotedBackupPath} ${quotedLocalBackupPath}`;
 
 	// Base restore command that creates the volume and restores data
 	const baseRestoreCommand = `
 	set -e
-	echo "Volume name: ${volumeName}"
-	echo "Backup file name: ${backupFileName}"
+	echo "Volume name: ${safeVolumeName}"
+	echo "Backup file name: ${backupObjectPath}"
 	echo "Volume backup path: ${volumeBackupPath}"
 	echo "Downloading backup from S3..."
-	mkdir -p ${volumeBackupPath}
+	mkdir -p ${quotedVolumeBackupPath}
 	${downloadCommand}
 	echo "Download completed ✅"
 	echo "Creating new volume and restoring data..."
 	docker run --rm \
-		-v ${volumeName}:/volume_data \
-		-v ${volumeBackupPath}:/backup \
+		-v ${quotedVolumeMount} \
+		-v ${quotedBackupMount} \
 		ubuntu \
-		bash -c "cd /volume_data && tar xvf /backup/${backupFileName} ."
+		bash -c "cd /volume_data && tar xvf ${quotedBackupFileInContainer} ."
 	echo "Volume restore completed ✅"
 	`;
 
 	// Function to check if volume exists and get containers using it
 	const checkVolumeCommand = `
 	# Check if volume exists
-	VOLUME_EXISTS=$(docker volume ls -q --filter name="^${volumeName}$" | wc -l)
+	VOLUME_EXISTS=$(docker volume ls -q --filter ${quoteShellArg(`name=^${safeVolumeName}$`)} | wc -l)
 	echo "Volume exists: $VOLUME_EXISTS"
 	
 	if [ "$VOLUME_EXISTS" = "0" ]; then
@@ -57,18 +93,18 @@ export const restoreVolume = async (
 		echo "Volume exists, checking for containers using it (including stopped ones)..."
 		
 		# Get ALL containers (running and stopped) using this volume - much simpler with native filter!
-		CONTAINERS_USING_VOLUME=$(docker ps -a --filter "volume=${volumeName}" --format "{{.ID}}|{{.Names}}|{{.State}}|{{.Labels}}")
+		CONTAINERS_USING_VOLUME=$(docker ps -a --filter ${quoteShellArg(`volume=${safeVolumeName}`)} --format "{{.ID}}|{{.Names}}|{{.State}}|{{.Labels}}")
 		
 		if [ -z "$CONTAINERS_USING_VOLUME" ]; then
 			echo "Volume exists but no containers are using it"
 			echo "Removing existing volume and proceeding with restore"
-			docker volume rm ${volumeName} --force
+			docker volume rm ${quotedVolumeName} --force
 			${baseRestoreCommand}
 		else
 			echo ""
 			echo "⚠️  WARNING: Cannot restore volume as it is currently in use!"
 			echo ""
-			echo "📋 The following containers are using volume '${volumeName}':"
+			echo "📋 The following containers are using volume '${safeVolumeName}':"
 			echo ""
 			
 			echo "$CONTAINERS_USING_VOLUME" | while IFS='|' read container_id container_name container_state labels; do
@@ -91,7 +127,7 @@ export const restoreVolume = async (
 			echo ""
 			echo "🔧 To restore this volume, please:"
 			echo "   1. Stop all containers/services using this volume"
-			echo "   2. Remove the existing volume: docker volume rm ${volumeName}"
+			echo "   2. Remove the existing volume: docker volume rm ${safeVolumeName}"
 			echo "   3. Run the restore operation again"
 			echo ""
 			echo "❌ Volume restore aborted - volume is in use"
@@ -105,7 +141,7 @@ export const restoreVolume = async (
 		const application = await findApplicationById(id);
 		return `
 		echo "=== VOLUME RESTORE FOR APPLICATION ==="
-		echo "Application: ${application.appName}"
+		echo ${quoteShellArg(`Application: ${application.appName}`)}
 		${checkVolumeCommand}
 		`;
 	}
@@ -115,8 +151,8 @@ export const restoreVolume = async (
 
 		return `
 		echo "=== VOLUME RESTORE FOR COMPOSE ==="
-		echo "Compose: ${compose.appName}"
-		echo "Compose Type: ${compose.composeType}"
+		echo ${quoteShellArg(`Compose: ${compose.appName}`)}
+		echo ${quoteShellArg(`Compose Type: ${compose.composeType}`)}
 		${checkVolumeCommand}
 		`;
 	}

@@ -284,6 +284,9 @@ export const volumeBackupsRouter = createTRPCRouter({
 					});
 				}
 			}
+			await checkServicePermissionAndAccess(ctx, input.id, {
+				volumeBackup: ["restore"],
+			});
 			return observable<string>((emit) => {
 				const runRestore = async () => {
 					try {
