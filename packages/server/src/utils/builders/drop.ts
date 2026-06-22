@@ -3,7 +3,7 @@ import path, { join } from "node:path";
 import { paths } from "@dokploy/server/constants";
 import type { Application } from "@dokploy/server/services/application";
 import { findServerById } from "@dokploy/server/services/server";
-import { readValidDirectory } from "@dokploy/server/wss/utils";
+import { resolveFilePathInsideDirectory } from "@dokploy/server/utils/filesystem/safe-path";
 import AdmZip from "adm-zip";
 import { Client, type SFTPWrapper } from "ssh2";
 import {
@@ -54,6 +54,11 @@ export const unzipDrop = async (zipFile: File, application: Application) => {
 		}
 		for (const entry of zipEntries) {
 			let filePath = entry.entryName;
+			if (!resolveDropEntryPath(outputPath, filePath)) {
+				throw new Error(
+					`Path traversal detected: resolved path escapes output directory: ${filePath}`,
+				);
+			}
 
 			if (
 				hasSingleRootFolder &&
@@ -65,8 +70,8 @@ export const unzipDrop = async (zipFile: File, application: Application) => {
 
 			if (!filePath) continue;
 
-			const fullPath = path.join(outputPath, filePath).replace(/\\/g, "/");
-			if (!readValidDirectory(fullPath, application.serverId)) {
+			const fullPath = resolveDropEntryPath(outputPath, filePath);
+			if (!fullPath) {
 				throw new Error(
 					`Path traversal detected: resolved path escapes output directory: ${filePath}`,
 				);
@@ -154,4 +159,20 @@ function isDangerousNode(entry: AdmZip.IZipEntry) {
 		type === 0o020000 || // char device
 		type === 0o010000 // fifo/pipe
 	);
+}
+
+function resolveDropEntryPath(outputPath: string, filePath: string) {
+	const normalizedEntry = filePath.trim().replace(/\\/g, "/");
+	if (path.posix.isAbsolute(normalizedEntry)) {
+		return null;
+	}
+
+	try {
+		return resolveFilePathInsideDirectory(
+			outputPath,
+			filePath,
+		).fullPath.replace(/\\/g, "/");
+	} catch {
+		return null;
+	}
 }
