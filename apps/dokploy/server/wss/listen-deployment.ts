@@ -1,10 +1,36 @@
 import { spawn } from "node:child_process";
 import type http from "node:http";
-import { findServerById, IS_CLOUD, validateRequest } from "@dokploy/server";
+import {
+	findDeploymentById,
+	findServerById,
+	IS_CLOUD,
+	validateRequest,
+} from "@dokploy/server";
+import {
+	checkPermission,
+	checkServicePermissionAndAccess,
+} from "@dokploy/server/services/permission";
 import { encodeBase64 } from "@dokploy/server/utils/docker/utils";
-import { readValidDirectory } from "@dokploy/server/wss/utils";
+import {
+	type DeploymentLogPathRoot,
+	readValidDeploymentLogPath,
+} from "@dokploy/server/wss/utils";
 import { Client } from "ssh2";
 import { WebSocketServer } from "ws";
+
+const getDeploymentLogPathRoot = (
+	deployment: Awaited<ReturnType<typeof findDeploymentById>>,
+): DeploymentLogPathRoot => {
+	if (deployment.scheduleId) {
+		return "schedules";
+	}
+
+	if (deployment.volumeBackupId) {
+		return "volumeBackups";
+	}
+
+	return "logs";
+};
 
 export const setupDeploymentLogsWebSocketServer = (
 	server: http.Server<typeof http.IncomingMessage, typeof http.ServerResponse>,
@@ -30,19 +56,15 @@ export const setupDeploymentLogsWebSocketServer = (
 	wssTerm.on("connection", async (ws, req) => {
 		const url = new URL(req.url || "", `http://${req.headers.host}`);
 		const logPath = url.searchParams.get("logPath");
+		const deploymentId = url.searchParams.get("deploymentId");
 		const serverId = url.searchParams.get("serverId");
 		const { user, session } = await validateRequest(req);
 
 		// Generate unique connection ID for tracking
 		const connectionId = `deployment-logs-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-		if (!logPath) {
+		if (!logPath && !deploymentId) {
 			console.log(`[${connectionId}] logPath no provided`);
 			ws.close(4000, "logPath no provided");
-			return;
-		}
-
-		if (!readValidDirectory(logPath, serverId)) {
-			ws.close(4000, "Invalid log path");
 			return;
 		}
 
@@ -51,12 +73,73 @@ export const setupDeploymentLogsWebSocketServer = (
 			return;
 		}
 
+		let effectiveLogPath = logPath || "";
+		let effectiveServerId = serverId || undefined;
+		let effectiveLogPathRoot: DeploymentLogPathRoot = "logs";
+
+		try {
+			if (deploymentId) {
+				const deployment = await findDeploymentById(deploymentId);
+				const serviceId = deployment.applicationId || deployment.composeId;
+				const ctx = {
+					user: { id: user.id },
+					session: { activeOrganizationId: session.activeOrganizationId },
+				};
+
+				if (serviceId) {
+					await checkServicePermissionAndAccess(ctx, serviceId, {
+						deployment: ["read"],
+					});
+				} else if (deployment.schedule?.serverId) {
+					const targetServer = await findServerById(
+						deployment.schedule.serverId,
+					);
+					if (targetServer.organizationId !== session.activeOrganizationId) {
+						ws.close();
+						return;
+					}
+				} else {
+					await checkPermission(ctx, { logs: ["read"] });
+				}
+
+				effectiveLogPath = deployment.logPath;
+				effectiveLogPathRoot = getDeploymentLogPathRoot(deployment);
+				effectiveServerId =
+					deployment.serverId ||
+					deployment.buildServerId ||
+					deployment.schedule?.serverId ||
+					effectiveServerId;
+			} else {
+				await checkPermission(
+					{
+						user: { id: user.id },
+						session: { activeOrganizationId: session.activeOrganizationId },
+					},
+					{ logs: ["read"] },
+				);
+			}
+		} catch {
+			ws.close();
+			return;
+		}
+
+		if (
+			!readValidDeploymentLogPath(
+				effectiveLogPath,
+				effectiveServerId,
+				effectiveLogPathRoot,
+			)
+		) {
+			ws.close(4000, "Invalid log path");
+			return;
+		}
+
 		let tailProcess: ReturnType<typeof spawn> | null = null;
 		let sshClient: Client | null = null;
 
 		try {
-			if (serverId) {
-				const server = await findServerById(serverId);
+			if (effectiveServerId) {
+				const server = await findServerById(effectiveServerId);
 
 				if (server.organizationId !== session.activeOrganizationId) {
 					ws.close();
@@ -71,7 +154,7 @@ export const setupDeploymentLogsWebSocketServer = (
 				sshClient = new Client();
 				sshClient
 					.on("ready", () => {
-						const encodedPath = encodeBase64(logPath);
+						const encodedPath = encodeBase64(effectiveLogPath);
 						const command = `tail -n +1 -f "$(echo '${encodedPath}' | base64 -d)"`;
 
 						sshClient!.exec(command, (err, stream) => {
@@ -124,7 +207,7 @@ export const setupDeploymentLogsWebSocketServer = (
 					ws.close();
 					return;
 				}
-				tailProcess = spawn("tail", ["-n", "+1", "-f", logPath]);
+				tailProcess = spawn("tail", ["-n", "+1", "-f", effectiveLogPath]);
 
 				const stdout = tailProcess.stdout;
 				const stderr = tailProcess.stderr;

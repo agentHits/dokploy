@@ -482,6 +482,7 @@ export const ShowDeployments = ({
 					</div>
 				)}
 				<ShowDeployment
+					deploymentId={activeLog?.deploymentId}
 					serverId={activeLog?.buildServerId || serverId}
 					open={Boolean(activeLog && activeLog.logPath !== null)}
 					onClose={() => setActiveLog(null)}
