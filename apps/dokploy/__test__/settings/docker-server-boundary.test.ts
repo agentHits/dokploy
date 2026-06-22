@@ -178,6 +178,11 @@ describe("settings Docker server boundary", () => {
 			serverId: "server-1",
 			serverStatus: "active",
 		});
+		mocks.paths.mockReturnValue({
+			MAIN_TRAEFIK_PATH: "/etc/dokploy/traefik",
+		});
+		mocks.readConfigInPath.mockResolvedValue("http: {}");
+		mocks.readDirectory.mockResolvedValue([]);
 		mocks.updateServerById.mockResolvedValue({
 			enableDockerCleanup: false,
 			organizationId: "org-1",
@@ -218,6 +223,43 @@ describe("settings Docker server boundary", () => {
 
 		expect(mocks.updateServerById).not.toHaveBeenCalled();
 		expect(mocks.findServerById).not.toHaveBeenCalled();
+	});
+
+	it("denies inaccessible Traefik directory listing before remote read", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().readDirectories({ serverId: "server-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.readDirectory).not.toHaveBeenCalled();
+	});
+
+	it("denies inaccessible Traefik file reads before remote read", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().readTraefikFile({
+				path: `${process.cwd()}/.docker/traefik/dynamic/app.yml`,
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.readConfigInPath).not.toHaveBeenCalled();
+	});
+
+	it("denies inaccessible Traefik file updates before remote write", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().updateTraefikFile({
+				path: "/etc/dokploy/traefik/dynamic/app.yml",
+				traefikConfig: "http: {}",
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.writeTraefikConfigInPath).not.toHaveBeenCalled();
 	});
 
 	it("allows accessible server cleanup", async () => {

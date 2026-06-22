@@ -668,6 +668,7 @@ export const settingsRouter = createTRPCRouter({
 		.query(async ({ ctx, input }) => {
 			try {
 				await checkPermission(ctx, { traefikFiles: ["read"] });
+				await assertSettingsServerAccess(ctx, input?.serverId);
 				const { MAIN_TRAEFIK_PATH } = paths(!!input?.serverId);
 				const result = await readDirectory(MAIN_TRAEFIK_PATH, input?.serverId);
 				return result || [];
@@ -680,6 +681,7 @@ export const settingsRouter = createTRPCRouter({
 		.input(apiModifyTraefikConfig)
 		.mutation(async ({ input, ctx }) => {
 			await checkPermission(ctx, { traefikFiles: ["write"] });
+			await assertSettingsServerAccess(ctx, input?.serverId);
 			await writeTraefikConfigInPath(
 				input.path,
 				input.traefikConfig,
@@ -697,14 +699,7 @@ export const settingsRouter = createTRPCRouter({
 		.input(apiReadTraefikConfig)
 		.query(async ({ input, ctx }) => {
 			await checkPermission(ctx, { traefikFiles: ["read"] });
-
-			if (input.serverId) {
-				const server = await findServerById(input.serverId);
-
-				if (server.organizationId !== ctx.session?.activeOrganizationId) {
-					throw new TRPCError({ code: "UNAUTHORIZED" });
-				}
-			}
+			await assertSettingsServerAccess(ctx, input.serverId);
 
 			return readConfigInPath(input.path, input.serverId);
 		}),
