@@ -489,6 +489,13 @@ export const validateRequest = async (request: IncomingMessage) => {
 				},
 			});
 
+			if (!member) {
+				return {
+					session: null,
+					user: null,
+				};
+			}
+
 			// When accessing from DB, use actual column names
 			const userFromDb = apiKeyRecord.user as typeof apiKeyRecord.user & {
 				firstName: string;
@@ -509,8 +516,8 @@ export const validateRequest = async (request: IncomingMessage) => {
 					createdAt: userFromDb.createdAt,
 					updatedAt: userFromDb.updatedAt,
 					twoFactorEnabled: userFromDb.twoFactorEnabled,
-					role: member?.role || "member",
-					ownerId: member?.organization.ownerId || apiKeyRecord.user.id,
+					role: member.role,
+					ownerId: member.organization.ownerId,
 					enableEnterpriseFeatures: userFromDb.enableEnterpriseFeatures,
 					isValidEnterpriseLicense: userFromDb.isValidEnterpriseLicense,
 				},

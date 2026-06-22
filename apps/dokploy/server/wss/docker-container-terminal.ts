@@ -3,6 +3,7 @@ import { findServerById, IS_CLOUD, validateRequest } from "@dokploy/server";
 import { spawn } from "node-pty";
 import { Client } from "ssh2";
 import { WebSocketServer } from "ws";
+import { canAccessDockerWebSocket } from "./docker-permission";
 import { isValidContainerId, isValidShell } from "./utils";
 
 export const setupDockerContainerTerminalWebSocketServer = (
@@ -54,7 +55,7 @@ export const setupDockerContainerTerminalWebSocketServer = (
 		// Default to 'sh' if no shell specified
 		const shell = activeWay || "sh";
 
-		if (!user || !session) {
+		if (!(await canAccessDockerWebSocket({ user, session }))) {
 			ws.close();
 			return;
 		}

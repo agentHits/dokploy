@@ -3,6 +3,7 @@ import { findServerById, IS_CLOUD, validateRequest } from "@dokploy/server";
 import { spawn } from "node-pty";
 import { Client } from "ssh2";
 import { WebSocketServer } from "ws";
+import { canAccessDockerWebSocket } from "./docker-permission";
 import {
 	getShell,
 	isValidContainerId,
@@ -69,7 +70,7 @@ export const setupDockerContainerLogsWebSocketServer = (
 			return;
 		}
 
-		if (!user || !session) {
+		if (!(await canAccessDockerWebSocket({ user, session }))) {
 			ws.close();
 			return;
 		}
