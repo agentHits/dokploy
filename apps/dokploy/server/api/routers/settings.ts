@@ -15,6 +15,7 @@ import {
 	DEFAULT_UPDATE_DATA,
 	execAsync,
 	findServerById,
+	getAccessibleServerIds,
 	getDockerDiskUsage,
 	getDokployImageTag,
 	getLogCleanupStatus,
@@ -83,6 +84,28 @@ import {
 	protectedProcedure,
 	publicProcedure,
 } from "../trpc";
+
+const assertSettingsServerAccess = async (
+	ctx: {
+		session: {
+			userId: string;
+			activeOrganizationId: string;
+		};
+	},
+	serverId?: string,
+) => {
+	if (!serverId) {
+		return;
+	}
+
+	const accessibleIds = await getAccessibleServerIds(ctx.session);
+	if (!accessibleIds.has(serverId)) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not authorized to access this server",
+		});
+	}
+};
 
 export const settingsRouter = createTRPCRouter({
 	getWebServerSettings: protectedProcedure.query(async () => {
@@ -154,6 +177,8 @@ export const settingsRouter = createTRPCRouter({
 	reloadTraefik: adminProcedure
 		.input(apiServerSchema)
 		.mutation(async ({ input, ctx }) => {
+			await assertSettingsServerAccess(ctx, input?.serverId);
+
 			// Run in background so the request returns immediately; avoids proxy timeouts.
 			void reloadDockerResource("dokploy-traefik", input?.serverId).catch(
 				(err) => {
@@ -218,6 +243,8 @@ export const settingsRouter = createTRPCRouter({
 	cleanUnusedImages: adminProcedure
 		.input(apiServerSchema)
 		.mutation(async ({ input, ctx }) => {
+			await assertSettingsServerAccess(ctx, input?.serverId);
+
 			await cleanupImages(input?.serverId);
 			await audit(ctx, {
 				action: "delete",
@@ -229,6 +256,8 @@ export const settingsRouter = createTRPCRouter({
 	cleanUnusedVolumes: adminProcedure
 		.input(apiServerSchema)
 		.mutation(async ({ input, ctx }) => {
+			await assertSettingsServerAccess(ctx, input?.serverId);
+
 			await cleanupVolumes(input?.serverId);
 			await audit(ctx, {
 				action: "delete",
@@ -240,6 +269,8 @@ export const settingsRouter = createTRPCRouter({
 	cleanStoppedContainers: adminProcedure
 		.input(apiServerSchema)
 		.mutation(async ({ input, ctx }) => {
+			await assertSettingsServerAccess(ctx, input?.serverId);
+
 			await cleanupContainers(input?.serverId);
 			await audit(ctx, {
 				action: "delete",
@@ -251,6 +282,8 @@ export const settingsRouter = createTRPCRouter({
 	cleanDockerBuilder: adminProcedure
 		.input(apiServerSchema)
 		.mutation(async ({ input, ctx }) => {
+			await assertSettingsServerAccess(ctx, input?.serverId);
+
 			await cleanupBuilders(input?.serverId);
 			await audit(ctx, {
 				action: "delete",
@@ -261,6 +294,8 @@ export const settingsRouter = createTRPCRouter({
 	cleanDockerPrune: adminProcedure
 		.input(apiServerSchema)
 		.mutation(async ({ input, ctx }) => {
+			await assertSettingsServerAccess(ctx, input?.serverId);
+
 			await cleanupSystem(input?.serverId);
 			await cleanupBuilders(input?.serverId);
 			await audit(ctx, {
@@ -273,6 +308,8 @@ export const settingsRouter = createTRPCRouter({
 	cleanAll: adminProcedure
 		.input(apiServerSchema)
 		.mutation(async ({ input, ctx }) => {
+			await assertSettingsServerAccess(ctx, input?.serverId);
+
 			// Execute cleanup in background and return immediately to avoid gateway timeouts
 			const result = await cleanupAllBackground(input?.serverId);
 			await audit(ctx, {
@@ -366,6 +403,8 @@ export const settingsRouter = createTRPCRouter({
 	updateDockerCleanup: adminProcedure
 		.input(apiUpdateDockerCleanup)
 		.mutation(async ({ input, ctx }) => {
+			await assertSettingsServerAccess(ctx, input.serverId);
+
 			if (input.serverId) {
 				await updateServerById(input.serverId, {
 					enableDockerCleanup: input.enableDockerCleanup,
