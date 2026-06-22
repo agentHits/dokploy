@@ -39,8 +39,8 @@ export const deploymentFunction = inngest.createFunction(
 				timeout: "1h", // Allow cancellation for up to 1 hour
 			},
 		],
+		triggers: [{ event: "deployment/requested" }],
 	},
-	{ event: "deployment/requested" },
 
 	async ({ event, step }) => {
 		const jobData = event.data as DeployJob;
@@ -50,7 +50,7 @@ export const deploymentFunction = inngest.createFunction(
 
 			try {
 				const result = await deploy(jobData);
-				logger.info("Deployment finished", result);
+				logger.info({ result }, "Deployment finished");
 
 				// Send success event
 				await inngest.send({
@@ -64,7 +64,7 @@ export const deploymentFunction = inngest.createFunction(
 
 				return result;
 			} catch (error) {
-				logger.error("Deployment failed", { jobData, error });
+				logger.error({ jobData, error }, "Deployment failed");
 
 				// Send failure event
 				await inngest.send({
@@ -98,7 +98,7 @@ app.use(async (c, next) => {
 
 app.post("/deploy", zValidator("json", deployJobSchema), async (c) => {
 	const data = c.req.valid("json");
-	logger.info("Received deployment request", data);
+	logger.info({ data }, "Received deployment request");
 
 	try {
 		// Send event to Inngest instead of adding to Redis queue
@@ -107,9 +107,12 @@ app.post("/deploy", zValidator("json", deployJobSchema), async (c) => {
 			data,
 		});
 
-		logger.info("Deployment event sent to Inngest", {
-			serverId: data.serverId,
-		});
+		logger.info(
+			{
+				serverId: data.serverId,
+			},
+			"Deployment event sent to Inngest",
+		);
 
 		return c.json(
 			{
@@ -119,7 +122,7 @@ app.post("/deploy", zValidator("json", deployJobSchema), async (c) => {
 			200,
 		);
 	} catch (error) {
-		logger.error("Failed to send deployment event", error);
+		logger.error({ error }, "Failed to send deployment event");
 		return c.json(
 			{
 				message: "Failed to queue deployment",
@@ -135,7 +138,7 @@ app.post(
 	zValidator("json", cancelDeploymentSchema),
 	async (c) => {
 		const data = c.req.valid("json");
-		logger.info("Received cancel deployment request", data);
+		logger.info({ data }, "Received cancel deployment request");
 
 		try {
 			// Send cancellation event to Inngest
@@ -150,17 +153,20 @@ app.post(
 					? `applicationId: ${data.applicationId}`
 					: `composeId: ${data.composeId}`;
 
-			logger.info("Deployment cancellation event sent", {
-				...data,
-				identifier,
-			});
+			logger.info(
+				{
+					...data,
+					identifier,
+				},
+				"Deployment cancellation event sent",
+			);
 
 			return c.json({
 				message: "Deployment cancellation requested",
 				applicationType: data.applicationType,
 			});
 		} catch (error) {
-			logger.error("Failed to send deployment cancellation event", error);
+			logger.error({ error }, "Failed to send deployment cancellation event");
 			return c.json(
 				{
 					message: "Failed to cancel deployment",
@@ -194,7 +200,7 @@ app.get("/jobs", async (c) => {
 				503,
 			);
 		}
-		logger.error("Failed to fetch jobs from Inngest", { serverId, error });
+		logger.error({ serverId, error }, "Failed to fetch jobs from Inngest");
 		return c.json([], 200);
 	}
 });
@@ -210,5 +216,5 @@ app.on(
 );
 
 const port = Number.parseInt(process.env.PORT || "3000");
-logger.info("Starting Deployments Server with Inngest ✅", port);
+logger.info({ port }, "Starting Deployments Server with Inngest ✅");
 serve({ fetch: app.fetch, port });

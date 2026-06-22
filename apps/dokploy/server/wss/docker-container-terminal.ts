@@ -118,7 +118,7 @@ export const setupDockerContainerTerminalWebSocketServer = (
 									}
 									stream.write(command.toString());
 								} catch (error) {
-									// @ts-ignore
+									// @ts-expect-error
 									const errorMessage = error?.message as unknown as string;
 									ws.send(errorMessage);
 								}
@@ -173,14 +173,14 @@ export const setupDockerContainerTerminalWebSocketServer = (
 						}
 						ptyProcess.write(command.toString());
 					} catch (error) {
-						// @ts-ignore
+						// @ts-expect-error
 						const errorMessage = error?.message as unknown as string;
 						ws.send(errorMessage);
 					}
 				});
 			}
 		} catch (error) {
-			// @ts-ignore
+			// @ts-expect-error
 			const errorMessage = error?.message as unknown as string;
 
 			ws.send(errorMessage);

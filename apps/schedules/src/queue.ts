@@ -17,7 +17,7 @@ export const cleanQueue = async () => {
 		await jobQueue.obliterate({ force: true });
 		logger.info("Queue Cleaned");
 	} catch (error) {
-		logger.error("Error cleaning queue:", error);
+		logger.error({ error }, "Error cleaning queue");
 	}
 };
 

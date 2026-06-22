@@ -124,7 +124,7 @@ export const AddGithubProvider = () => {
 													isOrganization && !organizationName
 														? "pointer-events-none opacity-50"
 														: ""
-												}`}
+}`}
 										target="_blank"
 										rel="noopener noreferrer"
 									>

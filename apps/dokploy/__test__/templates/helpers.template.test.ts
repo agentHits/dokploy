@@ -47,14 +47,11 @@ describe("helpers functions", () => {
 			[32, 44],
 			[64, 88],
 			[128, 172],
-		])(
-			"should generate a base64 string from parameter %d bytes length",
-			(length, finalLength) => {
-				const base64 = processValue(`\${base64:${length}}`, {}, mockSchema);
-				expect(base64).toMatch(/^[A-Za-z0-9+=/]+={0,2}$/);
-				expect(base64.length).toBe(finalLength);
-			},
-		);
+		])("should generate a base64 string from parameter %d bytes length", (length, finalLength) => {
+			const base64 = processValue(`\${base64:${length}}`, {}, mockSchema);
+			expect(base64).toMatch(/^[A-Za-z0-9+=/]+={0,2}$/);
+			expect(base64.length).toBe(finalLength);
+		});
 	});
 
 	describe("${password}", () => {
@@ -62,14 +59,13 @@ describe("helpers functions", () => {
 			const password = processValue("${password}", {}, mockSchema);
 			expect(password).toMatch(/^[A-Za-z0-9]+$/);
 		});
-		it.each([6, 8, 12, 16, 32])(
-			"should generate a password string respecting parameter %d length",
-			(length) => {
-				const password = processValue(`\${password:${length}}`, {}, mockSchema);
-				expect(password).toMatch(/^[A-Za-z0-9]+$/);
-				expect(password.length).toBe(length);
-			},
-		);
+		it.each([
+			6, 8, 12, 16, 32,
+		])("should generate a password string respecting parameter %d length", (length) => {
+			const password = processValue(`\${password:${length}}`, {}, mockSchema);
+			expect(password).toMatch(/^[A-Za-z0-9]+$/);
+			expect(password.length).toBe(length);
+		});
 	});
 
 	describe("${hash}", () => {
@@ -77,14 +73,13 @@ describe("helpers functions", () => {
 			const hash = processValue("${hash}", {}, mockSchema);
 			expect(hash).toMatch(/^[A-Za-z0-9]+$/);
 		});
-		it.each([6, 8, 12, 16, 32])(
-			"should generate a hash string respecting parameter %d length",
-			(length) => {
-				const hash = processValue(`\${hash:${length}}`, {}, mockSchema);
-				expect(hash).toMatch(/^[A-Za-z0-9]+$/);
-				expect(hash.length).toBe(length);
-			},
-		);
+		it.each([
+			6, 8, 12, 16, 32,
+		])("should generate a hash string respecting parameter %d length", (length) => {
+			const hash = processValue(`\${hash:${length}}`, {}, mockSchema);
+			expect(hash).toMatch(/^[A-Za-z0-9]+$/);
+			expect(hash.length).toBe(length);
+		});
 	});
 
 	describe("${uuid}", () => {
@@ -215,15 +210,14 @@ describe("helpers functions", () => {
 			expect(decodedPayload).toHaveProperty("exp");
 			expect(decodedPayload.iss).toEqual("dokploy");
 		});
-		it.each([6, 8, 12, 16, 32])(
-			"should generate a random hex string from parameter %d byte length",
-			(length) => {
-				const jwt = processValue(`\${jwt:${length}}`, {}, mockSchema);
-				expect(jwt).toMatch(/^[A-Za-z0-9-_.]+$/);
-				expect(jwt.length).toBeGreaterThanOrEqual(length); // bytes translated to hex can take up to 2x the length
-				expect(jwt.length).toBeLessThanOrEqual(length * 2);
-			},
-		);
+		it.each([
+			6, 8, 12, 16, 32,
+		])("should generate a random hex string from parameter %d byte length", (length) => {
+			const jwt = processValue(`\${jwt:${length}}`, {}, mockSchema);
+			expect(jwt).toMatch(/^[A-Za-z0-9-_.]+$/);
+			expect(jwt.length).toBeGreaterThanOrEqual(length); // bytes translated to hex can take up to 2x the length
+			expect(jwt.length).toBeLessThanOrEqual(length * 2);
+		});
 	});
 	describe("${jwt:secret}", () => {
 		it("should generate a JWT string respecting parameter secret from variable", () => {

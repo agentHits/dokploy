@@ -110,14 +110,14 @@ export const ShowDeployment = ({
 		}
 	}, [filteredLogs, autoScroll]);
 
-	const handleCopy = () => {
+	const handleCopy = async () => {
 		const logContent = filteredLogs
 			.map(({ timestamp, message }: LogLine) =>
 				`${timestamp?.toISOString() || ""} ${message}`.trim(),
 			)
 			.join("\n");
 
-		const success = copy(logContent);
+		const success = await copy(logContent);
 		if (success) {
 			setCopied(true);
 			setTimeout(() => setCopied(false), 2000);

@@ -36,7 +36,7 @@ export const stripeRouter = createTRPCRouter({
 		if (!owner?.stripeCustomerId) return null;
 
 		const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-			apiVersion: "2024-09-30.acacia",
+			apiVersion: "2026-05-27.dahlia",
 		});
 		const subscriptions = await stripe.subscriptions.list({
 			customer: owner.stripeCustomerId,
@@ -76,7 +76,7 @@ export const stripeRouter = createTRPCRouter({
 		const stripeCustomerId = user.stripeCustomerId;
 
 		const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-			apiVersion: "2024-09-30.acacia",
+			apiVersion: "2026-05-27.dahlia",
 		});
 
 		const products = await stripe.products.list({
@@ -177,7 +177,7 @@ export const stripeRouter = createTRPCRouter({
 		)
 		.mutation(async ({ ctx, input }) => {
 			const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-				apiVersion: "2024-09-30.acacia",
+				apiVersion: "2026-05-27.dahlia",
 			});
 
 			const items = getStripeItems(
@@ -220,7 +220,7 @@ export const stripeRouter = createTRPCRouter({
 				cancel_url: `${WEBSITE_URL}/dashboard/settings/billing`,
 			});
 
-			return { sessionId: session.id };
+			return { sessionId: session.id, url: session.url };
 		}),
 	createCustomerPortalSession: adminProcedure.mutation(async ({ ctx }) => {
 		// Use the organization's owner account for billing portal
@@ -235,7 +235,7 @@ export const stripeRouter = createTRPCRouter({
 		const stripeCustomerId = owner.stripeCustomerId;
 
 		const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-			apiVersion: "2024-09-30.acacia",
+			apiVersion: "2026-05-27.dahlia",
 		});
 
 		try {
@@ -267,7 +267,7 @@ export const stripeRouter = createTRPCRouter({
 		)
 		.mutation(async ({ ctx, input }) => {
 			const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-				apiVersion: "2024-09-30.acacia",
+				apiVersion: "2026-05-27.dahlia",
 			});
 			const owner = await findUserById(ctx.user.ownerId);
 
@@ -362,7 +362,7 @@ export const stripeRouter = createTRPCRouter({
 		}
 
 		const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-			apiVersion: "2024-09-30.acacia",
+			apiVersion: "2026-05-27.dahlia",
 		});
 
 		try {

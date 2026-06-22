@@ -244,9 +244,9 @@ export const ContainerFreeMonitoring = ({
 							</span>
 							<Progress
 								value={
-									// @ts-ignore
+									// @ts-expect-error
 									(convertMemoryToBytes(currentData.memory.value.used) /
-										// @ts-ignore
+										// @ts-expect-error
 										convertMemoryToBytes(currentData.memory.value.total)) *
 									100
 								}
@@ -255,7 +255,7 @@ export const ContainerFreeMonitoring = ({
 							<DockerMemoryChart
 								accumulativeData={accumulativeData.memory}
 								memoryLimitGB={
-									// @ts-ignore
+									// @ts-expect-error
 									convertMemoryToBytes(currentData.memory.value.total) /
 									1024 ** 3
 								}

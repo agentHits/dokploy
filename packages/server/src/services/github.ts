@@ -266,10 +266,11 @@ export const hasExistingSecurityComment = async ({
 		});
 
 		// Check if any comment contains our security notification marker
-		const securityCommentExists = comments.some((comment) =>
-			comment.body?.includes(
-				"🚨 Preview Deployment Blocked - Security Protection",
-			),
+		const securityCommentExists = comments.some(
+			(comment: { body?: string | null }) =>
+				comment.body?.includes(
+					"🚨 Preview Deployment Blocked - Security Protection",
+				),
 		);
 
 		return securityCommentExists;

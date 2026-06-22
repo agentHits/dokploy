@@ -9,18 +9,19 @@ export const domain = z
 				message: "Domain name cannot have leading or trailing spaces",
 			})
 			.transform((val) => val.trim()),
-		path: z.string().min(1).optional(),
-		internalPath: z.string().optional(),
+		path: z.string().min(1).nullable().optional(),
+		internalPath: z.string().nullable().optional(),
 		stripPath: z.boolean().optional(),
 		port: z
 			.number()
 			.min(1, { message: "Port must be at least 1" })
 			.max(65535, { message: "Port must be 65535 or below" })
+			.nullable()
 			.optional(),
 		https: z.boolean().optional(),
 		certificateType: z.enum(["letsencrypt", "none", "custom"]).optional(),
-		customCertResolver: z.string(),
-		middlewares: z.array(z.string()).optional(),
+		customCertResolver: z.string().nullable().optional(),
+		middlewares: z.array(z.string()).nullable().optional(),
 	})
 	.superRefine((input, ctx) => {
 		if (input.https && !input.certificateType) {
@@ -72,19 +73,20 @@ export const domainCompose = z
 				message: "Domain name cannot have leading or trailing spaces",
 			})
 			.transform((val) => val.trim()),
-		path: z.string().min(1).optional(),
-		internalPath: z.string().optional(),
+		path: z.string().min(1).nullable().optional(),
+		internalPath: z.string().nullable().optional(),
 		stripPath: z.boolean().optional(),
 		port: z
 			.number()
 			.min(1, { message: "Port must be at least 1" })
 			.max(65535, { message: "Port must be 65535 or below" })
+			.nullable()
 			.optional(),
 		https: z.boolean().optional(),
 		certificateType: z.enum(["letsencrypt", "none", "custom"]).optional(),
-		customCertResolver: z.string(),
+		customCertResolver: z.string().nullable().optional(),
 		serviceName: z.string().min(1, { message: "Service name is required" }),
-		middlewares: z.array(z.string()).optional(),
+		middlewares: z.array(z.string()).nullable().optional(),
 	})
 	.superRefine((input, ctx) => {
 		if (input.https && !input.certificateType) {

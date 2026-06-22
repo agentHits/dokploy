@@ -125,7 +125,7 @@ export const runWebServerBackup = async (backup: BackupSchedule) => {
 		writeStream.end();
 		await sendDokployBackupNotifications({
 			type: "error",
-			// @ts-ignore
+			// @ts-expect-error
 			errorMessage: error?.message || "Error message not provided",
 			backupSize: formatBytes(computedBackupSize),
 		});

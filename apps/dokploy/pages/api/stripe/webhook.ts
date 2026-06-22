@@ -31,6 +31,11 @@ function getSubscriptionServersQuantity(
 	}, 0);
 }
 
+function getInvoiceSubscriptionId(invoice: Stripe.Invoice) {
+	const subscription = invoice.parent?.subscription_details?.subscription;
+	return typeof subscription === "string" ? subscription : subscription?.id;
+}
+
 export const config = {
 	api: {
 		bodyParser: false,
@@ -45,7 +50,7 @@ export default async function handler(
 		return res.status(400).send("Webhook Error: Missing Stripe Secret Key");
 	}
 	const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-		apiVersion: "2024-09-30.acacia",
+		apiVersion: "2026-05-27.dahlia",
 		maxNetworkRetries: 3,
 	});
 
@@ -208,10 +213,14 @@ export default async function handler(
 		}
 		case "invoice.payment_succeeded": {
 			const newInvoice = event.data.object as Stripe.Invoice;
+			const subscriptionId = getInvoiceSubscriptionId(newInvoice);
 
-			const subscription = await stripe.subscriptions.retrieve(
-				newInvoice.subscription as string,
-			);
+			if (!subscriptionId) {
+				console.log("Skipping invoice.payment_succeeded without subscription");
+				break;
+			}
+
+			const subscription = await stripe.subscriptions.retrieve(subscriptionId);
 
 			if (subscription.status !== "active") {
 				console.log(
@@ -254,10 +263,14 @@ export default async function handler(
 		}
 		case "invoice.payment_failed": {
 			const newInvoice = event.data.object as Stripe.Invoice;
+			const subscriptionId = getInvoiceSubscriptionId(newInvoice);
 
-			const subscription = await stripe.subscriptions.retrieve(
-				newInvoice.subscription as string,
-			);
+			if (!subscriptionId) {
+				console.log("Skipping invoice.payment_failed without subscription");
+				break;
+			}
+
+			const subscription = await stripe.subscriptions.retrieve(subscriptionId);
 			if (subscription.status !== "active") {
 				const admin = await findUserByStripeCustomerId(
 					newInvoice.customer as string,

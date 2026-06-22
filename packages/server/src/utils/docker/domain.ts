@@ -125,7 +125,7 @@ exit 1;
 		const encodedContent = encodeBase64(composeString);
 		return `echo "${encodedContent}" | base64 -d > "${path}";`;
 	} catch (error) {
-		// @ts-ignore
+		// @ts-expect-error
 		return `echo "❌ Has occurred an error: ${error?.message || error}";
 exit 1;
 		`;

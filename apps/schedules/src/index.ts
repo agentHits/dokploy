@@ -79,7 +79,7 @@ app.post("/update-backup", zValidator("json", jobQueueSchema), async (c) => {
 app.post("/remove-job", zValidator("json", jobQueueSchema), async (c) => {
 	const data = c.req.valid("json");
 	const result = await removeJob(data);
-	logger.info("Job removed successfully", data);
+	logger.info({ data }, "Job removed successfully");
 	return c.json({ message: "Job removed successfully", result });
 });
 
@@ -112,5 +112,5 @@ process.on("unhandledRejection", (reason, _promise) => {
 
 const port = Number.parseInt(process.env.PORT || "3000");
 
-logger.info("Starting Schedules Server ✅", port);
+logger.info({ port }, "Starting Schedules Server ✅");
 serve({ fetch: app.fetch, port });

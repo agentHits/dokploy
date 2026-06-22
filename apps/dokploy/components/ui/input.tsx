@@ -23,7 +23,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
 		ref,
 	) => {
 		const [showPassword, setShowPassword] = React.useState(false);
-		const inputRef = React.useRef<HTMLInputElement>(null);
+		const inputRef = React.useRef<HTMLInputElement | null>(null);
 		const isPassword = type === "password";
 		const shouldShowGenerator =
 			isPassword &&
@@ -34,7 +34,6 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
 
 		const setRefs = React.useCallback(
 			(node: HTMLInputElement | null) => {
-				// @ts-ignore
 				inputRef.current = node;
 				if (typeof ref === "function") {
 					ref(node);

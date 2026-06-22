@@ -1,6 +1,5 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.ts";
 
 @layer base {
 	:root {
@@ -129,7 +128,7 @@
 }
 
 .xterm-viewport {
-	border-radius: 0.75rem /* 12px */ !important;
+	border-radius: /* 12px */ 0.75rem !important;
 }
 
 .xterm .xterm-viewport {

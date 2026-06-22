@@ -21,11 +21,11 @@ export const execAsync = async (
 		};
 	} catch (error) {
 		if (error instanceof Error) {
-			// @ts-ignore - exec error has these properties
+			// @ts-expect-error - exec error has these properties
 			const exitCode = error.code;
-			// @ts-ignore
+			// @ts-expect-error
 			const stdout = error.stdout?.toString() || "";
-			// @ts-ignore
+			// @ts-expect-error
 			const stderr = error.stderr?.toString() || "";
 
 			throw new ExecError(`Command execution failed: ${error.message}`, {
@@ -61,7 +61,7 @@ export const execAsyncStream = (
 						command,
 						stdout: stdoutComplete,
 						stderr: stderrComplete,
-						// @ts-ignore
+						// @ts-expect-error
 						exitCode: error.code,
 						originalError: error,
 					}),

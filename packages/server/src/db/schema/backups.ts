@@ -141,11 +141,11 @@ export const backupsRelations = relations(backups, ({ one, many }) => ({
 const createSchema = createInsertSchema(backups, {
 	backupId: z.string(),
 	destinationId: z.string(),
-	enabled: z.boolean().optional(),
+	enabled: z.boolean().nullable().optional(),
 	prefix: z.string().min(1),
 	database: z.string().min(1),
 	schedule: z.string(),
-	keepLatestCount: z.number().optional(),
+	keepLatestCount: z.number().nullable().optional(),
 	databaseType: z.enum([
 		"postgres",
 		"mariadb",
@@ -154,12 +154,12 @@ const createSchema = createInsertSchema(backups, {
 		"web-server",
 		"libsql",
 	]),
-	postgresId: z.string().optional(),
-	mariadbId: z.string().optional(),
-	mysqlId: z.string().optional(),
-	mongoId: z.string().optional(),
-	libsqlId: z.string().optional(),
-	userId: z.string().optional(),
+	postgresId: z.string().nullable().optional(),
+	mariadbId: z.string().nullable().optional(),
+	mysqlId: z.string().nullable().optional(),
+	mongoId: z.string().nullable().optional(),
+	libsqlId: z.string().nullable().optional(),
+	userId: z.string().nullable().optional(),
 	metadata: z.any().optional(),
 });
 

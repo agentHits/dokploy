@@ -43,9 +43,8 @@ export const DockerTerminal: React.FC<Props> = ({
 		const ws = new WebSocket(wsUrl);
 
 		const addonAttach = new AttachAddon(ws);
-		// @ts-ignore
+		// @ts-expect-error
 		term.open(termRef.current);
-		// @ts-ignore
 		term.loadAddon(addonFit);
 		term.loadAddon(addonAttach);
 		addonFit.fit();
