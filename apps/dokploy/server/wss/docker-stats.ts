@@ -9,6 +9,7 @@ import {
 	validateRequest,
 } from "@dokploy/server";
 import { WebSocketServer } from "ws";
+import { canAccessMonitoringWebSocket } from "./server-permission";
 
 export const setupDockerStatsMonitoringSocketServer = (
 	server: http.Server<typeof http.IncomingMessage, typeof http.ServerResponse>,
@@ -55,6 +56,12 @@ export const setupDockerStatsMonitoringSocketServer = (
 			ws.close();
 			return;
 		}
+
+		if (!(await canAccessMonitoringWebSocket({ user, session }))) {
+			ws.close();
+			return;
+		}
+
 		const intervalId = setInterval(async () => {
 			try {
 				// Special case: when monitoring "dokploy", get host system stats instead of container stats

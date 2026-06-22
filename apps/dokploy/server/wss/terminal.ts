@@ -9,6 +9,7 @@ import { publicIpv4, publicIpv6 } from "public-ip";
 import { Client, type ConnectConfig } from "ssh2";
 import { WebSocketServer } from "ws";
 import { getDockerHost } from "../utils/docker";
+import { canAccessServerTerminalWebSocket } from "./server-permission";
 import { setupLocalServerSSHKey } from "./utils";
 
 const COMMAND_TO_ALLOW_LOCAL_ACCESS = `
@@ -88,6 +89,13 @@ export const setupTerminalWebSocketServer = (
 		const serverId = url.searchParams.get("serverId");
 		const { user, session } = await validateRequest(req);
 		if (!user || !session || !serverId) {
+			ws.close();
+			return;
+		}
+
+		if (
+			!(await canAccessServerTerminalWebSocket({ user, session, serverId }))
+		) {
 			ws.close();
 			return;
 		}
