@@ -14,6 +14,10 @@ import type { MysqlNested } from "../databases/mysql";
 import type { PostgresNested } from "../databases/postgres";
 import type { RedisNested } from "../databases/redis";
 import {
+	type BindMountServiceContext,
+	normalizeBindMountHostPath,
+} from "../filesystem/bind-mount-path";
+import {
 	quoteShellArg,
 	resolveFilePathInsideDirectory,
 } from "../filesystem/safe-path";
@@ -641,7 +645,10 @@ export const generateConfigContainer = (
 	};
 };
 
-export const generateBindMounts = (mounts: ApplicationNested["mounts"]) => {
+export const generateBindMounts = (
+	mounts: ApplicationNested["mounts"],
+	serviceContext: BindMountServiceContext,
+) => {
 	if (!mounts || mounts.length === 0) {
 		return [];
 	}
@@ -650,7 +657,7 @@ export const generateBindMounts = (mounts: ApplicationNested["mounts"]) => {
 		.filter((mount) => mount.type === "bind")
 		.map((mount) => ({
 			Type: "bind" as const,
-			Source: mount.hostPath || "",
+			Source: normalizeBindMountHostPath(mount.hostPath, serviceContext),
 			Target: mount.mountPath,
 		}));
 };

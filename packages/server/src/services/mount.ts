@@ -4,13 +4,25 @@ import { paths } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
 import {
 	type apiCreateMount,
+	applications,
+	compose,
+	libsql,
+	mariadb,
+	mongo,
 	mounts,
+	mysql,
+	postgres,
+	redis,
 	type ServiceType,
 } from "@dokploy/server/db/schema";
 import {
 	createFile,
 	getCreateFileCommand,
 } from "@dokploy/server/utils/docker/utils";
+import {
+	type BindMountServiceContext,
+	normalizeBindMountHostPath,
+} from "@dokploy/server/utils/filesystem/bind-mount-path";
 import {
 	normalizeRelativeFilePath,
 	quoteShellArg,
@@ -52,9 +64,195 @@ const normalizeMountInput = <T extends Partial<Mount>>(input: T) => {
 	return input;
 };
 
+const findBindMountServiceContext = async (
+	serviceType: ServiceType,
+	serviceId: string,
+): Promise<BindMountServiceContext> => {
+	const columns = {
+		appName: true,
+		serverId: true,
+	} as const;
+	let service: { appName: string; serverId: string | null } | undefined | null;
+
+	switch (serviceType) {
+		case "application":
+			service = await db.query.applications.findFirst({
+				where: eq(applications.applicationId, serviceId),
+				columns,
+			});
+			break;
+		case "compose":
+			service = await db.query.compose.findFirst({
+				where: eq(compose.composeId, serviceId),
+				columns,
+			});
+			break;
+		case "libsql":
+			service = await db.query.libsql.findFirst({
+				where: eq(libsql.libsqlId, serviceId),
+				columns,
+			});
+			break;
+		case "mariadb":
+			service = await db.query.mariadb.findFirst({
+				where: eq(mariadb.mariadbId, serviceId),
+				columns,
+			});
+			break;
+		case "mongo":
+			service = await db.query.mongo.findFirst({
+				where: eq(mongo.mongoId, serviceId),
+				columns,
+			});
+			break;
+		case "mysql":
+			service = await db.query.mysql.findFirst({
+				where: eq(mysql.mysqlId, serviceId),
+				columns,
+			});
+			break;
+		case "postgres":
+			service = await db.query.postgres.findFirst({
+				where: eq(postgres.postgresId, serviceId),
+				columns,
+			});
+			break;
+		case "redis":
+			service = await db.query.redis.findFirst({
+				where: eq(redis.redisId, serviceId),
+				columns,
+			});
+			break;
+		default:
+			serviceType satisfies never;
+	}
+
+	if (!service) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: "Service not found",
+		});
+	}
+
+	return {
+		appName: service.appName,
+		serverId: service.serverId,
+		serviceType,
+	};
+};
+
+const getBindMountServiceContextFromMount = (
+	mount: MountNested,
+): BindMountServiceContext => {
+	if (mount.serviceType === "application" && mount.application) {
+		return {
+			appName: mount.application.appName,
+			serverId: mount.application.serverId,
+			serviceType: mount.serviceType,
+		};
+	}
+	if (mount.serviceType === "postgres" && mount.postgres) {
+		return {
+			appName: mount.postgres.appName,
+			serverId: mount.postgres.serverId,
+			serviceType: mount.serviceType,
+		};
+	}
+	if (mount.serviceType === "mariadb" && mount.mariadb) {
+		return {
+			appName: mount.mariadb.appName,
+			serverId: mount.mariadb.serverId,
+			serviceType: mount.serviceType,
+		};
+	}
+	if (mount.serviceType === "mongo" && mount.mongo) {
+		return {
+			appName: mount.mongo.appName,
+			serverId: mount.mongo.serverId,
+			serviceType: mount.serviceType,
+		};
+	}
+	if (mount.serviceType === "mysql" && mount.mysql) {
+		return {
+			appName: mount.mysql.appName,
+			serverId: mount.mysql.serverId,
+			serviceType: mount.serviceType,
+		};
+	}
+	if (mount.serviceType === "redis" && mount.redis) {
+		return {
+			appName: mount.redis.appName,
+			serverId: mount.redis.serverId,
+			serviceType: mount.serviceType,
+		};
+	}
+	if (mount.serviceType === "compose" && mount.compose) {
+		return {
+			appName: mount.compose.appName,
+			serverId: mount.compose.serverId,
+			serviceType: mount.serviceType,
+		};
+	}
+	if (mount.serviceType === "libsql" && mount.libsql) {
+		return {
+			appName: mount.libsql.appName,
+			serverId: mount.libsql.serverId,
+			serviceType: mount.serviceType,
+		};
+	}
+
+	throw new TRPCError({
+		code: "BAD_REQUEST",
+		message: "Mount service not found",
+	});
+};
+
+const normalizeCreateMountInput = async (
+	input: z.infer<typeof apiCreateMount>,
+) => {
+	const normalizedInput = normalizeMountInput(input);
+	if (normalizedInput.type !== "bind") {
+		return normalizedInput;
+	}
+
+	const serviceContext = await findBindMountServiceContext(
+		normalizedInput.serviceType,
+		normalizedInput.serviceId,
+	);
+
+	return {
+		...normalizedInput,
+		hostPath: normalizeBindMountHostPath(
+			normalizedInput.hostPath,
+			serviceContext,
+		),
+	};
+};
+
+const normalizeUpdateMountInput = async (
+	mountId: string,
+	mountData: Partial<Mount>,
+) => {
+	const existingMount = await findMountById(mountId);
+	const normalizedMountData = normalizeMountInput(mountData);
+	const nextType = normalizedMountData.type ?? existingMount.type;
+
+	if (nextType !== "bind") {
+		return normalizedMountData;
+	}
+
+	return {
+		...normalizedMountData,
+		hostPath: normalizeBindMountHostPath(
+			normalizedMountData.hostPath ?? existingMount.hostPath,
+			getBindMountServiceContextFromMount(existingMount),
+		),
+	};
+};
+
 export const createMount = async (input: z.infer<typeof apiCreateMount>) => {
 	try {
-		const normalizedInput = normalizeMountInput(input);
+		const normalizedInput = await normalizeCreateMountInput(input);
 		const { serviceId, ...rest } = normalizedInput;
 		const value = await db
 			.insert(mounts)
@@ -258,7 +456,10 @@ export const updateMount = async (
 	mountId: string,
 	mountData: Partial<Mount>,
 ) => {
-	const normalizedMountData = normalizeMountInput(mountData);
+	const normalizedMountData = await normalizeUpdateMountInput(
+		mountId,
+		mountData,
+	);
 	const mount = await db.transaction(async (tx) => {
 		const mount = await tx
 			.update(mounts)
