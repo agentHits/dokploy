@@ -23,6 +23,7 @@
 | F-01 | Remediated after scan | Commit `5b1a91d4f` secured the container metrics target and token boundary with focused regression tests. |
 | F-04 | Remediated after scan | Commit `530393895` secured registry credential test command construction and access checks. |
 | F-05 | Remediated after scan | Commit `48a5b8572` secured build and compose command construction boundaries with focused regression tests. |
+| F-06 | Remediated after scan | Commit `25d6648b9` secured remote Traefik config writes with focused regression tests. |
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations; related surfaces still need revalidation. |
 
 ## Why This Is Redacted

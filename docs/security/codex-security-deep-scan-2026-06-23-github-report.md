@@ -55,7 +55,7 @@ role-matrix, or real deploy smoke tests.
 | F-03 | High | High | Server assignment authorization boundary | Partially remediated after scan |
 | F-04 | High | High | Registry credential test command boundary | Remediated after scan |
 | F-05 | High | Medium | Build and compose command construction boundary | Remediated after scan |
-| F-06 | High | Medium | Remote routing config write boundary | Open |
+| F-06 | High | Medium | Remote routing config write boundary | Remediated after scan |
 | F-07 | High | High | Backup destination command boundary | Open |
 | F-08 | High | High | Git provider clone command boundary | Open, needs revalidation |
 | F-09 | High | Medium | Host path mount exposure boundary | Open |
@@ -75,6 +75,7 @@ role-matrix, or real deploy smoke tests.
 | F-01 | Remediated after scan | Commit `5b1a91d4f` moved container metrics target and bearer-token resolution server-side, removed caller-supplied URL/token inputs, and added focused boundary tests. |
 | F-04 | Remediated after scan | Commit `530393895` added server-access checks, safe registry login command construction, redacted registry test errors, and focused regression tests. |
 | F-05 | Remediated after scan | Commit `48a5b8572` added argv-safe compose/dockerfile command construction, custom compose command rejection, env assignment validation, quoted env-file redirects, and focused regression tests. |
+| F-06 | Remediated after scan | Commit `25d6648b9` moved remote Traefik YAML writes to encoded payload transport, quoted the destination path, and added focused regression tests. |
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations plus focused regression tests. Other server-scoped surfaces still need revalidation. |
 | Report tracking | Added | Commit `b072b017c` added a public-safe security remediation tracker. |
 
