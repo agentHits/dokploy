@@ -52,7 +52,7 @@ export const dockerRouter = createTRPCRouter({
 			return await getContainers(input.serverId);
 		}),
 
-	restartContainer: withPermission("docker", "read")
+	restartContainer: withPermission("docker", "execute")
 		.input(
 			z.object({
 				containerId: z
@@ -73,7 +73,7 @@ export const dockerRouter = createTRPCRouter({
 			});
 		}),
 
-	startContainer: withPermission("docker", "read")
+	startContainer: withPermission("docker", "execute")
 		.input(
 			z.object({
 				containerId: z
@@ -94,7 +94,7 @@ export const dockerRouter = createTRPCRouter({
 			});
 		}),
 
-	stopContainer: withPermission("docker", "read")
+	stopContainer: withPermission("docker", "execute")
 		.input(
 			z.object({
 				containerId: z
@@ -115,7 +115,7 @@ export const dockerRouter = createTRPCRouter({
 			});
 		}),
 
-	killContainer: withPermission("docker", "read")
+	killContainer: withPermission("docker", "execute")
 		.input(
 			z.object({
 				containerId: z
@@ -136,7 +136,7 @@ export const dockerRouter = createTRPCRouter({
 			});
 		}),
 
-	removeContainer: withPermission("docker", "read")
+	removeContainer: withPermission("docker", "delete")
 		.input(
 			z.object({
 				containerId: z
@@ -157,7 +157,7 @@ export const dockerRouter = createTRPCRouter({
 			});
 		}),
 
-	getConfig: withPermission("docker", "read")
+	getConfig: withPermission("docker", "inspect")
 		.input(
 			z.object({
 				containerId: z
@@ -230,7 +230,7 @@ export const dockerRouter = createTRPCRouter({
 			return await getServiceContainersByAppName(input.appName, input.serverId);
 		}),
 
-	uploadFileToContainer: withPermission("docker", "read")
+	uploadFileToContainer: withPermission("docker", "write")
 		.input(uploadFileToContainerSchema)
 		.mutation(async ({ input, ctx }) => {
 			await assertDockerServerAccess(ctx, input.serverId);

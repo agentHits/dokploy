@@ -28,7 +28,7 @@ export const canAccessServerTerminalWebSocket = async ({
 
 	try {
 		await checkPermission(getPermissionContext({ user, session }), {
-			server: ["read"],
+			server: ["execute"],
 		});
 
 		if (serverId === "local") {

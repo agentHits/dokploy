@@ -115,7 +115,7 @@ describe("Docker WebSocket permission gate", () => {
 		expect(mocks.spawn).not.toHaveBeenCalled();
 	});
 
-	it("closes terminal sockets before local Docker spawn when docker.read is denied", async () => {
+	it("closes terminal sockets before local Docker spawn when docker.execute is denied", async () => {
 		server = http.createServer();
 		setupDockerContainerTerminalWebSocketServer(server);
 		const port = await listen(server);
@@ -132,7 +132,7 @@ describe("Docker WebSocket permission gate", () => {
 				user: { id: "user-1" },
 				session: { activeOrganizationId: "org-1" },
 			},
-			{ docker: ["read"] },
+			{ docker: ["execute"] },
 		);
 		expect(mocks.findServerById).not.toHaveBeenCalled();
 		expect(mocks.spawn).not.toHaveBeenCalled();

@@ -123,4 +123,56 @@ describe("docker router assigned-server boundary", () => {
 			undefined,
 		);
 	});
+
+	it("requires docker.execute for container lifecycle actions", async () => {
+		const caller = createCaller();
+
+		await caller.restartContainer({ containerId: "container-1" });
+		await caller.startContainer({ containerId: "container-1" });
+		await caller.stopContainer({ containerId: "container-1" });
+		await caller.killContainer({ containerId: "container-1" });
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			docker: ["execute"],
+		});
+		expect(
+			mocks.checkPermission.mock.calls.filter(
+				([, permissions]) =>
+					JSON.stringify(permissions) === JSON.stringify({ docker: ["read"] }),
+			),
+		).toHaveLength(0);
+	});
+
+	it("requires docker.delete for container removal", async () => {
+		await createCaller().removeContainer({ containerId: "container-1" });
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			docker: ["delete"],
+		});
+	});
+
+	it("requires docker.inspect for container config inspection", async () => {
+		mocks.getConfig.mockResolvedValue({ Config: { Env: ["SECRET=value"] } });
+
+		await createCaller().getConfig({ containerId: "container-1" });
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			docker: ["inspect"],
+		});
+	});
+
+	it("requires docker.write for container file uploads", async () => {
+		const file = new File(["content"], "config.txt", { type: "text/plain" });
+
+		await createCaller().uploadFileToContainer({
+			containerId: "container-1",
+			file,
+			destinationPath: "/tmp/config.txt",
+		});
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			docker: ["write"],
+		});
+		expect(mocks.uploadFileToContainer).toHaveBeenCalled();
+	});
 });

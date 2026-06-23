@@ -27,6 +27,8 @@ const mockMemberData = (
 
 let memberToReturn: ReturnType<typeof mockMemberData> =
 	mockMemberData("member");
+let organizationRolesToReturn: Array<{ permission: string }> = [];
+let hasValidLicenseToReturn = false;
 
 vi.mock("@dokploy/server/db", () => ({
 	db: {
@@ -37,14 +39,14 @@ vi.mock("@dokploy/server/db", () => ({
 			},
 			organizationRole: {
 				findFirst: vi.fn(),
-				findMany: vi.fn(() => Promise.resolve([])),
+				findMany: vi.fn(() => Promise.resolve(organizationRolesToReturn)),
 			},
 		},
 	},
 }));
 
 vi.mock("@dokploy/server/services/proprietary/license-key", () => ({
-	hasValidLicense: vi.fn(() => Promise.resolve(false)),
+	hasValidLicense: vi.fn(() => Promise.resolve(hasValidLicenseToReturn)),
 }));
 
 const { checkPermission } = await import("@dokploy/server/services/permission");
@@ -56,6 +58,9 @@ const ctx = {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	memberToReturn = mockMemberData("member");
+	organizationRolesToReturn = [];
+	hasValidLicenseToReturn = false;
 });
 
 describe("owner and admin bypass enterprise resources", () => {
@@ -179,8 +184,65 @@ describe("legacy boolean overrides for member", () => {
 		).resolves.toBeUndefined();
 	});
 
+	it("member fails privileged docker actions with only canAccessToDocker=true", async () => {
+		memberToReturn = mockMemberData("member", { canAccessToDocker: true });
+		await expect(
+			checkPermission(ctx, { docker: ["execute"] } as any),
+		).rejects.toThrow();
+		await expect(
+			checkPermission(ctx, { docker: ["write"] } as any),
+		).rejects.toThrow();
+		await expect(
+			checkPermission(ctx, { docker: ["inspect"] } as any),
+		).rejects.toThrow();
+		await expect(
+			checkPermission(ctx, { docker: ["delete"] } as any),
+		).rejects.toThrow();
+	});
+
 	it("member fails docker.read with canAccessToDocker=false", async () => {
 		memberToReturn = mockMemberData("member");
 		await expect(checkPermission(ctx, { docker: ["read"] })).rejects.toThrow();
+	});
+});
+
+describe("custom role read permissions stay least-privileged", () => {
+	it("docker.read custom role does not grant privileged docker actions", async () => {
+		memberToReturn = mockMemberData("docker-reader");
+		hasValidLicenseToReturn = true;
+		organizationRolesToReturn = [
+			{ permission: JSON.stringify({ docker: ["read"] }) },
+		];
+
+		await expect(
+			checkPermission(ctx, { docker: ["read"] }),
+		).resolves.toBeUndefined();
+		await expect(
+			checkPermission(ctx, { docker: ["execute"] } as any),
+		).rejects.toThrow();
+		await expect(
+			checkPermission(ctx, { docker: ["write"] } as any),
+		).rejects.toThrow();
+		await expect(
+			checkPermission(ctx, { docker: ["inspect"] } as any),
+		).rejects.toThrow();
+		await expect(
+			checkPermission(ctx, { docker: ["delete"] } as any),
+		).rejects.toThrow();
+	});
+
+	it("server.read custom role does not grant server terminal execution", async () => {
+		memberToReturn = mockMemberData("server-reader");
+		hasValidLicenseToReturn = true;
+		organizationRolesToReturn = [
+			{ permission: JSON.stringify({ server: ["read"] }) },
+		];
+
+		await expect(
+			checkPermission(ctx, { server: ["read"] }),
+		).resolves.toBeUndefined();
+		await expect(
+			checkPermission(ctx, { server: ["execute"] } as any),
+		).rejects.toThrow();
 	});
 });

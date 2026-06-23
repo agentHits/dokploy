@@ -36,7 +36,7 @@ describe("canAccessServerTerminalWebSocket", () => {
 		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
 	});
 
-	it("allows local terminal access with server.read permission", async () => {
+	it("allows local terminal access with server.execute permission", async () => {
 		mocks.checkPermission.mockResolvedValue(undefined);
 
 		await expect(
@@ -52,7 +52,7 @@ describe("canAccessServerTerminalWebSocket", () => {
 				user: { id: "user-1" },
 				session: { activeOrganizationId: "org-1" },
 			},
-			{ server: ["read"] },
+			{ server: ["execute"] },
 		);
 		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
 	});
@@ -88,7 +88,7 @@ describe("canAccessServerTerminalWebSocket", () => {
 		).resolves.toBe(false);
 	});
 
-	it("rejects terminal access without server.read permission", async () => {
+	it("rejects terminal access without server.execute permission", async () => {
 		mocks.checkPermission.mockRejectedValue(new Error("Permission denied"));
 
 		await expect(

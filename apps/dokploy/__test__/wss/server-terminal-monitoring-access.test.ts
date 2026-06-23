@@ -108,7 +108,7 @@ describe("terminal WebSocket server permission gate", () => {
 		server = undefined;
 	});
 
-	it("closes local terminal sockets before SSH key setup when server.read is denied", async () => {
+	it("closes local terminal sockets before SSH key setup when server.execute is denied", async () => {
 		mocks.checkPermission.mockRejectedValue(new Error("Permission denied"));
 
 		server = http.createServer();
@@ -127,7 +127,7 @@ describe("terminal WebSocket server permission gate", () => {
 				user: { id: "user-1" },
 				session: { activeOrganizationId: "org-1" },
 			},
-			{ server: ["read"] },
+			{ server: ["execute"] },
 		);
 		expect(mocks.setupLocalServerSSHKey).not.toHaveBeenCalled();
 		expect(mocks.findServerById).not.toHaveBeenCalled();
@@ -150,7 +150,7 @@ describe("terminal WebSocket server permission gate", () => {
 				user: { id: "user-1" },
 				session: { activeOrganizationId: "org-1" },
 			},
-			{ server: ["read"] },
+			{ server: ["execute"] },
 		);
 		expect(mocks.getAccessibleServerIds).toHaveBeenCalledWith({
 			userId: "user-1",

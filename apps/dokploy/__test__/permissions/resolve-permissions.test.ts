@@ -105,6 +105,7 @@ describe("enterprise resources for static roles", () => {
 		const perms = await resolvePermissions(ctx);
 
 		expect(perms.server.read).toBe(false);
+		expect((perms.server as any).execute).toBe(false);
 		expect(perms.registry.read).toBe(false);
 		expect(perms.certificate.read).toBe(false);
 		expect(perms.destination.read).toBe(false);
@@ -142,6 +143,10 @@ describe("free-tier resources for member", () => {
 		memberToReturn = mockMemberData("member", { canAccessToDocker: true });
 		const perms = await resolvePermissions(ctx);
 		expect(perms.docker.read).toBe(true);
+		expect((perms.docker as any).execute).toBe(false);
+		expect((perms.docker as any).write).toBe(false);
+		expect((perms.docker as any).inspect).toBe(false);
+		expect((perms.docker as any).delete).toBe(false);
 	});
 });
 
@@ -155,6 +160,10 @@ describe("free-tier resources for owner", () => {
 		expect(perms.service.read).toBe(true);
 		expect(perms.service.delete).toBe(true);
 		expect(perms.docker.read).toBe(true);
+		expect((perms.docker as any).execute).toBe(true);
+		expect((perms.docker as any).write).toBe(true);
+		expect((perms.docker as any).inspect).toBe(true);
+		expect((perms.docker as any).delete).toBe(true);
 		expect(perms.traefikFiles.read).toBe(true);
 		expect(perms.traefikFiles.write).toBe(true);
 	});
