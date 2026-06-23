@@ -15,7 +15,6 @@ import {
 	updateVolumeBackupSchema,
 	volumeBackups,
 } from "@dokploy/server/db/schema";
-import { findDestinationById } from "@dokploy/server/services/destination";
 import { checkServicePermissionAndAccess } from "@dokploy/server/services/permission";
 import { findServerById } from "@dokploy/server/services/server";
 import {
@@ -27,6 +26,7 @@ import { observable } from "@trpc/server/observable";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
+import { assertDestinationAccess } from "@/server/api/utils/destination-access";
 import { removeJob, schedule, updateJob } from "@/server/utils/backup";
 import { createTRPCRouter, protectedProcedure, withPermission } from "../trpc";
 
@@ -83,6 +83,10 @@ export const volumeBackupsRouter = createTRPCRouter({
 					volumeBackup: ["create"],
 				});
 			}
+			await assertDestinationAccess(
+				input.destinationId,
+				ctx.session.activeOrganizationId,
+			);
 			const newVolumeBackup = await createVolumeBackup(input);
 
 			if (newVolumeBackup?.enabled) {
@@ -175,6 +179,10 @@ export const volumeBackupsRouter = createTRPCRouter({
 					volumeBackup: ["update"],
 				});
 			}
+			await assertDestinationAccess(
+				input.destinationId,
+				ctx.session.activeOrganizationId,
+			);
 			const updatedVolumeBackup = await updateVolumeBackup(
 				input.volumeBackupId,
 				input,
@@ -268,13 +276,10 @@ export const volumeBackupsRouter = createTRPCRouter({
 			}),
 		)
 		.subscription(async ({ input, ctx }) => {
-			const destination = await findDestinationById(input.destinationId);
-			if (destination.organizationId !== ctx.session.activeOrganizationId) {
-				throw new TRPCError({
-					code: "UNAUTHORIZED",
-					message: "You don't have access to this destination.",
-				});
-			}
+			await assertDestinationAccess(
+				input.destinationId,
+				ctx.session.activeOrganizationId,
+			);
 			if (input.serverId) {
 				const targetServer = await findServerById(input.serverId);
 				if (targetServer.organizationId !== ctx.session.activeOrganizationId) {

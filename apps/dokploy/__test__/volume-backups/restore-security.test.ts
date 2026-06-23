@@ -44,12 +44,21 @@ vi.mock("@dokploy/server", () => ({
 }));
 
 vi.mock("@dokploy/server/index", () => ({
+	IS_CLOUD: false,
+	createVolumeBackup: mocks.createVolumeBackup,
 	findApplicationById: mocks.findApplicationById,
 	findComposeById: mocks.findComposeById,
 	findDestinationById: mocks.findDestinationById,
+	findVolumeBackupById: mocks.findVolumeBackupById,
 	getS3Credentials: mocks.getS3Credentials,
 	hasValidLicense: vi.fn().mockResolvedValue(true),
 	paths: mocks.paths,
+	removeVolumeBackup: mocks.removeVolumeBackup,
+	removeVolumeBackupJob: mocks.removeVolumeBackupJob,
+	restoreVolume: mocks.restoreVolume,
+	runVolumeBackup: mocks.runVolumeBackup,
+	scheduleVolumeBackup: mocks.scheduleVolumeBackup,
+	updateVolumeBackup: mocks.updateVolumeBackup,
 }));
 
 vi.mock("@dokploy/server/constants", () => ({
@@ -149,6 +158,98 @@ const createCaller = () =>
 			role: "admin",
 		},
 	} as never);
+
+const safeCreateVolumeBackupInput = {
+	applicationId: "app-1",
+	cronExpression: "0 0 * * *",
+	destinationId: "destination-1",
+	enabled: false,
+	keepLatestCount: 3,
+	name: "daily volume",
+	prefix: "daily",
+	serviceName: "app",
+	serviceType: "application" as const,
+	turnOff: false,
+	volumeName: "data_volume",
+};
+
+const safeUpdateVolumeBackupInput = {
+	...safeCreateVolumeBackupInput,
+	volumeBackupId: "volume-backup-1",
+};
+
+describe("volume backup destination ownership boundary", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+
+		mocks.checkServicePermissionAndAccess.mockResolvedValue(undefined);
+		mocks.createVolumeBackup.mockResolvedValue({
+			...safeCreateVolumeBackupInput,
+			volumeBackupId: "volume-backup-1",
+		});
+		mocks.findDestinationById.mockResolvedValue({
+			bucket: "dokploy-backups",
+			organizationId: "org-2",
+		});
+		mocks.findVolumeBackupById.mockResolvedValue({
+			...safeUpdateVolumeBackupInput,
+		});
+		mocks.updateVolumeBackup.mockResolvedValue({
+			...safeUpdateVolumeBackupInput,
+		});
+	});
+
+	it("rejects cross-organization destinations on volume-backup create before persistence", async () => {
+		await expect(
+			createCaller().create(safeCreateVolumeBackupInput),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.createVolumeBackup).not.toHaveBeenCalled();
+		expect(mocks.scheduleVolumeBackup).not.toHaveBeenCalled();
+		expect(mocks.schedule).not.toHaveBeenCalled();
+	});
+
+	it("rejects cross-organization destinations on volume-backup update before persistence", async () => {
+		await expect(
+			createCaller().update(safeUpdateVolumeBackupInput),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.updateVolumeBackup).not.toHaveBeenCalled();
+		expect(mocks.scheduleVolumeBackup).not.toHaveBeenCalled();
+		expect(mocks.updateJob).not.toHaveBeenCalled();
+	});
+
+	it("allows same-organization destinations on volume-backup create", async () => {
+		mocks.findDestinationById.mockResolvedValue({
+			bucket: "dokploy-backups",
+			organizationId: "org-1",
+		});
+
+		await expect(
+			createCaller().create(safeCreateVolumeBackupInput),
+		).resolves.toMatchObject({ volumeBackupId: "volume-backup-1" });
+
+		expect(mocks.createVolumeBackup).toHaveBeenCalledWith(
+			safeCreateVolumeBackupInput,
+		);
+	});
+
+	it("allows same-organization destinations on volume-backup update", async () => {
+		mocks.findDestinationById.mockResolvedValue({
+			bucket: "dokploy-backups",
+			organizationId: "org-1",
+		});
+
+		await expect(
+			createCaller().update(safeUpdateVolumeBackupInput),
+		).resolves.toMatchObject({ volumeBackupId: "volume-backup-1" });
+
+		expect(mocks.updateVolumeBackup).toHaveBeenCalledWith(
+			"volume-backup-1",
+			safeUpdateVolumeBackupInput,
+		);
+	});
+});
 
 describe("volume backup restore command safety", () => {
 	beforeEach(() => {

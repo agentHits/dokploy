@@ -27,7 +27,6 @@ import {
 	scheduleBackup,
 	updateBackupById,
 } from "@dokploy/server";
-import { findDestinationById } from "@dokploy/server/services/destination";
 import { checkServicePermissionAndAccess } from "@dokploy/server/services/permission";
 import { runComposeBackup } from "@dokploy/server/utils/backups/compose";
 import {
@@ -56,6 +55,7 @@ import {
 	withPermission,
 } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
+import { assertDestinationAccess } from "@/server/api/utils/destination-access";
 import {
 	apiCreateBackup,
 	apiFindOneBackup,
@@ -94,6 +94,10 @@ export const backupRouter = createTRPCRouter({
 						backup: ["create"],
 					});
 				}
+				await assertDestinationAccess(
+					input.destinationId,
+					ctx.session.activeOrganizationId,
+				);
 
 				const newBackup = await createBackup(input);
 				const backup = await findBackupById(newBackup.backupId);
@@ -141,6 +145,9 @@ export const backupRouter = createTRPCRouter({
 					resourceId: backup.backupId,
 				});
 			} catch (error) {
+				if (error instanceof TRPCError) {
+					throw error;
+				}
 				console.error(error);
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -189,6 +196,10 @@ export const backupRouter = createTRPCRouter({
 						backup: ["update"],
 					});
 				}
+				await assertDestinationAccess(
+					input.destinationId,
+					ctx.session.activeOrganizationId,
+				);
 
 				await updateBackupById(input.backupId, input);
 				const backup = await findBackupById(input.backupId);
@@ -221,6 +232,9 @@ export const backupRouter = createTRPCRouter({
 					resourceId: backup.backupId,
 				});
 			} catch (error) {
+				if (error instanceof TRPCError) {
+					throw error;
+				}
 				const message =
 					error instanceof Error ? error.message : "Error updating this Backup";
 				throw new TRPCError({
@@ -461,13 +475,10 @@ export const backupRouter = createTRPCRouter({
 		)
 		.query(async ({ input, ctx }) => {
 			try {
-				const destination = await findDestinationById(input.destinationId);
-				if (destination.organizationId !== ctx.session.activeOrganizationId) {
-					throw new TRPCError({
-						code: "UNAUTHORIZED",
-						message: "You don't have access to this destination.",
-					});
-				}
+				const destination = await assertDestinationAccess(
+					input.destinationId,
+					ctx.session.activeOrganizationId,
+				);
 				if (input.serverId) {
 					const targetServer = await findServerById(input.serverId);
 					if (
@@ -556,13 +567,10 @@ export const backupRouter = createTRPCRouter({
 		})
 		.input(apiRestoreBackup)
 		.subscription(async function* ({ input, ctx, signal }) {
-			const destination = await findDestinationById(input.destinationId);
-			if (destination.organizationId !== ctx.session.activeOrganizationId) {
-				throw new TRPCError({
-					code: "UNAUTHORIZED",
-					message: "You don't have access to this destination.",
-				});
-			}
+			const destination = await assertDestinationAccess(
+				input.destinationId,
+				ctx.session.activeOrganizationId,
+			);
 
 			const isWebServerRestore =
 				input.backupType === "database" && input.databaseType === "web-server";

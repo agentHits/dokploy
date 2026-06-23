@@ -81,7 +81,34 @@ vi.mock("@dokploy/server", () => ({
 }));
 
 vi.mock("@dokploy/server/index", () => ({
+	IS_CLOUD: false,
+	createBackup: mocks.createBackup,
+	findBackupById: mocks.findBackupById,
+	findComposeByBackupId: mocks.findComposeByBackupId,
+	findComposeById: mocks.findComposeById,
+	findLibsqlByBackupId: mocks.findLibsqlByBackupId,
+	findLibsqlById: mocks.findLibsqlById,
+	findMariadbByBackupId: mocks.findMariadbByBackupId,
+	findMariadbById: mocks.findMariadbById,
+	findMongoByBackupId: mocks.findMongoByBackupId,
+	findMongoById: mocks.findMongoById,
+	findMySqlByBackupId: mocks.findMySqlByBackupId,
+	findMySqlById: mocks.findMySqlById,
+	findPostgresByBackupId: mocks.findPostgresByBackupId,
+	findPostgresById: mocks.findPostgresById,
+	findServerById: mocks.findServerById,
 	hasValidLicense: vi.fn().mockResolvedValue(true),
+	keepLatestNBackups: mocks.keepLatestNBackups,
+	removeBackupById: mocks.removeBackupById,
+	removeScheduleBackup: mocks.removeScheduleBackup,
+	runLibsqlBackup: mocks.runLibsqlBackup,
+	runMariadbBackup: mocks.runMariadbBackup,
+	runMongoBackup: mocks.runMongoBackup,
+	runMySqlBackup: mocks.runMySqlBackup,
+	runPostgresBackup: mocks.runPostgresBackup,
+	runWebServerBackup: mocks.runWebServerBackup,
+	scheduleBackup: mocks.scheduleBackup,
+	updateBackupById: mocks.updateBackupById,
 }));
 
 vi.mock("@dokploy/server/constants", () => ({
@@ -190,6 +217,34 @@ const safePostgresInput = {
 	destinationId: "destination-1",
 };
 
+const safeCreateBackupInput = {
+	backupType: "database" as const,
+	database: "appdb",
+	databaseType: "postgres" as const,
+	destinationId: "destination-1",
+	enabled: false,
+	keepLatestCount: 3,
+	metadata: {},
+	postgresId: "postgres-1",
+	prefix: "daily",
+	schedule: "0 0 * * *",
+	serviceName: "postgres",
+	userId: "user-1",
+};
+
+const safeUpdateBackupInput = {
+	backupId: "backup-1",
+	database: "appdb",
+	databaseType: "postgres" as const,
+	destinationId: "destination-1",
+	enabled: false,
+	keepLatestCount: 3,
+	metadata: {},
+	prefix: "daily",
+	schedule: "0 0 * * *",
+	serviceName: "postgres",
+};
+
 const createCaller = (role: "owner" | "admin" | "member" = "admin") =>
 	backupRouter.createCaller({
 		db: {},
@@ -222,6 +277,81 @@ const emit = (log: string) => emittedLogs.push(log);
 
 const parseShellArgs = (command: string) =>
 	parse(command).filter((part): part is string => typeof part === "string");
+
+describe("backup destination ownership boundary", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+
+		mocks.checkServicePermissionAndAccess.mockResolvedValue(undefined);
+		mocks.createBackup.mockResolvedValue({ backupId: "backup-1" });
+		mocks.findBackupById.mockResolvedValue({
+			backupId: "backup-1",
+			backupType: "database",
+			databaseType: "postgres",
+			destinationId: "destination-1",
+			enabled: false,
+			postgresId: "postgres-1",
+			schedule: "0 0 * * *",
+		});
+		mocks.findDestinationById.mockResolvedValue({
+			...safeDestination,
+			organizationId: "org-2",
+		});
+		mocks.updateBackupById.mockResolvedValue({
+			backupId: "backup-1",
+			destinationId: "destination-1",
+		});
+	});
+
+	it("rejects cross-organization destinations on backup create before persistence", async () => {
+		await expect(
+			createCaller().create(safeCreateBackupInput),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.createBackup).not.toHaveBeenCalled();
+		expect(mocks.scheduleBackup).not.toHaveBeenCalled();
+		expect(mocks.schedule).not.toHaveBeenCalled();
+	});
+
+	it("rejects cross-organization destinations on backup update before persistence", async () => {
+		await expect(
+			createCaller().update(safeUpdateBackupInput),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.updateBackupById).not.toHaveBeenCalled();
+		expect(mocks.scheduleBackup).not.toHaveBeenCalled();
+		expect(mocks.updateJob).not.toHaveBeenCalled();
+	});
+
+	it("allows same-organization destinations on backup create", async () => {
+		mocks.findDestinationById.mockResolvedValue({
+			...safeDestination,
+			organizationId: "org-1",
+		});
+
+		await expect(createCaller().create(safeCreateBackupInput)).resolves.toBe(
+			undefined,
+		);
+
+		expect(mocks.createBackup).toHaveBeenCalledWith(safeCreateBackupInput);
+	});
+
+	it("allows same-organization destinations on backup update", async () => {
+		mocks.findDestinationById.mockResolvedValue({
+			...safeDestination,
+			organizationId: "org-1",
+		});
+
+		await expect(createCaller().update(safeUpdateBackupInput)).resolves.toBe(
+			undefined,
+		);
+
+		expect(mocks.updateBackupById).toHaveBeenCalledWith(
+			"backup-1",
+			safeUpdateBackupInput,
+		);
+	});
+});
 
 describe("backup restore route boundary", () => {
 	beforeEach(() => {
