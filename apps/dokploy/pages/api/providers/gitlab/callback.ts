@@ -1,17 +1,55 @@
 import { findGitlabById, updateGitlab } from "@dokploy/server";
+import { validateRequest } from "@dokploy/server/lib/auth";
+import {
+	canManageGitProviderOAuth,
+	verifyGitProviderOAuthState,
+} from "@dokploy/server/utils/providers/oauth-state";
 import type { NextApiRequest, NextApiResponse } from "next";
 
 export default async function handler(
 	req: NextApiRequest,
 	res: NextApiResponse,
 ) {
-	const { code, gitlabId } = req.query;
+	const { code, gitlabId, state } = req.query;
 
 	if (!code || Array.isArray(code)) {
 		return res.status(400).json({ error: "Missing or invalid code" });
 	}
+	if (!gitlabId || Array.isArray(gitlabId) || !state || Array.isArray(state)) {
+		return res.status(400).json({ error: "Missing or invalid OAuth state" });
+	}
 
-	const gitlab = await findGitlabById(gitlabId as string);
+	const { session, user } = await validateRequest(req);
+	if (
+		!session?.id ||
+		!session.userId ||
+		!session.activeOrganizationId ||
+		!user
+	) {
+		return res.status(401).json({ error: "Authentication required" });
+	}
+
+	let statePayload: { providerId: string; redirectUri: string };
+	try {
+		statePayload = verifyGitProviderOAuthState(state, {
+			providerType: "gitlab",
+			providerId: gitlabId,
+			sessionId: session.id,
+			userId: session.userId,
+			organizationId: session.activeOrganizationId,
+		});
+	} catch {
+		return res.status(400).json({ error: "Invalid OAuth state" });
+	}
+
+	const gitlab = await findGitlabById(gitlabId);
+	if (!canManageGitProviderOAuth(gitlab, session, user)) {
+		return res.status(403).json({ error: "Forbidden" });
+	}
+	const redirectUri = `${gitlab.redirectUri}?gitlabId=${gitlabId}`;
+	if (statePayload.redirectUri !== redirectUri) {
+		return res.status(400).json({ error: "Invalid OAuth state" });
+	}
 	// Use internal URL for token exchange when GitLab is on same instance as Dokploy
 	const baseUrl = gitlab.gitlabInternalUrl || gitlab.gitlabUrl;
 	const gitlabUrl = new URL(baseUrl);
@@ -43,7 +81,7 @@ export default async function handler(
 			client_secret: gitlab.secret as string,
 			code: code as string,
 			grant_type: "authorization_code",
-			redirect_uri: `${gitlab.redirectUri}?gitlabId=${gitlabId}`,
+			redirect_uri: redirectUri,
 		}),
 	});
 

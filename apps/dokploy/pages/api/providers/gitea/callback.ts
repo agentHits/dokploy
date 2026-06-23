@@ -1,17 +1,11 @@
 import { updateGitea } from "@dokploy/server";
+import { validateRequest } from "@dokploy/server/lib/auth";
+import {
+	canManageGitProviderOAuth,
+	verifyGitProviderOAuthState,
+} from "@dokploy/server/utils/providers/oauth-state";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { findGitea, type Gitea, redirectWithError } from "./helper";
-
-// Helper to parse the state parameter
-const parseState = (state: string): string | null => {
-	try {
-		const stateObj =
-			state.startsWith("{") && state.endsWith("}") ? JSON.parse(state) : {};
-		return stateObj.giteaId || state || null;
-	} catch {
-		return null;
-	}
-};
 
 // Helper to fetch access token from Gitea
 const fetchAccessToken = async (gitea: Gitea, code: string) => {
@@ -51,11 +45,36 @@ export default async function handler(
 		);
 	}
 
-	const giteaId = parseState(state as string);
-	if (!giteaId) return redirectWithError(res, "Invalid state format");
+	const { session, user } = await validateRequest(req);
+	if (
+		!session?.id ||
+		!session.userId ||
+		!session.activeOrganizationId ||
+		!user
+	) {
+		return redirectWithError(res, "Authentication required");
+	}
 
-	const gitea = await findGitea(giteaId);
+	let statePayload: { providerId: string; redirectUri: string };
+	try {
+		statePayload = verifyGitProviderOAuthState(state as string, {
+			providerType: "gitea",
+			sessionId: session.id,
+			userId: session.userId,
+			organizationId: session.activeOrganizationId,
+		});
+	} catch {
+		return redirectWithError(res, "Invalid OAuth state");
+	}
+
+	const gitea = await findGitea(statePayload.providerId);
 	if (!gitea) return redirectWithError(res, "Failed to find Gitea provider");
+	if (!canManageGitProviderOAuth(gitea, session, user)) {
+		return redirectWithError(res, "Forbidden");
+	}
+	if (statePayload.redirectUri !== gitea.redirectUri) {
+		return redirectWithError(res, "Invalid OAuth state");
+	}
 
 	// Fetch the access token from Gitea
 	const result = await fetchAccessToken(gitea, code as string);
