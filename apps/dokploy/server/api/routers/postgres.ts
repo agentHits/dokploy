@@ -36,6 +36,7 @@ import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
+import { buildPostgresPasswordChangeCommand } from "@/server/api/utils/database-password";
 import {
 	apiChangePostgresStatus,
 	apiCreatePostgres,
@@ -438,14 +439,18 @@ export const postgresRouter = createTRPCRouter({
 			const { appName, serverId, databaseUser } = pg;
 
 			const containerCmd = getServiceContainerCommand(appName);
+			const passwordChangeCommand = buildPostgresPasswordChangeCommand({
+				databaseUser,
+				password,
+			});
 			const command = `
-				CONTAINER_ID=$(${containerCmd})
-				if [ -z "$CONTAINER_ID" ]; then
-					echo "No running container found for ${appName}" >&2
-					exit 1
-				fi
-				docker exec "$CONTAINER_ID" psql -U ${databaseUser} -c "ALTER USER \\"${databaseUser}\\" WITH PASSWORD '${password}';"
-			`;
+					CONTAINER_ID=$(${containerCmd})
+					if [ -z "$CONTAINER_ID" ]; then
+						echo "No running container found for ${appName}" >&2
+						exit 1
+					fi
+					${passwordChangeCommand}
+				`;
 
 			await db.transaction(async (tx) => {
 				await tx

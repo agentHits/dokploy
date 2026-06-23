@@ -36,6 +36,7 @@ import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
+import { buildMysqlPasswordChangeCommand } from "@/server/api/utils/database-password";
 import {
 	apiChangeMariaDBStatus,
 	apiCreateMariaDB,
@@ -413,14 +414,20 @@ export const mariadbRouter = createTRPCRouter({
 			const containerCmd = getServiceContainerCommand(appName);
 			const targetUser = type === "root" ? "root" : databaseUser;
 
+			const passwordChangeCommand = buildMysqlPasswordChangeCommand({
+				client: "mariadb",
+				databaseRootPassword,
+				targetUser,
+				password,
+			});
 			const command = `
-				CONTAINER_ID=$(${containerCmd})
-				if [ -z "$CONTAINER_ID" ]; then
-					echo "No running container found for ${appName}" >&2
-					exit 1
-				fi
-				docker exec "$CONTAINER_ID" mariadb -u root -p'${databaseRootPassword}' -e "ALTER USER '${targetUser}'@'%' IDENTIFIED BY '${password}'; FLUSH PRIVILEGES;"
-			`;
+					CONTAINER_ID=$(${containerCmd})
+					if [ -z "$CONTAINER_ID" ]; then
+						echo "No running container found for ${appName}" >&2
+						exit 1
+					fi
+					${passwordChangeCommand}
+				`;
 
 			await db.transaction(async (tx) => {
 				const setData =

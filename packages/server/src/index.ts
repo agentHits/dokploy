@@ -101,6 +101,7 @@ export * from "./utils/docker/domain";
 export * from "./utils/docker/types";
 export * from "./utils/docker/utils";
 export * from "./utils/filesystem/directory";
+export * from "./utils/filesystem/safe-path";
 export * from "./utils/filesystem/ssh";
 export * from "./utils/git-branch-validation";
 export * from "./utils/gpu-setup";

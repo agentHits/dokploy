@@ -31,6 +31,8 @@ import {
 import {
 	APP_NAME_MESSAGE,
 	APP_NAME_REGEX,
+	DATABASE_IDENTIFIER_MESSAGE,
+	DATABASE_IDENTIFIER_REGEX,
 	DATABASE_PASSWORD_MESSAGE,
 	DATABASE_PASSWORD_REGEX,
 	generateAppName,
@@ -113,7 +115,10 @@ const createSchema = createInsertSchema(postgres, {
 		message: DATABASE_PASSWORD_MESSAGE,
 	}),
 	databaseName: z.string().min(1),
-	databaseUser: z.string().min(1),
+	databaseUser: z
+		.string()
+		.min(1)
+		.regex(DATABASE_IDENTIFIER_REGEX, DATABASE_IDENTIFIER_MESSAGE),
 	dockerImage: z.string().default("postgres:18"),
 	command: z.string().optional(),
 	args: z.array(z.string()).optional(),
