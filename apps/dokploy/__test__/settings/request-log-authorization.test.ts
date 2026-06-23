@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
 	audit: vi.fn(),
 	checkGPUStatus: vi.fn(),
-	checkPermission: vi.fn(),
 	checkPortInUse: vi.fn(),
 	checkPostgresHealth: vi.fn(),
 	checkRedisHealth: vi.fn(),
@@ -113,7 +112,7 @@ vi.mock("@dokploy/server/db", () => ({
 }));
 
 vi.mock("@dokploy/server/services/permission", () => ({
-	checkPermission: mocks.checkPermission,
+	checkPermission: vi.fn(),
 }));
 
 vi.mock("@dokploy/trpc-openapi", () => ({
@@ -148,7 +147,7 @@ vi.mock("../../server/api/root", () => ({
 
 const { settingsRouter } = await import("../../server/api/routers/settings");
 
-const createCaller = () =>
+const createCaller = (role: "admin" | "member" | "owner" = "admin") =>
 	settingsRouter.createCaller({
 		db: {},
 		req: {},
@@ -159,120 +158,110 @@ const createCaller = () =>
 		},
 		user: {
 			id: "user-1",
-			role: "admin",
+			role,
 		},
 	} as never);
 
-describe("settings Docker server boundary", () => {
+const readStatsLogsInput = {
+	page: {
+		pageIndex: 0,
+		pageSize: 10,
+	},
+};
+
+describe("settings request log authorization", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
-		mocks.cleanupBuilders.mockResolvedValue(undefined);
-		mocks.cleanupContainers.mockResolvedValue(undefined);
-		mocks.cleanupImages.mockResolvedValue(undefined);
-		mocks.cleanupSystem.mockResolvedValue(undefined);
-		mocks.cleanupVolumes.mockResolvedValue(undefined);
-		mocks.cleanupAllBackground.mockResolvedValue({
-			message: "Docker cleanup has been initiated in the background",
+		mocks.getLogCleanupStatus.mockReturnValue({
+			enabled: true,
+			cronExpression: "0 0 * * *",
 		});
-		mocks.reloadDockerResource.mockResolvedValue(undefined);
-		mocks.findServerById.mockResolvedValue({
-			enableDockerCleanup: false,
-			organizationId: "org-1",
-			serverId: "server-1",
-			serverStatus: "active",
+		mocks.parseRawConfig.mockReturnValue({
+			data: [{ RequestHost: "app.example.com" }],
+			totalCount: 1,
 		});
-		mocks.paths.mockReturnValue({
-			MAIN_TRAEFIK_PATH: "/etc/dokploy/traefik",
-		});
-		mocks.readConfigInPath.mockResolvedValue("http: {}");
-		mocks.readDirectory.mockResolvedValue([]);
-		mocks.updateServerById.mockResolvedValue({
-			enableDockerCleanup: false,
-			organizationId: "org-1",
-			serverId: "server-1",
-			serverStatus: "active",
-		});
+		mocks.readMainConfig.mockReturnValue("http: {}\n");
+		mocks.readMonitoringConfig.mockResolvedValue(
+			'{"ClientAddr":"10.0.0.1:12345","RequestHost":"app.example.com"}',
+		);
+		mocks.startLogCleanup.mockResolvedValue(true);
+		mocks.stopLogCleanup.mockResolvedValue(true);
 	});
 
-	it("denies inaccessible server cleanup before Docker side effects", async () => {
-		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
-
+	it("denies request log reads to authenticated members before reading logs", async () => {
 		await expect(
-			createCaller().cleanUnusedImages({ serverId: "server-1" }),
+			createCaller("member").readStatsLogs(readStatsLogsInput),
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
-		expect(mocks.cleanupImages).not.toHaveBeenCalled();
+		expect(mocks.readMonitoringConfig).not.toHaveBeenCalled();
+		expect(mocks.parseRawConfig).not.toHaveBeenCalled();
 	});
 
-	it("denies inaccessible server reload before Docker side effects", async () => {
-		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
-
+	it("denies request logging status reads to authenticated members before reading config", async () => {
 		await expect(
-			createCaller().reloadTraefik({ serverId: "server-1" }),
+			createCaller("member").haveActivateRequests(),
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
-		expect(mocks.reloadDockerResource).not.toHaveBeenCalled();
+		expect(mocks.readMainConfig).not.toHaveBeenCalled();
 	});
 
-	it("denies inaccessible cleanup schedule updates before server mutation", async () => {
-		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
-
+	it("denies request logging toggles to authenticated members before config writes", async () => {
 		await expect(
-			createCaller().updateDockerCleanup({
-				enableDockerCleanup: false,
-				serverId: "server-1",
+			createCaller("member").toggleRequests({ enable: true }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.readMainConfig).not.toHaveBeenCalled();
+		expect(mocks.writeMainConfig).not.toHaveBeenCalled();
+		expect(mocks.audit).not.toHaveBeenCalled();
+	});
+
+	it("denies log cleanup mutations to authenticated members before scheduler side effects", async () => {
+		await expect(
+			createCaller("member").updateLogCleanup({
+				cronExpression: "*/5 * * * *",
 			}),
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
-		expect(mocks.updateServerById).not.toHaveBeenCalled();
-		expect(mocks.findServerById).not.toHaveBeenCalled();
+		expect(mocks.startLogCleanup).not.toHaveBeenCalled();
+		expect(mocks.stopLogCleanup).not.toHaveBeenCalled();
+		expect(mocks.audit).not.toHaveBeenCalled();
 	});
 
-	it("denies inaccessible Traefik directory listing before remote read", async () => {
-		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
-
+	it("denies log cleanup status reads to authenticated members", async () => {
 		await expect(
-			createCaller().readDirectories({ serverId: "server-1" }),
+			createCaller("member").getLogCleanupStatus(),
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
-		expect(mocks.readDirectory).not.toHaveBeenCalled();
+		expect(mocks.getLogCleanupStatus).not.toHaveBeenCalled();
 	});
 
-	it("denies inaccessible Traefik file reads before remote read", async () => {
-		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
-
+	it("allows admins to read request logs and manage logging controls", async () => {
 		await expect(
-			createCaller().readTraefikFile({
-				path: `${process.cwd()}/.docker/traefik/dynamic/app.yml`,
-				serverId: "server-1",
-			}),
-		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-
-		expect(mocks.readConfigInPath).not.toHaveBeenCalled();
-	});
-
-	it("denies inaccessible Traefik file updates before remote write", async () => {
-		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
-
-		await expect(
-			createCaller().updateTraefikFile({
-				path: "/etc/dokploy/traefik/dynamic/app.yml",
-				traefikConfig: "http: {}",
-				serverId: "server-1",
-			}),
-		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-
-		expect(mocks.writeTraefikConfigInPath).not.toHaveBeenCalled();
-	});
-
-	it("allows accessible server cleanup", async () => {
-		await expect(
-			createCaller().cleanAll({ serverId: "server-1" }),
+			createCaller("admin").readStatsLogs(readStatsLogsInput),
 		).resolves.toEqual({
-			message: "Docker cleanup has been initiated in the background",
+			data: [{ RequestHost: "app.example.com" }],
+			totalCount: 1,
+		});
+		await expect(createCaller("admin").haveActivateRequests()).resolves.toBe(
+			false,
+		);
+		await expect(
+			createCaller("admin").toggleRequests({ enable: true }),
+		).resolves.toBe(true);
+		await expect(
+			createCaller("admin").updateLogCleanup({
+				cronExpression: "*/5 * * * *",
+			}),
+		).resolves.toBe(true);
+		await expect(createCaller("admin").getLogCleanupStatus()).resolves.toEqual({
+			enabled: true,
+			cronExpression: "0 0 * * *",
 		});
 
-		expect(mocks.cleanupAllBackground).toHaveBeenCalledWith("server-1");
+		expect(mocks.readMonitoringConfig).toHaveBeenCalled();
+		expect(mocks.parseRawConfig).toHaveBeenCalled();
+		expect(mocks.writeMainConfig).toHaveBeenCalled();
+		expect(mocks.startLogCleanup).toHaveBeenCalledWith("*/5 * * * *");
+		expect(mocks.getLogCleanupStatus).toHaveBeenCalled();
 	});
 });
