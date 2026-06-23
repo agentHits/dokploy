@@ -15,6 +15,14 @@
 - GitHub-safe report: `docs/security/codex-security-deep-scan-2026-06-23-github-report.md`
 - Publication status: redacted for public GitHub storage
 
+## Remediation Snapshot
+
+| Finding | Public status | Evidence |
+| --- | --- | --- |
+| F-01 | Remediated after scan | Commit `5b1a91d4f` secured the container metrics target and token boundary with focused regression tests. |
+| F-04 | Remediated after scan | Commit `530393895` secured registry credential test command construction and access checks. |
+| F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations; related surfaces still need revalidation. |
+
 ## Why This Is Redacted
 
 The upstream project security policy asks researchers not to make vulnerabilities

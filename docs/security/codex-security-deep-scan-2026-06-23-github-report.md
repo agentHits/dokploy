@@ -32,6 +32,9 @@ The private raw report is intentionally kept outside tracked source files:
 .agent-work/security/codex-security-deep-scan-2026-06-23-full.md
 ```
 
+The private raw report was restored locally from the sealed `report.md`
+projection on 2026-06-23. It remains excluded from Git tracking.
+
 ## Executive Summary
 
 The scan found a remediation backlog across authenticated control plane
@@ -47,7 +50,7 @@ role-matrix, or real deploy smoke tests.
 
 | ID | Severity | Confidence | Area | Current handling status |
 | --- | --- | --- | --- | --- |
-| F-01 | High | High | Monitoring outbound request boundary | Open, next remediation slice |
+| F-01 | High | High | Monitoring outbound request boundary | Remediated after scan |
 | F-02 | High | High | Database credential rotation command boundary | Open |
 | F-03 | High | High | Server assignment authorization boundary | Partially remediated after scan |
 | F-04 | High | High | Registry credential test command boundary | Remediated after scan |
@@ -68,6 +71,7 @@ role-matrix, or real deploy smoke tests.
 
 | Finding | Status | Evidence |
 | --- | --- | --- |
+| F-01 | Remediated after scan | Commit `5b1a91d4f` moved container metrics target and bearer-token resolution server-side, removed caller-supplied URL/token inputs, and added focused boundary tests. |
 | F-04 | Remediated after scan | Commit `530393895` added server-access checks, safe registry login command construction, redacted registry test errors, and focused regression tests. |
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations plus focused regression tests. Other server-scoped surfaces still need revalidation. |
 | Report tracking | Added | Commit `b072b017c` added a public-safe security remediation tracker. |
