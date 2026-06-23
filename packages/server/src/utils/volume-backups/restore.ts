@@ -11,18 +11,7 @@ import {
 	normalizeRelativeFilePath,
 	quoteShellArg,
 } from "@dokploy/server/utils/filesystem/safe-path";
-
-const DOCKER_VOLUME_NAME_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
-
-const normalizeDockerVolumeName = (volumeName: string) => {
-	const normalizedVolumeName = volumeName.trim();
-
-	if (!DOCKER_VOLUME_NAME_REGEX.test(normalizedVolumeName)) {
-		throw new Error("Invalid Docker volume name");
-	}
-
-	return normalizedVolumeName;
-};
+import { normalizeDockerVolumeName } from "./safe-input";
 
 const normalizeBackupObjectPath = (backupFileName: string) => {
 	const backupObjectPath = normalizeRelativeFilePath(backupFileName);
