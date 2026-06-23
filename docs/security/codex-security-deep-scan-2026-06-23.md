@@ -12,6 +12,7 @@
 - Scan date: 2026-06-23
 - Scan mode: deep repository source scan
 - Full internal report: `.agent-work/security/codex-security-deep-scan-2026-06-23-full.md`
+- GitHub-safe report: `docs/security/codex-security-deep-scan-2026-06-23-github-report.md`
 - Publication status: redacted for public GitHub storage
 
 ## Why This Is Redacted
