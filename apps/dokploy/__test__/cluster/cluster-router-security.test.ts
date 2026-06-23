@@ -104,6 +104,48 @@ describe("cluster router assigned-server boundary", () => {
 		expect(mocks.audit).not.toHaveBeenCalled();
 	});
 
+	it("rejects unsafe node identifiers before Docker commands", async () => {
+		await expect(
+			createCaller().removeWorker({
+				nodeId: "node-1;id",
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+		expect(mocks.execAsync).not.toHaveBeenCalled();
+		expect(mocks.audit).not.toHaveBeenCalled();
+	});
+
+	it("uses normalized node identifiers in worker removal commands", async () => {
+		mocks.execAsyncRemote.mockResolvedValue({ stdout: "", stderr: "" });
+
+		await expect(
+			createCaller().removeWorker({
+				nodeId: " node.name-1 ",
+				serverId: "server-1",
+			}),
+		).resolves.toBe(true);
+
+		expect(mocks.execAsyncRemote).toHaveBeenNthCalledWith(
+			1,
+			"server-1",
+			"docker node update --availability drain node.name-1",
+		);
+		expect(mocks.execAsyncRemote).toHaveBeenNthCalledWith(
+			2,
+			"server-1",
+			"docker node rm node.name-1 --force",
+		);
+		expect(mocks.audit).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				resourceId: "node.name-1",
+				resourceName: "node.name-1",
+			}),
+		);
+	});
+
 	it("denies inaccessible manager join token reads before swarm inspect", async () => {
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
 
