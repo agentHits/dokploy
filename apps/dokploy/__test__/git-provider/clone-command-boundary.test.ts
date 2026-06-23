@@ -1,0 +1,284 @@
+import { parse } from "shell-quote";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const fixtures = vi.hoisted(() => ({
+	branch: "main; touch /tmp/branch",
+	outputPath: "/tmp/app code; touch /tmp/output",
+	customGitUrl: "https://git.example.com/org/repo.git; touch /tmp/custom-url",
+	customSshUrl: "git@git.example.com;touch/owner/repo.git",
+	githubOwner: "owner; touch /tmp/github-owner",
+	githubRepository: "repo$(id)",
+	githubToken: "gh-token$(id); touch /tmp/github-token",
+	gitlabBaseUrl: "https://gitlab.example.com; touch /tmp/gitlab-base",
+	gitlabNamespace: "group/project$(id); touch /tmp/gitlab-namespace",
+	gitlabToken: "gl-token$(id); touch /tmp/gitlab-token",
+	bitbucketOwner: "workspace; touch /tmp/bitbucket-owner",
+	bitbucketRepository: "repo$(id); touch /tmp/bitbucket-repo",
+	bitbucketToken: "bb-token$(id); touch /tmp/bitbucket-token",
+	giteaBaseUrl: "https://gitea.example.com; touch /tmp/gitea-base",
+	giteaOwner: "owner; touch /tmp/gitea-owner",
+	giteaRepository: "repo$(id)",
+	giteaToken: "gt-token$(id); touch /tmp/gitea-token",
+}));
+
+const mocks = vi.hoisted(() => ({
+	findBitbucketById: vi.fn(),
+	findGiteaById: vi.fn(),
+	findGithubById: vi.fn(),
+	findGitlabById: vi.fn(),
+	findSSHKeyById: vi.fn(),
+	updateGitea: vi.fn(),
+	updateGitlab: vi.fn(),
+	updateSSHKeyById: vi.fn(),
+}));
+
+vi.mock("@octokit/auth-app", () => ({
+	createAppAuth: vi.fn(),
+}));
+
+vi.mock("octokit", () => ({
+	Octokit: class {
+		auth = vi.fn().mockResolvedValue({ token: fixtures.githubToken });
+	},
+}));
+
+vi.mock("@dokploy/server/services/bitbucket", () => ({
+	findBitbucketById: mocks.findBitbucketById,
+}));
+
+vi.mock("@dokploy/server/services/gitea", () => ({
+	findGiteaById: mocks.findGiteaById,
+	updateGitea: mocks.updateGitea,
+}));
+
+vi.mock("@dokploy/server/services/github", () => ({
+	findGithubById: mocks.findGithubById,
+}));
+
+vi.mock("@dokploy/server/services/gitlab", () => ({
+	findGitlabById: mocks.findGitlabById,
+	updateGitlab: mocks.updateGitlab,
+}));
+
+vi.mock("@dokploy/server/services/ssh-key", () => ({
+	findSSHKeyById: mocks.findSSHKeyById,
+	updateSSHKeyById: mocks.updateSSHKeyById,
+}));
+
+const { cloneBitbucketRepository } = await import(
+	"@dokploy/server/utils/providers/bitbucket"
+);
+const { cloneGitRepository } = await import(
+	"@dokploy/server/utils/providers/git"
+);
+const { cloneGiteaRepository } = await import(
+	"@dokploy/server/utils/providers/gitea"
+);
+const { cloneGithubRepository } = await import(
+	"@dokploy/server/utils/providers/github"
+);
+const { cloneGitlabRepository } = await import(
+	"@dokploy/server/utils/providers/gitlab"
+);
+
+const parseShellArgs = (command: string) =>
+	parse(command).filter((part): part is string => typeof part === "string");
+
+const extractGitCloneArgs = (command: string) => {
+	const cloneLine = command
+		.split("\n")
+		.find((line) => line.includes("git clone"));
+	expect(cloneLine).toBeDefined();
+
+	const args = parseShellArgs(cloneLine || "");
+	const cloneStart = args.findIndex(
+		(arg, index) => arg === "git" && args[index + 1] === "clone",
+	);
+	expect(cloneStart).toBeGreaterThanOrEqual(0);
+
+	return args.slice(cloneStart);
+};
+
+const expectCloneArgsPreserveDangerousValues = (
+	command: string,
+	expected: {
+		branch: string;
+		cloneUrl: string;
+		outputPath: string;
+	},
+) => {
+	const args = extractGitCloneArgs(command);
+
+	expect(args.slice(0, 2)).toEqual(["git", "clone"]);
+	expect(args[args.indexOf("--branch") + 1]).toBe(expected.branch);
+	expect(args).toContain("--depth");
+	expect(args).toContain("1");
+	expect(args).toContain("--progress");
+	expect(args).toContain(expected.cloneUrl);
+	expect(args).toContain(expected.outputPath);
+	expect(command).not.toContain(`--branch ${expected.branch}`);
+	expect(command).not.toContain(`${expected.cloneUrl} ${expected.outputPath}`);
+	expect(command).not.toContain('echo "Cloning Repo');
+};
+
+describe("Git provider clone command boundary", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+
+		mocks.findGithubById.mockResolvedValue({
+			githubAppId: 1,
+			githubInstallationId: 1,
+			githubPrivateKey: "private-key",
+		});
+		mocks.findGitlabById.mockResolvedValue({
+			accessToken: fixtures.gitlabToken,
+			expiresAt: 4_102_444_800,
+			gitlabInternalUrl: null,
+			gitlabUrl: fixtures.gitlabBaseUrl,
+			refreshToken: "refresh-token",
+		});
+		mocks.findBitbucketById.mockResolvedValue({
+			apiToken: fixtures.bitbucketToken,
+			bitbucketEmail: "user@example.com",
+		});
+		mocks.findGiteaById.mockResolvedValue({
+			accessToken: fixtures.giteaToken,
+			giteaInternalUrl: null,
+			giteaUrl: fixtures.giteaBaseUrl,
+		});
+		mocks.findSSHKeyById.mockResolvedValue({
+			privateKey: "private-key$(id); touch /tmp/private-key",
+		});
+		mocks.updateGitea.mockResolvedValue(undefined);
+		mocks.updateGitlab.mockResolvedValue(undefined);
+		mocks.updateSSHKeyById.mockResolvedValue(undefined);
+	});
+
+	it("quotes custom Git clone arguments and log messages", async () => {
+		const command = await cloneGitRepository({
+			appName: "app",
+			customGitBranch: fixtures.branch,
+			customGitSSHKeyId: null,
+			customGitUrl: fixtures.customGitUrl,
+			enableSubmodules: false,
+			outputPathOverride: fixtures.outputPath,
+			serverId: null,
+		});
+
+		expectCloneArgsPreserveDangerousValues(command, {
+			branch: fixtures.branch,
+			cloneUrl: fixtures.customGitUrl,
+			outputPath: fixtures.outputPath,
+		});
+		expect(command).not.toContain(
+			`echo "Cloning Repo Custom ${fixtures.customGitUrl}`,
+		);
+	});
+
+	it("quotes custom SSH known-hosts and private-key command boundaries", async () => {
+		const command = await cloneGitRepository({
+			appName: "app",
+			customGitBranch: fixtures.branch,
+			customGitSSHKeyId: "ssh-key-1",
+			customGitUrl: fixtures.customSshUrl,
+			enableSubmodules: true,
+			outputPathOverride: fixtures.outputPath,
+			serverId: "server-1",
+		});
+
+		expectCloneArgsPreserveDangerousValues(command, {
+			branch: fixtures.branch,
+			cloneUrl: fixtures.customSshUrl,
+			outputPath: fixtures.outputPath,
+		});
+		expect(parseShellArgs(command)).toContain("git.example.com;touch");
+		expect(command).not.toContain(
+			'echo "private-key$(id); touch /tmp/private-key"',
+		);
+		expect(command).not.toContain("ssh-keyscan -p 22 git.example.com;touch");
+	});
+
+	it("quotes GitHub clone metadata", async () => {
+		const expectedCloneUrl = `https://oauth2:${fixtures.githubToken}@github.com/${fixtures.githubOwner}/${fixtures.githubRepository}.git`;
+		const command = await cloneGithubRepository({
+			appName: "app",
+			branch: fixtures.branch,
+			enableSubmodules: true,
+			githubId: "github-1",
+			outputPathOverride: fixtures.outputPath,
+			owner: fixtures.githubOwner,
+			repository: fixtures.githubRepository,
+			serverId: null,
+		});
+
+		expectCloneArgsPreserveDangerousValues(command, {
+			branch: fixtures.branch,
+			cloneUrl: expectedCloneUrl,
+			outputPath: fixtures.outputPath,
+		});
+	});
+
+	it("quotes GitLab clone metadata", async () => {
+		const repoClone = `${fixtures.gitlabBaseUrl.replace(/^https?:\/\//, "")}/${fixtures.gitlabNamespace}.git`;
+		const expectedCloneUrl = `https://oauth2:${fixtures.gitlabToken}@${repoClone}`;
+		const command = await cloneGitlabRepository({
+			appName: "app",
+			enableSubmodules: false,
+			gitlabBranch: fixtures.branch,
+			gitlabId: "gitlab-1",
+			gitlabOwner: "group",
+			gitlabPathNamespace: fixtures.gitlabNamespace,
+			gitlabRepository: "project",
+			outputPathOverride: fixtures.outputPath,
+			serverId: null,
+		} as never);
+
+		expectCloneArgsPreserveDangerousValues(command, {
+			branch: fixtures.branch,
+			cloneUrl: expectedCloneUrl,
+			outputPath: fixtures.outputPath,
+		});
+	});
+
+	it("quotes Bitbucket clone metadata", async () => {
+		const repoClone = `bitbucket.org/${fixtures.bitbucketOwner}/${fixtures.bitbucketRepository}.git`;
+		const expectedCloneUrl = `https://x-bitbucket-api-token-auth:${fixtures.bitbucketToken}@${repoClone}`;
+		const command = await cloneBitbucketRepository({
+			appName: "app",
+			bitbucketBranch: fixtures.branch,
+			bitbucketId: "bitbucket-1",
+			bitbucketOwner: fixtures.bitbucketOwner,
+			bitbucketRepository: fixtures.bitbucketRepository,
+			enableSubmodules: false,
+			outputPathOverride: fixtures.outputPath,
+			serverId: null,
+		});
+
+		expectCloneArgsPreserveDangerousValues(command, {
+			branch: fixtures.branch,
+			cloneUrl: expectedCloneUrl,
+			outputPath: fixtures.outputPath,
+		});
+	});
+
+	it("quotes Gitea clone metadata", async () => {
+		const baseUrl = fixtures.giteaBaseUrl.replace(/^https?:\/\//, "");
+		const expectedCloneUrl = `https://oauth2:${fixtures.giteaToken}@${baseUrl}/${fixtures.giteaOwner}/${fixtures.giteaRepository}.git`;
+		const command = await cloneGiteaRepository({
+			appName: "app",
+			enableSubmodules: false,
+			giteaBranch: fixtures.branch,
+			giteaId: "gitea-1",
+			giteaOwner: fixtures.giteaOwner,
+			giteaRepository: fixtures.giteaRepository,
+			outputPathOverride: fixtures.outputPath,
+			serverId: null,
+		});
+
+		expectCloneArgsPreserveDangerousValues(command, {
+			branch: fixtures.branch,
+			cloneUrl: expectedCloneUrl,
+			outputPath: fixtures.outputPath,
+		});
+	});
+});

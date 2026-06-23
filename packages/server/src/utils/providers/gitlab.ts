@@ -9,6 +9,12 @@ import {
 import type { InferResultType } from "@dokploy/server/types/with";
 import { TRPCError } from "@trpc/server";
 import type { z } from "zod";
+import {
+	buildCreateDirectoryCommand,
+	buildGitCloneCommand,
+	buildProviderEchoCommand,
+	buildRemovePathCommand,
+} from "./commands";
 
 export const refreshGitlabToken = async (gitlabProviderId: string) => {
 	const gitlabProvider = await findGitlabById(gitlabProviderId);
@@ -130,7 +136,7 @@ export const cloneGitlabRepository = async ({
 	const { COMPOSE_PATH, APPLICATIONS_PATH } = paths(!!serverId);
 
 	if (!gitlabId) {
-		command += `echo "Error: ❌ Gitlab Provider not found"; exit 1;`;
+		command += `${buildProviderEchoCommand("Error: ❌ Gitlab Provider not found")} exit 1;`;
 		return command;
 	}
 
@@ -141,18 +147,29 @@ export const cloneGitlabRepository = async ({
 
 	// Check if requirements are met
 	if (requirements.length > 0) {
-		command += `echo "❌ [ERROR] GitLab Repository configuration failed for application: ${appName}"; echo "Reasons:"; echo "${requirements.join("\n")}"; exit 1;`;
+		command += buildProviderEchoCommand(
+			`❌ [ERROR] GitLab Repository configuration failed for application: ${appName}`,
+		);
+		command += buildProviderEchoCommand("Reasons:");
+		command += `${buildProviderEchoCommand(requirements.join("\n"))} exit 1;`;
 		return command;
 	}
 
 	const basePath = type === "compose" ? COMPOSE_PATH : APPLICATIONS_PATH;
 	const outputPath = outputPathOverride ?? join(basePath, appName, "code");
-	command += `rm -rf ${outputPath};`;
-	command += `mkdir -p ${outputPath};`;
+	command += buildRemovePathCommand(outputPath);
+	command += buildCreateDirectoryCommand(outputPath);
 	const repoClone = getGitlabRepoClone(gitlab, gitlabPathNamespace);
 	const cloneUrl = getGitlabCloneUrl(gitlab, repoClone);
-	command += `echo "Cloning Repo ${repoClone} to ${outputPath}: ✅";`;
-	command += `git clone --branch ${gitlabBranch} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${cloneUrl} ${outputPath} --progress;`;
+	command += buildProviderEchoCommand(
+		`Cloning Repo ${repoClone} to ${outputPath}: ✅`,
+	);
+	command += `${buildGitCloneCommand({
+		branch: gitlabBranch!,
+		cloneUrl,
+		enableSubmodules,
+		outputPath,
+	})};`;
 	return command;
 };
 

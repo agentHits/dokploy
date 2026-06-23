@@ -5,6 +5,16 @@ import {
 	updateSSHKeyById,
 } from "@dokploy/server/services/ssh-key";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
+import { quoteShellArgs } from "../shell";
+import {
+	buildCreateDirectoryCommand,
+	buildGitCloneCommand,
+	buildGitSshEnvironmentCommand,
+	buildKnownHostsCommand,
+	buildPrivateKeyWriteCommand,
+	buildProviderEchoCommand,
+	buildRemovePathCommand,
+} from "./commands";
 
 interface CloneGitRepository {
 	appName: string;
@@ -34,7 +44,7 @@ export const cloneGitRepository = async ({
 	const { SSH_PATH, COMPOSE_PATH, APPLICATIONS_PATH } = paths(!!serverId);
 
 	if (!customGitUrl || !customGitBranch) {
-		command += `echo "Error: ❌ Repository not found"; exit 1;`;
+		command += `${buildProviderEchoCommand("Error: ❌ Repository not found")} exit 1;`;
 		return command;
 	}
 
@@ -43,10 +53,8 @@ export const cloneGitRepository = async ({
 	if (customGitSSHKeyId) {
 		const sshKey = await findSSHKeyById(customGitSSHKeyId);
 
-		command += `
-			echo "${sshKey.privateKey}" > ${temporalKeyPath}
-			chmod 600 ${temporalKeyPath};
-			`;
+		command += buildPrivateKeyWriteCommand(sshKey.privateKey, temporalKeyPath);
+		command += `${quoteShellArgs(["chmod", "600", temporalKeyPath])};`;
 	}
 	const basePath = type === "compose" ? COMPOSE_PATH : APPLICATIONS_PATH;
 	const outputPath = outputPathOverride ?? join(basePath, appName, "code");
@@ -54,14 +62,16 @@ export const cloneGitRepository = async ({
 
 	if (!isHttpOrHttps(customGitUrl)) {
 		if (!customGitSSHKeyId) {
-			command += `echo "Error: ❌ You are trying to clone a ssh repository without a ssh key, please set a ssh key"; exit 1;`;
+			command += `${buildProviderEchoCommand("Error: ❌ You are trying to clone a ssh repository without a ssh key, please set a ssh key")} exit 1;`;
 			return command;
 		}
 		command += addHostToKnownHostsCommand(customGitUrl);
 	}
-	command += `rm -rf ${outputPath};`;
-	command += `mkdir -p ${outputPath};`;
-	command += `echo "Cloning Repo Custom ${customGitUrl} to ${outputPath}: ✅";`;
+	command += buildRemovePathCommand(outputPath);
+	command += buildCreateDirectoryCommand(outputPath);
+	command += buildProviderEchoCommand(
+		`Cloning Repo Custom ${customGitUrl} to ${outputPath}: ✅`,
+	);
 
 	if (customGitSSHKeyId) {
 		await updateSSHKeyById({
@@ -71,15 +81,20 @@ export const cloneGitRepository = async ({
 	}
 
 	if (customGitSSHKeyId) {
-		const sshKey = await findSSHKeyById(customGitSSHKeyId);
 		const { port } = sanitizeRepoPathSSH(customGitUrl);
-		const gitSshCommand = `ssh -i /tmp/id_rsa${port ? ` -p ${port}` : ""} -o UserKnownHostsFile=${knownHostsPath}`;
-		command += `echo "${sshKey.privateKey}" > /tmp/id_rsa;`;
-		command += "chmod 600 /tmp/id_rsa;";
-		command += `export GIT_SSH_COMMAND="${gitSshCommand}";`;
+		command += buildGitSshEnvironmentCommand({
+			knownHostsPath,
+			port,
+			privateKeyPath: temporalKeyPath,
+		});
 	}
-	command += `if ! git clone --branch ${customGitBranch} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} --progress ${customGitUrl} ${outputPath}; then
-				echo "❌ [ERROR] Fail to clone the repository ${customGitUrl}";
+	command += `if ! ${buildGitCloneCommand({
+		branch: customGitBranch,
+		cloneUrl: customGitUrl,
+		enableSubmodules,
+		outputPath,
+	})}; then
+				${buildProviderEchoCommand(`❌ [ERROR] Fail to clone the repository ${customGitUrl}`)}
 				exit 1;
 			fi
 			`;
@@ -92,26 +107,20 @@ const isHttpOrHttps = (url: string): boolean => {
 	return regex.test(url);
 };
 
-// const addHostToKnownHosts = async (repositoryURL: string) => {
-// 	const { SSH_PATH } = paths();
-// 	const { domain, port } = sanitizeRepoPathSSH(repositoryURL);
-// 	const knownHostsPath = path.join(SSH_PATH, "known_hosts");
-
-// 	const command = `ssh-keyscan -p ${port} ${domain} >> ${knownHostsPath}`;
-// 	try {
-// 		await execAsync(command);
-// 	} catch (error) {
-// 		console.error(`Error adding host to known_hosts: ${error}`);
-// 		throw error;
-// 	}
-// };
-
 const addHostToKnownHostsCommand = (repositoryURL: string) => {
 	const { SSH_PATH } = paths(true);
 	const { domain, port } = sanitizeRepoPathSSH(repositoryURL);
 	const knownHostsPath = path.join(SSH_PATH, "known_hosts");
 
-	return `ssh-keyscan -p ${port} ${domain} >> ${knownHostsPath};`;
+	if (!domain) {
+		throw new Error(`Malformatted SSH path: ${repositoryURL}`);
+	}
+
+	return buildKnownHostsCommand({
+		domain,
+		knownHostsPath,
+		port,
+	});
 };
 const sanitizeRepoPathSSH = (input: string) => {
 	const SSH_PATH_RE = new RegExp(
@@ -169,7 +178,14 @@ export const getGitCommitInfo = async ({
 		hash: "",
 	};
 	try {
-		const gitCommand = `git -C ${outputPath} log -1 --pretty=format:"%H---DELIMITER---%B"`;
+		const gitCommand = quoteShellArgs([
+			"git",
+			"-C",
+			outputPath,
+			"log",
+			"-1",
+			"--pretty=format:%H---DELIMITER---%B",
+		]);
 		if (serverId) {
 			const { stdout } = await execAsyncRemote(serverId, gitCommand);
 			stdoutResult = stdout.trim();

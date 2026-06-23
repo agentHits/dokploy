@@ -7,6 +7,12 @@ import {
 } from "@dokploy/server/services/gitea";
 import type { InferResultType } from "@dokploy/server/types/with";
 import { TRPCError } from "@trpc/server";
+import {
+	buildCreateDirectoryCommand,
+	buildGitCloneCommand,
+	buildProviderEchoCommand,
+	buildRemovePathCommand,
+} from "./commands";
 
 export const getErrorCloneRequirements = (entity: {
 	giteaRepository?: string | null;
@@ -151,7 +157,7 @@ export const cloneGiteaRepository = async ({
 	const { APPLICATIONS_PATH, COMPOSE_PATH } = paths(!!serverId);
 
 	if (!giteaId) {
-		command += `echo "Error: ❌ Gitea Provider not found"; exit 1;`;
+		command += `${buildProviderEchoCommand("Error: ❌ Gitea Provider not found")} exit 1;`;
 		return command;
 	}
 
@@ -159,14 +165,14 @@ export const cloneGiteaRepository = async ({
 	const giteaProvider = await findGiteaById(giteaId);
 
 	if (!giteaProvider) {
-		command += `echo "❌ [ERROR] Gitea provider not found in the database"; exit 1;`;
+		command += `${buildProviderEchoCommand("❌ [ERROR] Gitea provider not found in the database")} exit 1;`;
 		return command;
 	}
 
 	const basePath = type === "compose" ? COMPOSE_PATH : APPLICATIONS_PATH;
 	const outputPath = outputPathOverride ?? join(basePath, appName, "code");
-	command += `rm -rf ${outputPath};`;
-	command += `mkdir -p ${outputPath};`;
+	command += buildRemovePathCommand(outputPath);
+	command += buildCreateDirectoryCommand(outputPath);
 
 	const repoClone = `${giteaOwner}/${giteaRepository}.git`;
 	const cloneUrl = buildGiteaCloneUrl(
@@ -176,8 +182,15 @@ export const cloneGiteaRepository = async ({
 		giteaRepository!,
 	);
 
-	command += `echo "Cloning Repo ${repoClone} to ${outputPath}: ✅";`;
-	command += `git clone --branch ${giteaBranch} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${cloneUrl} ${outputPath} --progress;`;
+	command += buildProviderEchoCommand(
+		`Cloning Repo ${repoClone} to ${outputPath}: ✅`,
+	);
+	command += `${buildGitCloneCommand({
+		branch: giteaBranch!,
+		cloneUrl,
+		enableSubmodules,
+		outputPath,
+	})};`;
 	return command;
 };
 
