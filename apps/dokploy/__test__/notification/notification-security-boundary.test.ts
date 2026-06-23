@@ -1,4 +1,7 @@
 import {
+	assertNotificationBaseUrlAllowed,
+	assertNotificationHttpUrlAllowed,
+	assertNotificationSmtpHostAllowed,
 	normalizeNotificationBaseUrl,
 	normalizeNotificationHttpUrl,
 	normalizeNotificationSmtpHost,
@@ -160,6 +163,41 @@ describe("notification secret and outbound target boundaries", () => {
 		).toBe("https://hooks.slack.com/services/T/B/secret?retry=1");
 	});
 
+	it("rejects public-looking webhook hostnames that resolve to private addresses", async () => {
+		await expect(
+			assertNotificationHttpUrlAllowed("https://hooks.example.com/webhook", {
+				allowPrivateNetwork: false,
+				fieldName: "Notification webhook URL",
+				lookup: async () => [{ address: "192.168.1.10", family: 4 }],
+			}),
+		).rejects.toThrow(/Notification webhook URL/i);
+	});
+
+	it("allows webhook hostnames that resolve only to public addresses", async () => {
+		await expect(
+			assertNotificationHttpUrlAllowed(
+				"https://hooks.example.com/webhook?retry=1",
+				{
+					allowPrivateNetwork: false,
+					fieldName: "Notification webhook URL",
+					lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+				},
+			),
+		).resolves.toBe("https://hooks.example.com/webhook?retry=1");
+	});
+
+	it("does not resolve self-hosted notification targets when private networks are allowed", async () => {
+		await expect(
+			assertNotificationHttpUrlAllowed("http://127.0.0.1:8080/webhook", {
+				allowPrivateNetwork: true,
+				fieldName: "Notification webhook URL",
+				lookup: async () => {
+					throw new Error("lookup should not run");
+				},
+			}),
+		).resolves.toBe("http://127.0.0.1:8080/webhook");
+	});
+
 	it("allows private self-hosted notification targets when explicitly allowed", () => {
 		expect(
 			normalizeNotificationHttpUrl("http://127.0.0.1:8080/webhook", {
@@ -183,6 +221,16 @@ describe("notification secret and outbound target boundaries", () => {
 				fieldName: "Gotify server URL",
 			}),
 		).toThrow(/query/i);
+	});
+
+	it("rejects public-looking base URL hostnames that resolve to private addresses", async () => {
+		await expect(
+			assertNotificationBaseUrlAllowed("https://gotify.example.com/base/", {
+				allowPrivateNetwork: false,
+				fieldName: "Gotify server URL",
+				lookup: async () => [{ address: "172.16.0.10", family: 4 }],
+			}),
+		).rejects.toThrow(/Gotify server URL/i);
 	});
 
 	it("rejects unsafe cloud SMTP hosts before nodemailer delivery", () => {
@@ -214,5 +262,25 @@ describe("notification secret and outbound target boundaries", () => {
 				allowPrivateNetwork: true,
 			}),
 		).toBe("mail");
+	});
+
+	it("rejects public-looking SMTP hosts that resolve to private addresses", async () => {
+		await expect(
+			assertNotificationSmtpHostAllowed("smtp.example.com", {
+				allowPrivateNetwork: false,
+				lookup: async () => [{ address: "127.0.0.1", family: 4 }],
+			}),
+		).rejects.toThrow(/SMTP/i);
+	});
+
+	it("does not resolve SMTP hosts when private networks are allowed", async () => {
+		await expect(
+			assertNotificationSmtpHostAllowed("mail", {
+				allowPrivateNetwork: true,
+				lookup: async () => {
+					throw new Error("lookup should not run");
+				},
+			}),
+		).resolves.toBe("mail");
 	});
 });

@@ -13,6 +13,13 @@ import {
 	buildProviderEchoCommand,
 	buildRemovePathCommand,
 } from "./commands";
+import { assertGitProviderBaseUrlAllowed } from "./url";
+
+const getGiteaProviderBaseUrl = (giteaProvider: Gitea) =>
+	assertGitProviderBaseUrlAllowed(
+		giteaProvider.giteaInternalUrl || giteaProvider.giteaUrl,
+		{ fieldName: "Gitea provider URL" },
+	);
 
 export const getErrorCloneRequirements = (entity: {
 	giteaRepository?: string | null;
@@ -30,33 +37,34 @@ export const getErrorCloneRequirements = (entity: {
 };
 
 export const refreshGiteaToken = async (giteaProviderId: string) => {
+	const giteaProvider = await findGiteaById(giteaProviderId);
+
+	if (
+		!giteaProvider?.clientId ||
+		!giteaProvider?.clientSecret ||
+		!giteaProvider?.refreshToken
+	) {
+		return giteaProvider?.accessToken || null;
+	}
+
+	// Check if token is still valid (add some buffer time, e.g., 5 minutes)
+	const currentTimeSeconds = Math.floor(Date.now() / 1000);
+	const bufferTimeSeconds = 300; // 5 minutes
+
+	if (
+		giteaProvider.expiresAt &&
+		giteaProvider.expiresAt > currentTimeSeconds + bufferTimeSeconds &&
+		giteaProvider.accessToken
+	) {
+		// Token is still valid, no need to refresh
+		return giteaProvider.accessToken;
+	}
+
+	// Token is expired or about to expire, refresh it
+	// Use internal URL when Gitea is on same instance as Dokploy
+	const baseUrl = await getGiteaProviderBaseUrl(giteaProvider);
+
 	try {
-		const giteaProvider = await findGiteaById(giteaProviderId);
-
-		if (
-			!giteaProvider?.clientId ||
-			!giteaProvider?.clientSecret ||
-			!giteaProvider?.refreshToken
-		) {
-			return giteaProvider?.accessToken || null;
-		}
-
-		// Check if token is still valid (add some buffer time, e.g., 5 minutes)
-		const currentTimeSeconds = Math.floor(Date.now() / 1000);
-		const bufferTimeSeconds = 300; // 5 minutes
-
-		if (
-			giteaProvider.expiresAt &&
-			giteaProvider.expiresAt > currentTimeSeconds + bufferTimeSeconds &&
-			giteaProvider.accessToken
-		) {
-			// Token is still valid, no need to refresh
-			return giteaProvider.accessToken;
-		}
-
-		// Token is expired or about to expire, refresh it
-		// Use internal URL when Gitea is on same instance as Dokploy
-		const baseUrl = giteaProvider.giteaInternalUrl || giteaProvider.giteaUrl;
 		const tokenEndpoint = `${baseUrl}/login/oauth/access_token`;
 		const params = new URLSearchParams({
 			grant_type: "refresh_token",
@@ -175,8 +183,9 @@ export const cloneGiteaRepository = async ({
 	command += buildCreateDirectoryCommand(outputPath);
 
 	const repoClone = `${giteaOwner}/${giteaRepository}.git`;
+	const baseUrl = await getGiteaProviderBaseUrl(giteaProvider);
 	const cloneUrl = buildGiteaCloneUrl(
-		giteaProvider.giteaInternalUrl || giteaProvider.giteaUrl,
+		baseUrl,
 		giteaProvider.accessToken!,
 		giteaOwner!,
 		giteaRepository!,
@@ -224,10 +233,7 @@ export const testGiteaConnection = async (input: { giteaId: string }) => {
 			});
 		}
 
-		const baseUrl = (provider.giteaInternalUrl || provider.giteaUrl).replace(
-			/\/+$/,
-			"",
-		);
+		const baseUrl = await getGiteaProviderBaseUrl(provider);
 
 		// Use /user/repos to get authenticated user's repositories with pagination
 		let allRepos = 0;
@@ -284,9 +290,7 @@ export const getGiteaRepositories = async (giteaId?: string) => {
 	await refreshGiteaToken(giteaId);
 	const giteaProvider = await findGiteaById(giteaId);
 
-	const baseUrl = (
-		giteaProvider.giteaInternalUrl || giteaProvider.giteaUrl
-	).replace(/\/+$/, "");
+	const baseUrl = await getGiteaProviderBaseUrl(giteaProvider);
 
 	// Use /user/repos to get authenticated user's repositories with pagination
 	let allRepositories: any[] = [];
@@ -351,9 +355,7 @@ export const getGiteaBranches = async (input: {
 
 	const giteaProvider = await findGiteaById(input.giteaId);
 
-	const baseUrl = (
-		giteaProvider.giteaInternalUrl || giteaProvider.giteaUrl
-	).replace(/\/+$/, "");
+	const baseUrl = await getGiteaProviderBaseUrl(giteaProvider);
 
 	// Handle pagination for branches
 	let allBranches: any[] = [];

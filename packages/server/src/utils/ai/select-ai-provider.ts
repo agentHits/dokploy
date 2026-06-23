@@ -6,6 +6,8 @@ import { createMistral } from "@ai-sdk/mistral";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
+	assertCloudHostResolvesPublic,
+	type HostnameLookup,
 	isBlockedCloudHost,
 	normalizeHostname,
 } from "@dokploy/server/utils/url/network";
@@ -13,6 +15,10 @@ import { createOllama } from "ai-sdk-ollama";
 
 type NormalizeAIProviderUrlOptions = {
 	allowPrivateNetwork?: boolean;
+};
+
+type AssertAIProviderUrlOptions = NormalizeAIProviderUrlOptions & {
+	lookup?: HostnameLookup;
 };
 
 const hostnameMatches = (hostname: string, expectedHostname: string) =>
@@ -59,6 +65,26 @@ export function normalizeAIProviderApiUrl(
 
 	const pathname = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
 	return `${url.protocol}//${url.host}${pathname}`;
+}
+
+export async function assertAIProviderApiUrlAllowed(
+	apiUrl: string,
+	options: AssertAIProviderUrlOptions = {},
+) {
+	const allowPrivateNetwork =
+		options.allowPrivateNetwork ?? process.env.IS_CLOUD !== "true";
+	const normalizedApiUrl = normalizeAIProviderApiUrl(apiUrl, {
+		allowPrivateNetwork,
+	});
+
+	if (!allowPrivateNetwork) {
+		await assertCloudHostResolvesPublic(new URL(normalizedApiUrl).hostname, {
+			fieldName: "AI provider URL host",
+			lookup: options.lookup,
+		});
+	}
+
+	return normalizedApiUrl;
 }
 
 export function getProviderName(apiUrl: string) {

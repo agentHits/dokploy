@@ -1,4 +1,12 @@
+import { lookup as lookupHost } from "node:dns/promises";
 import { isIP } from "node:net";
+
+export type HostAddress = {
+	address: string;
+	family: number;
+};
+
+export type HostnameLookup = (hostname: string) => Promise<HostAddress[]>;
 
 export const normalizeHostname = (hostname: string) =>
 	hostname
@@ -69,6 +77,7 @@ const isBlockedIPv6 = (hostname: string) => {
 		lowerHostname === "::" ||
 		lowerHostname === "::1" ||
 		lowerHostname.startsWith("::ffff:") ||
+		lowerHostname.startsWith("2001:db8:") ||
 		lowerHostname.startsWith("fe80:") ||
 		firstHextet.startsWith("fc") ||
 		firstHextet.startsWith("fd") ||
@@ -86,4 +95,44 @@ export const isBlockedCloudHost = (hostname: string) => {
 		return isBlockedIPv6(normalizedHostname);
 	}
 	return isBlockedHostname(normalizedHostname);
+};
+
+const defaultLookup: HostnameLookup = async (hostname) =>
+	lookupHost(hostname, { all: true, verbatim: true });
+
+export const assertCloudHostResolvesPublic = async (
+	hostname: string,
+	options: {
+		fieldName?: string;
+		lookup?: HostnameLookup;
+	} = {},
+) => {
+	const fieldName = options.fieldName ?? "Host";
+	const normalizedHostname = normalizeHostname(hostname);
+
+	if (isBlockedCloudHost(normalizedHostname)) {
+		throw new Error(`${fieldName} is not allowed in cloud deployments`);
+	}
+
+	if (isIP(normalizedHostname)) {
+		return;
+	}
+
+	const lookup = options.lookup ?? defaultLookup;
+	let addresses: HostAddress[];
+	try {
+		addresses = await lookup(normalizedHostname);
+	} catch {
+		throw new Error(`${fieldName} could not be resolved`);
+	}
+
+	if (addresses.length === 0) {
+		throw new Error(`${fieldName} could not be resolved`);
+	}
+
+	if (addresses.some(({ address }) => isBlockedCloudHost(address))) {
+		throw new Error(
+			`${fieldName} resolves to a host that is not allowed in cloud deployments`,
+		);
+	}
 };

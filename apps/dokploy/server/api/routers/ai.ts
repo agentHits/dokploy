@@ -18,10 +18,10 @@ import {
 	checkServiceAccess,
 } from "@dokploy/server/services/permission";
 import {
+	assertAIProviderApiUrlAllowed,
 	getProviderHeaders,
 	getProviderName,
 	type Model,
-	normalizeAIProviderApiUrl,
 	selectAIProvider,
 } from "@dokploy/server/utils/ai/select-ai-provider";
 import { TRPCError } from "@trpc/server";
@@ -56,7 +56,7 @@ export const aiRouter = createTRPCRouter({
 		.input(z.object({ apiUrl: z.string().min(1), apiKey: z.string() }))
 		.query(async ({ input }) => {
 			try {
-				const apiUrl = normalizeAIProviderApiUrl(input.apiUrl);
+				const apiUrl = await assertAIProviderApiUrlAllowed(input.apiUrl);
 				const providerName = getProviderName(apiUrl);
 				const headers = getProviderHeaders(apiUrl, input.apiKey);
 				let response = null;
@@ -253,7 +253,8 @@ export const aiRouter = createTRPCRouter({
 					});
 				}
 
-				const provider = selectAIProvider(aiSettings);
+				const apiUrl = await assertAIProviderApiUrlAllowed(aiSettings.apiUrl);
+				const provider = selectAIProvider({ ...aiSettings, apiUrl });
 				const model = provider(aiSettings.model);
 
 				const contextLabel =
@@ -296,8 +297,9 @@ ${input.logs}`,
 		)
 		.mutation(async ({ input }) => {
 			try {
+				const apiUrl = await assertAIProviderApiUrlAllowed(input.apiUrl);
 				const provider = selectAIProvider({
-					apiUrl: input.apiUrl,
+					apiUrl,
 					apiKey: input.apiKey,
 				});
 				const model = provider(input.model);

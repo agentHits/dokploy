@@ -1,4 +1,5 @@
 import {
+	assertAIProviderApiUrlAllowed,
 	getProviderName,
 	normalizeAIProviderApiUrl,
 } from "@dokploy/server/utils/ai/select-ai-provider";
@@ -31,6 +32,35 @@ describe("AI provider URL boundary", () => {
 				allowPrivateNetwork: false,
 			}),
 		).toBe("https://api.openai.com/v1");
+	});
+
+	it("rejects public-looking provider hostnames that resolve to private addresses", async () => {
+		await expect(
+			assertAIProviderApiUrlAllowed("https://api.openai.com/v1", {
+				allowPrivateNetwork: false,
+				lookup: async () => [{ address: "10.0.0.5", family: 4 }],
+			}),
+		).rejects.toThrow(/AI provider URL/i);
+	});
+
+	it("allows provider hostnames that resolve only to public addresses", async () => {
+		await expect(
+			assertAIProviderApiUrlAllowed("https://api.openai.com/v1/", {
+				allowPrivateNetwork: false,
+				lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+			}),
+		).resolves.toBe("https://api.openai.com/v1");
+	});
+
+	it("does not resolve self-hosted provider hostnames when private networks are allowed", async () => {
+		await expect(
+			assertAIProviderApiUrlAllowed("http://127.0.0.1:11434/", {
+				allowPrivateNetwork: true,
+				lookup: async () => {
+					throw new Error("lookup should not run");
+				},
+			}),
+		).resolves.toBe("http://127.0.0.1:11434");
 	});
 
 	it("preserves local self-hosted providers when private network calls are allowed", () => {

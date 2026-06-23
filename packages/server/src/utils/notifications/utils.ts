@@ -15,9 +15,9 @@ import type {
 import nodemailer from "nodemailer";
 import { Resend } from "resend";
 import {
-	normalizeNotificationBaseUrl,
-	normalizeNotificationHttpUrl,
-	normalizeNotificationSmtpHost,
+	assertNotificationBaseUrlAllowed,
+	assertNotificationHttpUrlAllowed,
+	assertNotificationSmtpHostAllowed,
 } from "./security";
 
 export const sendEmailNotification = async (
@@ -36,7 +36,7 @@ export const sendEmailNotification = async (
 			toAddresses,
 		} = connection;
 		const transporter = nodemailer.createTransport({
-			host: normalizeNotificationSmtpHost(smtpServer),
+			host: await assertNotificationSmtpHostAllowed(smtpServer),
 			port: smtpPort,
 			auth: { user: username, pass: password },
 		});
@@ -88,9 +88,12 @@ export const sendDiscordNotification = async (
 	embed: any,
 ) => {
 	try {
-		const webhookUrl = normalizeNotificationHttpUrl(connection.webhookUrl, {
-			fieldName: "Discord webhook URL",
-		});
+		const webhookUrl = await assertNotificationHttpUrlAllowed(
+			connection.webhookUrl,
+			{
+				fieldName: "Discord webhook URL",
+			},
+		);
 		const response = await fetch(webhookUrl, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -144,9 +147,12 @@ export const sendSlackNotification = async (
 	message: any,
 ) => {
 	try {
-		const webhookUrl = normalizeNotificationHttpUrl(connection.webhookUrl, {
-			fieldName: "Slack webhook URL",
-		});
+		const webhookUrl = await assertNotificationHttpUrlAllowed(
+			connection.webhookUrl,
+			{
+				fieldName: "Slack webhook URL",
+			},
+		);
 		const response = await fetch(webhookUrl, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -171,9 +177,12 @@ export const sendGotifyNotification = async (
 	title: string,
 	message: string,
 ) => {
-	const serverUrl = normalizeNotificationBaseUrl(connection.serverUrl, {
-		fieldName: "Gotify server URL",
-	});
+	const serverUrl = await assertNotificationBaseUrlAllowed(
+		connection.serverUrl,
+		{
+			fieldName: "Gotify server URL",
+		},
+	);
 	const response = await fetch(`${serverUrl}/message`, {
 		method: "POST",
 		headers: {
@@ -207,9 +216,12 @@ export const sendNtfyNotification = async (
 	actions: string,
 	message: string,
 ) => {
-	const serverUrl = normalizeNotificationBaseUrl(connection.serverUrl, {
-		fieldName: "ntfy server URL",
-	});
+	const serverUrl = await assertNotificationBaseUrlAllowed(
+		connection.serverUrl,
+		{
+			fieldName: "ntfy server URL",
+		},
+	);
 	const response = await fetch(`${serverUrl}/${connection.topic}`, {
 		method: "POST",
 		headers: {
@@ -244,9 +256,12 @@ export const sendMattermostNotification = async (
 		}),
 	};
 
-	const webhookUrl = normalizeNotificationHttpUrl(connection.webhookUrl, {
-		fieldName: "Mattermost webhook URL",
-	});
+	const webhookUrl = await assertNotificationHttpUrlAllowed(
+		connection.webhookUrl,
+		{
+			fieldName: "Mattermost webhook URL",
+		},
+	);
 	const response = await fetch(webhookUrl, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -275,9 +290,12 @@ export const sendCustomNotification = async (
 		// Default body with payload
 		const body = JSON.stringify(payload);
 
-		const endpoint = normalizeNotificationHttpUrl(connection.endpoint, {
-			fieldName: "Custom notification endpoint",
-		});
+		const endpoint = await assertNotificationHttpUrlAllowed(
+			connection.endpoint,
+			{
+				fieldName: "Custom notification endpoint",
+			},
+		);
 		const response = await fetch(endpoint, {
 			method: "POST",
 			headers,
@@ -303,9 +321,12 @@ export const sendLarkNotification = async (
 	message: any,
 ) => {
 	try {
-		const webhookUrl = normalizeNotificationHttpUrl(connection.webhookUrl, {
-			fieldName: "Lark webhook URL",
-		});
+		const webhookUrl = await assertNotificationHttpUrlAllowed(
+			connection.webhookUrl,
+			{
+				fieldName: "Lark webhook URL",
+			},
+		);
 		await fetch(webhookUrl, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -376,9 +397,12 @@ export const sendTeamsNotification = async (
 			],
 		};
 
-		const webhookUrl = normalizeNotificationHttpUrl(connection.webhookUrl, {
-			fieldName: "Teams webhook URL",
-		});
+		const webhookUrl = await assertNotificationHttpUrlAllowed(
+			connection.webhookUrl,
+			{
+				fieldName: "Teams webhook URL",
+			},
+		);
 		const response = await fetch(webhookUrl, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },

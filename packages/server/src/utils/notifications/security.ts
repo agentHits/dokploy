@@ -1,10 +1,18 @@
-import { isBlockedCloudHost } from "@dokploy/server/utils/url/network";
+import {
+	assertCloudHostResolvesPublic,
+	type HostnameLookup,
+	isBlockedCloudHost,
+} from "@dokploy/server/utils/url/network";
 
 export const REDACTED_NOTIFICATION_SECRET = "__DOKPLOY_REDACTED_SECRET__";
 
 type NormalizeNotificationUrlOptions = {
 	allowPrivateNetwork?: boolean;
 	fieldName?: string;
+};
+
+type AssertNotificationUrlOptions = NormalizeNotificationUrlOptions & {
+	lookup?: HostnameLookup;
 };
 
 type NotificationRecord = Record<string, unknown>;
@@ -174,6 +182,30 @@ export const normalizeNotificationHttpUrl = (
 	return `${url.protocol}//${url.host}${url.pathname}${url.search}`;
 };
 
+export const assertNotificationHttpUrlAllowed = async (
+	urlValue: string,
+	options: AssertNotificationUrlOptions = {},
+) => {
+	const fieldName = options.fieldName ?? "Notification URL";
+	const allowPrivateNetwork = resolveAllowPrivateNetwork(
+		options.allowPrivateNetwork,
+	);
+	const normalizedUrl = normalizeNotificationHttpUrl(urlValue, {
+		...options,
+		fieldName,
+		allowPrivateNetwork,
+	});
+
+	if (!allowPrivateNetwork) {
+		await assertCloudHostResolvesPublic(new URL(normalizedUrl).hostname, {
+			fieldName,
+			lookup: options.lookup,
+		});
+	}
+
+	return normalizedUrl;
+};
+
 export const normalizeNotificationBaseUrl = (
 	urlValue: string,
 	options: NormalizeNotificationUrlOptions = {},
@@ -192,6 +224,30 @@ export const normalizeNotificationBaseUrl = (
 	const pathname = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
 
 	return `${url.protocol}//${url.host}${pathname}`;
+};
+
+export const assertNotificationBaseUrlAllowed = async (
+	urlValue: string,
+	options: AssertNotificationUrlOptions = {},
+) => {
+	const fieldName = options.fieldName ?? "Notification server URL";
+	const allowPrivateNetwork = resolveAllowPrivateNetwork(
+		options.allowPrivateNetwork,
+	);
+	const normalizedUrl = normalizeNotificationBaseUrl(urlValue, {
+		...options,
+		fieldName,
+		allowPrivateNetwork,
+	});
+
+	if (!allowPrivateNetwork) {
+		await assertCloudHostResolvesPublic(new URL(normalizedUrl).hostname, {
+			fieldName,
+			lookup: options.lookup,
+		});
+	}
+
+	return normalizedUrl;
 };
 
 export const normalizeNotificationSmtpHost = (
@@ -236,4 +292,28 @@ export const normalizeNotificationSmtpHost = (
 	}
 
 	return parsedHost;
+};
+
+export const assertNotificationSmtpHostAllowed = async (
+	smtpHost: string,
+	options: Pick<
+		AssertNotificationUrlOptions,
+		"allowPrivateNetwork" | "lookup"
+	> = {},
+) => {
+	const allowPrivateNetwork = resolveAllowPrivateNetwork(
+		options.allowPrivateNetwork,
+	);
+	const normalizedHost = normalizeNotificationSmtpHost(smtpHost, {
+		allowPrivateNetwork,
+	});
+
+	if (!allowPrivateNetwork) {
+		await assertCloudHostResolvesPublic(normalizedHost, {
+			fieldName: "SMTP host",
+			lookup: options.lookup,
+		});
+	}
+
+	return normalizedHost;
 };

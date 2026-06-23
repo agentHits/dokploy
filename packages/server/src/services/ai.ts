@@ -1,7 +1,7 @@
 import { db } from "@dokploy/server/db";
 import { ai } from "@dokploy/server/db/schema";
 import {
-	normalizeAIProviderApiUrl,
+	assertAIProviderApiUrlAllowed,
 	selectAIProvider,
 } from "@dokploy/server/utils/ai/select-ai-provider";
 import { TRPCError } from "@trpc/server";
@@ -80,7 +80,7 @@ export const saveAiSettings = async (organizationId: string, settings: any) => {
 
 	const normalizedSettings = { ...settings };
 	if (normalizedSettings.apiUrl) {
-		normalizedSettings.apiUrl = normalizeAIProviderApiUrl(
+		normalizedSettings.apiUrl = await assertAIProviderApiUrlAllowed(
 			normalizedSettings.apiUrl,
 		);
 	}
@@ -130,7 +130,8 @@ export const suggestVariants = async ({
 			});
 		}
 
-		const provider = selectAIProvider(aiSettings);
+		const apiUrl = await assertAIProviderApiUrlAllowed(aiSettings.apiUrl);
+		const provider = selectAIProvider({ ...aiSettings, apiUrl });
 		const model = provider(aiSettings.model);
 
 		let ip = "";

@@ -15,6 +15,18 @@ import {
 	buildProviderEchoCommand,
 	buildRemovePathCommand,
 } from "./commands";
+import { assertGitProviderBaseUrlAllowed } from "./url";
+
+type GitlabProviderBaseUrl = {
+	gitlabInternalUrl?: string | null;
+	gitlabUrl: string;
+};
+
+const getGitlabProviderBaseUrl = (gitlabProvider: GitlabProviderBaseUrl) =>
+	assertGitProviderBaseUrlAllowed(
+		gitlabProvider.gitlabInternalUrl || gitlabProvider.gitlabUrl,
+		{ fieldName: "GitLab provider URL" },
+	);
 
 export const refreshGitlabToken = async (gitlabProviderId: string) => {
 	const gitlabProvider = await findGitlabById(gitlabProviderId);
@@ -29,7 +41,7 @@ export const refreshGitlabToken = async (gitlabProviderId: string) => {
 	}
 
 	// Use internal URL for token refresh when GitLab is on same instance as Dokploy
-	const baseUrl = gitlabProvider.gitlabInternalUrl || gitlabProvider.gitlabUrl;
+	const baseUrl = await getGitlabProviderBaseUrl(gitlabProvider);
 	const response = await fetch(`${baseUrl}/oauth/token`, {
 		method: "POST",
 		headers: {
@@ -93,17 +105,19 @@ export type GitlabInfo =
 	| ComposeWithGitlab["gitlab"];
 
 const getGitlabRepoClone = (
-	gitlab: GitlabInfo,
+	baseUrl: string,
 	gitlabPathNamespace: string | null,
 ) => {
-	const url = gitlab?.gitlabInternalUrl || gitlab?.gitlabUrl;
-	const repoClone = `${url?.replace(/^https?:\/\//, "")}/${gitlabPathNamespace}.git`;
+	const repoClone = `${baseUrl.replace(/^https?:\/\//, "")}/${gitlabPathNamespace}.git`;
 	return repoClone;
 };
 
-const getGitlabCloneUrl = (gitlab: GitlabInfo, repoClone: string) => {
-	const url = gitlab?.gitlabInternalUrl || gitlab?.gitlabUrl;
-	const isSecure = url?.startsWith("https://");
+const getGitlabCloneUrl = (
+	gitlab: GitlabInfo,
+	baseUrl: string,
+	repoClone: string,
+) => {
+	const isSecure = baseUrl.startsWith("https://");
 	const cloneUrl = `http${isSecure ? "s" : ""}://oauth2:${gitlab?.accessToken}@${repoClone}`;
 	return cloneUrl;
 };
@@ -159,8 +173,9 @@ export const cloneGitlabRepository = async ({
 	const outputPath = outputPathOverride ?? join(basePath, appName, "code");
 	command += buildRemovePathCommand(outputPath);
 	command += buildCreateDirectoryCommand(outputPath);
-	const repoClone = getGitlabRepoClone(gitlab, gitlabPathNamespace);
-	const cloneUrl = getGitlabCloneUrl(gitlab, repoClone);
+	const baseUrl = await getGitlabProviderBaseUrl(gitlab);
+	const repoClone = getGitlabRepoClone(baseUrl, gitlabPathNamespace);
+	const cloneUrl = getGitlabCloneUrl(gitlab, baseUrl, repoClone);
 	command += buildProviderEchoCommand(
 		`Cloning Repo ${repoClone} to ${outputPath}: ✅`,
 	);
@@ -233,9 +248,7 @@ export const getGitlabBranches = async (input: {
 	const allBranches = [];
 	let page = 1;
 	const perPage = 100; // GitLab's max per page is 100
-	const baseUrl = (
-		gitlabProvider.gitlabInternalUrl || gitlabProvider.gitlabUrl
-	).replace(/\/+$/, "");
+	const baseUrl = await getGitlabProviderBaseUrl(gitlabProvider);
 
 	while (true) {
 		const branchesResponse = await fetch(
@@ -314,9 +327,7 @@ export const validateGitlabProvider = async (gitlabProvider: Gitlab) => {
 		const allProjects = [];
 		let page = 1;
 		const perPage = 100; // GitLab's max per page is 100
-		const baseUrl = (
-			gitlabProvider.gitlabInternalUrl || gitlabProvider.gitlabUrl
-		).replace(/\/+$/, "");
+		const baseUrl = await getGitlabProviderBaseUrl(gitlabProvider);
 
 		while (true) {
 			const response = await fetch(
