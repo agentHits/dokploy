@@ -33,6 +33,7 @@
 | F-13 | Remediated after scan | Commit `8b8f84325` secured GitHub App setup state handling with signed, expiring, session-bound state, authenticated callback checks, provider ownership checks, and focused regression tests. |
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations; related surfaces still need revalidation. |
 | F-14 | Remediated after scan | Commits `3f9c68cad` and `87cce3235` secured target project/environment/server/service placement checks, project/environment ownership-field mass-assignment boundaries, project duplicate selected-service authorization, and volume-backup service binding reassignment checks with focused regression tests. |
+| F-15 | Remediated after scan | Commit `1f1f1b676` restricted request-log reads and logging controls to the admin settings boundary, aligned Requests navigation/page gating, and added focused regression tests. |
 
 ## Why This Is Redacted
 

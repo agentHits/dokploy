@@ -66,7 +66,7 @@ role-matrix, or real deploy smoke tests.
 | F-12 | Medium | Medium | Backup destination ownership boundary | Remediated after scan |
 | F-13 | Medium | Medium | GitHub App callback state boundary | Remediated after scan |
 | F-14 | Medium | Medium | Placement and ownership assignment boundary | Remediated after scan |
-| F-15 | Medium | High | Request log access and logging control boundary | Open |
+| F-15 | Medium | High | Request log access and logging control boundary | Remediated after scan |
 | F-16 | Medium | Medium | Outbound URL private address resolution boundary | Open |
 
 ## Remediation Log
@@ -87,6 +87,7 @@ role-matrix, or real deploy smoke tests.
 | F-13 | Remediated after scan | Commit `8b8f84325` added signed, expiring, session-bound GitHub App setup state for provider creation and installation binding, enforced authenticated session and provider ownership checks before callback mutations, removed plaintext UI state generation, and added focused regression tests. |
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations plus focused regression tests. Other server-scoped surfaces still need revalidation. |
 | F-14 | Remediated after scan | Commits `3f9c68cad` and `87cce3235` added target project/environment/server/service placement checks, narrowed project/environment update schemas and services to avoid ownership-field mass assignment, guarded project duplicate selected services before target project creation, guarded volume-backup service bindings before persistence, and added focused regression tests. |
+| F-15 | Remediated after scan | Commit `1f1f1b676` moved request-log reads and request/log-cleanup controls behind the admin settings boundary, aligned Requests navigation/page access, and added focused authorization regression tests. |
 | Report tracking | Added | Commit `b072b017c` added a public-safe security remediation tracker. |
 
 ## Working Plan
