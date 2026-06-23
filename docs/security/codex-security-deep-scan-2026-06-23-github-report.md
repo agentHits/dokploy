@@ -54,7 +54,7 @@ role-matrix, or real deploy smoke tests.
 | --- | --- | --- | --- | --- |
 | F-01 | High | High | Monitoring outbound request boundary | Remediated after scan |
 | F-02 | High | High | Database credential rotation command boundary | Remediated after scan |
-| F-03 | High | High | Server assignment authorization boundary | Partially remediated after scan |
+| F-03 | High | High | Server assignment authorization boundary | Remediated after scan |
 | F-04 | High | High | Registry credential test command boundary | Remediated after scan |
 | F-05 | High | Medium | Build and compose command construction boundary | Remediated after scan |
 | F-06 | High | Medium | Remote routing config write boundary | Remediated after scan |
@@ -85,7 +85,7 @@ role-matrix, or real deploy smoke tests.
 | F-11 | Remediated after scan | Commit `35cca57dd` added argv-safe Docker image pull command construction for application Docker provider and remote database deploy pull paths with focused regression tests. |
 | F-12 | Remediated after scan | Commit `9d15d5a3b` added destination ownership checks before backup and volume-backup create/update persistence and scheduler side effects with focused regression tests. |
 | F-13 | Remediated after scan | Commit `8b8f84325` added signed, expiring, session-bound GitHub App setup state for provider creation and installation binding, enforced authenticated session and provider ownership checks before callback mutations, removed plaintext UI state generation, and added focused regression tests. |
-| F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations plus focused regression tests. Other server-scoped surfaces still need revalidation. |
+| F-03 | Remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations. Commit `62ddd8c7c` closed the remaining reviewed server-scoped API surfaces across server, deployment, backup, volume backup, domain, schedule, destination, and certificate routes with focused regression tests. |
 | F-14 | Remediated after scan | Commits `3f9c68cad` and `87cce3235` added target project/environment/server/service placement checks, narrowed project/environment update schemas and services to avoid ownership-field mass assignment, guarded project duplicate selected services before target project creation, guarded volume-backup service bindings before persistence, and added focused regression tests. |
 | F-15 | Remediated after scan | Commit `1f1f1b676` moved request-log reads and request/log-cleanup controls behind the admin settings boundary, aligned Requests navigation/page access, and added focused authorization regression tests. |
 | F-16 | Remediated after scan | Commit `6ef8254ad` added DNS-resolution guards for configurable AI provider, notification, and Git provider outbound targets with focused deterministic lookup regression tests. |
