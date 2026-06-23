@@ -51,7 +51,7 @@ role-matrix, or real deploy smoke tests.
 | ID | Severity | Confidence | Area | Current handling status |
 | --- | --- | --- | --- | --- |
 | F-01 | High | High | Monitoring outbound request boundary | Remediated after scan |
-| F-02 | High | High | Database credential rotation command boundary | Open |
+| F-02 | High | High | Database credential rotation command boundary | Remediated after scan |
 | F-03 | High | High | Server assignment authorization boundary | Partially remediated after scan |
 | F-04 | High | High | Registry credential test command boundary | Remediated after scan |
 | F-05 | High | Medium | Build and compose command construction boundary | Open |
@@ -71,6 +71,7 @@ role-matrix, or real deploy smoke tests.
 
 | Finding | Status | Evidence |
 | --- | --- | --- |
+| F-02 | Remediated after scan | Commit `5b73383` quotes password-change shell arguments, validates database identifiers, tightens new database password validation, and adds focused regression tests. |
 | F-01 | Remediated after scan | Commit `5b1a91d4f` moved container metrics target and bearer-token resolution server-side, removed caller-supplied URL/token inputs, and added focused boundary tests. |
 | F-04 | Remediated after scan | Commit `530393895` added server-access checks, safe registry login command construction, redacted registry test errors, and focused regression tests. |
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations plus focused regression tests. Other server-scoped surfaces still need revalidation. |
