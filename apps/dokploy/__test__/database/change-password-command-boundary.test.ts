@@ -40,10 +40,14 @@ vi.mock("@dokploy/server", () => ({
 	createMariadb: mocks.noop,
 	createMount: mocks.noop,
 	createMysql: mocks.noop,
+	createMongo: mocks.noop,
 	createPostgres: mocks.noop,
+	createRedis: mocks.noop,
 	deployMariadb: mocks.noop,
+	deployMongo: mocks.noop,
 	deployMySql: mocks.noop,
 	deployPostgres: mocks.noop,
+	deployRedis: mocks.noop,
 	execAsync: mocks.execAsync,
 	execAsyncRemote: mocks.execAsyncRemote,
 	findApplicationById: mocks.findApplicationById,
@@ -65,16 +69,20 @@ vi.mock("@dokploy/server", () => ({
 	quoteShellArg: mocks.quoteShellArg,
 	rebuildDatabase: mocks.noop,
 	removeMariadbById: mocks.noop,
+	removeMongoById: mocks.noop,
 	removeMySqlById: mocks.noop,
 	removePostgresById: mocks.noop,
+	removeRedisById: mocks.noop,
 	removeService: mocks.noop,
 	startService: mocks.noop,
 	startServiceRemote: mocks.noop,
 	stopService: mocks.noop,
 	stopServiceRemote: mocks.noop,
 	updateMariadbById: mocks.noop,
+	updateMongoById: mocks.noop,
 	updateMySqlById: mocks.noop,
 	updatePostgresById: mocks.noop,
+	updateRedisById: mocks.noop,
 }));
 
 vi.mock("@dokploy/server/db", () => ({
@@ -97,6 +105,11 @@ vi.mock("@/server/api/utils/audit", () => ({
 const { postgresRouter } = await import("../../server/api/routers/postgres");
 const { mysqlRouter } = await import("../../server/api/routers/mysql");
 const { mariadbRouter } = await import("../../server/api/routers/mariadb");
+const { mongoRouter } = await import("../../server/api/routers/mongo");
+const { redisRouter } = await import("../../server/api/routers/redis");
+const { apiCreateMongo, apiCreateRedis } = await import(
+	"@dokploy/server/db/schema"
+);
 
 const createContext = () =>
 	({
@@ -115,8 +128,10 @@ const createContext = () =>
 
 const callers = () => ({
 	mariadb: mariadbRouter.createCaller(createContext()),
+	mongo: mongoRouter.createCaller(createContext()),
 	mysql: mysqlRouter.createCaller(createContext()),
 	postgres: postgresRouter.createCaller(createContext()),
+	redis: redisRouter.createCaller(createContext()),
 });
 
 describe("database change-password command boundary", () => {
@@ -142,6 +157,39 @@ describe("database change-password command boundary", () => {
 			databaseUser: "dokploy",
 			serverId: "server-1",
 		});
+		mocks.findMongoById.mockResolvedValue({
+			appName: "mongo-app",
+			databasePassword: "mongo-password",
+			databaseUser: "dokploy",
+			serverId: "server-1",
+		});
+		mocks.findRedisById.mockResolvedValue({
+			appName: "redis-app",
+			databasePassword: "redis-password",
+			serverId: "server-1",
+		});
+	});
+
+	it("rejects unsafe redis and mongo credential fields before persistence", () => {
+		expect(
+			apiCreateRedis.safeParse({
+				databasePassword: "safe;unsafe",
+				dockerImage: "redis:8",
+				environmentId: "env-1",
+				name: "redis",
+			}).success,
+		).toBe(false);
+
+		expect(
+			apiCreateMongo.safeParse({
+				databasePassword: "safePassword123",
+				databaseUser: "mongo;id",
+				dockerImage: "mongo:8",
+				environmentId: "env-1",
+				name: "mongo",
+				replicaSets: false,
+			}).success,
+		).toBe(false);
 	});
 
 	it("rejects shell metacharacters in new database passwords before command execution", async () => {
@@ -161,6 +209,18 @@ describe("database change-password command boundary", () => {
 			await expect(
 				callers().mariadb.changePassword({
 					mariadbId: "mariadb-1",
+					password,
+				}),
+			).rejects.toThrow();
+			await expect(
+				callers().mongo.changePassword({
+					mongoId: "mongo-1",
+					password,
+				}),
+			).rejects.toThrow();
+			await expect(
+				callers().redis.changePassword({
+					redisId: "redis-1",
 					password,
 				}),
 			).rejects.toThrow();
@@ -250,6 +310,61 @@ describe("database change-password command boundary", () => {
 		expect(command).toContain(quoteShellArg(mariadbSql));
 		expect(command).not.toContain(`-p'${databaseRootPassword}'`);
 		expect(command).not.toContain(`ALTER USER '${databaseUser}'@'%'`);
+	});
+
+	it("quotes redis current and new passwords as shell args", async () => {
+		const databasePassword = "old'; touch /tmp/pwn; '";
+		const password = "safe|stillAllowed";
+		mocks.findRedisById.mockResolvedValue({
+			appName: "redis-app",
+			databasePassword,
+			serverId: "server-1",
+		});
+
+		await expect(
+			callers().redis.changePassword({
+				redisId: "redis-1",
+				password,
+			}),
+		).resolves.toBe(true);
+
+		const command = mocks.execAsyncRemote.mock.calls[0]?.[1] as string;
+		expect(command).toContain(
+			`redis-cli -a ${quoteShellArg(databasePassword)} CONFIG SET requirepass ${quoteShellArg(password)}`,
+		);
+		expect(command).not.toContain(`-a '${databasePassword}'`);
+		expect(command).not.toContain(`requirepass ${password}`);
+	});
+
+	it("quotes mongo credentials and JavaScript eval literals", async () => {
+		const databaseUser = "dokploy_user";
+		const databasePassword = "old'; touch /tmp/pwn; '";
+		const password = "safe|stillAllowed";
+		mocks.findMongoById.mockResolvedValue({
+			appName: "mongo-app",
+			databasePassword,
+			databaseUser,
+			serverId: "server-1",
+		});
+
+		await expect(
+			callers().mongo.changePassword({
+				mongoId: "mongo-1",
+				password,
+			}),
+		).resolves.toBe(true);
+
+		const command = mocks.execAsyncRemote.mock.calls[0]?.[1] as string;
+		const js =
+			'db.getSiblingDB("admin").changeUserPassword("dokploy_user", "safe|stillAllowed")';
+		expect(command).toContain(`mongosh -u ${quoteShellArg(databaseUser)}`);
+		expect(command).toContain(`-p ${quoteShellArg(databasePassword)}`);
+		expect(command).toContain(`--eval ${quoteShellArg(js)}`);
+		expect(command).not.toContain(`-p '${databasePassword}'`);
+		expect(command).not.toContain(
+			`changeUserPassword("${databaseUser}", ${password})`,
+		);
+		expect(command).not.toContain(`changeUserPassword('${databaseUser}'`);
 	});
 
 	it("rejects unsafe stored database users before command execution", async () => {

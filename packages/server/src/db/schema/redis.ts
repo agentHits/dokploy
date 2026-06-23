@@ -27,7 +27,13 @@ import {
 	type UpdateConfigSwarm,
 	UpdateConfigSwarmSchema,
 } from "./shared";
-import { APP_NAME_MESSAGE, APP_NAME_REGEX, generateAppName } from "./utils";
+import {
+	APP_NAME_MESSAGE,
+	APP_NAME_REGEX,
+	DATABASE_PASSWORD_MESSAGE,
+	DATABASE_PASSWORD_REGEX,
+	generateAppName,
+} from "./utils";
 
 export const redis = pgTable("redis", {
 	redisId: text("redisId")
@@ -99,7 +105,9 @@ const createSchema = createInsertSchema(redis, {
 		.optional(),
 	createdAt: z.string(),
 	name: z.string().min(1),
-	databasePassword: z.string(),
+	databasePassword: z.string().regex(DATABASE_PASSWORD_REGEX, {
+		message: DATABASE_PASSWORD_MESSAGE,
+	}),
 	dockerImage: z.string().default("redis:8"),
 	command: z.string().optional(),
 	args: z.array(z.string()).optional(),

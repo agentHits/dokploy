@@ -34,6 +34,7 @@ import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
+import { buildRedisPasswordChangeCommand } from "@/server/api/utils/database-password";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
 import {
 	apiChangeRedisStatus,
@@ -420,13 +421,17 @@ export const redisRouter = createTRPCRouter({
 			const { appName, serverId, databasePassword } = rd;
 
 			const containerCmd = getServiceContainerCommand(appName);
+			const passwordChangeCommand = buildRedisPasswordChangeCommand({
+				databasePassword,
+				password,
+			});
 			const command = `
 				CONTAINER_ID=$(${containerCmd})
 				if [ -z "$CONTAINER_ID" ]; then
 					echo "No running container found for ${appName}" >&2
 					exit 1
 				fi
-				docker exec "$CONTAINER_ID" redis-cli -a '${databasePassword}' CONFIG SET requirepass '${password}'
+				${passwordChangeCommand}
 			`;
 
 			await db.transaction(async (tx) => {

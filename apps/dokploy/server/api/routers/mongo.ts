@@ -35,6 +35,7 @@ import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
+import { buildMongoPasswordChangeCommand } from "@/server/api/utils/database-password";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
 import {
 	apiChangeMongoStatus,
@@ -433,13 +434,18 @@ export const mongoRouter = createTRPCRouter({
 			const { appName, serverId, databaseUser, databasePassword } = mongo;
 
 			const containerCmd = getServiceContainerCommand(appName);
+			const passwordChangeCommand = buildMongoPasswordChangeCommand({
+				databasePassword,
+				databaseUser,
+				password,
+			});
 			const command = `
 				CONTAINER_ID=$(${containerCmd})
 				if [ -z "$CONTAINER_ID" ]; then
 					echo "No running container found for ${appName}" >&2
 					exit 1
 				fi
-				docker exec "$CONTAINER_ID" mongosh -u '${databaseUser}' -p '${databasePassword}' --authenticationDatabase admin --eval "db.getSiblingDB('admin').changeUserPassword('${databaseUser}', '${password}')"
+				${passwordChangeCommand}
 			`;
 
 			await db.transaction(async (tx) => {

@@ -47,3 +47,25 @@ export const buildMysqlPasswordChangeCommand = ({
 	const sql = `ALTER USER ${quoteSqlLiteral(safeTargetUser)}@'%' IDENTIFIED BY ${quoteSqlLiteral(password)}; FLUSH PRIVILEGES;`;
 	return `docker exec "$CONTAINER_ID" ${client} -u root ${quoteShellArg(`-p${databaseRootPassword}`)} -e ${quoteShellArg(sql)}`;
 };
+
+export const buildRedisPasswordChangeCommand = ({
+	databasePassword,
+	password,
+}: {
+	databasePassword: string;
+	password: string;
+}) =>
+	`docker exec "$CONTAINER_ID" redis-cli -a ${quoteShellArg(databasePassword)} CONFIG SET requirepass ${quoteShellArg(password)}`;
+
+export const buildMongoPasswordChangeCommand = ({
+	databasePassword,
+	databaseUser,
+	password,
+}: {
+	databasePassword: string;
+	databaseUser: string;
+	password: string;
+}) => {
+	const js = `db.getSiblingDB("admin").changeUserPassword(${JSON.stringify(databaseUser)}, ${JSON.stringify(password)})`;
+	return `docker exec "$CONTAINER_ID" mongosh -u ${quoteShellArg(databaseUser)} -p ${quoteShellArg(databasePassword)} --authenticationDatabase admin --eval ${quoteShellArg(js)}`;
+};
