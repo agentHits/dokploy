@@ -32,6 +32,7 @@
 | F-12 | Remediated after scan | Commit `9d15d5a3b` secured backup destination ownership checks before backup and volume-backup create/update persistence and scheduler side effects with focused regression tests. |
 | F-13 | Remediated after scan | Commit `8b8f84325` secured GitHub App setup state handling with signed, expiring, session-bound state, authenticated callback checks, provider ownership checks, and focused regression tests. |
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations; related surfaces still need revalidation. |
+| F-14 | Partially remediated after scan | Commit `3f9c68cad` secured target project/environment placement checks and project/environment update mass-assignment boundaries for the first reachable slice; related grouped surfaces still need revalidation. |
 
 ## Why This Is Redacted
 
