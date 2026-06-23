@@ -4,7 +4,18 @@ import { betterAuthSecret } from "../../lib/auth-secret";
 const OAUTH_STATE_VERSION = 1;
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 
-export type GitProviderOAuthProviderType = "gitlab" | "gitea";
+export type GitProviderOAuthProviderType = "gitlab" | "gitea" | "github-app";
+
+export const GITHUB_APP_INIT_STATE_PROVIDER_ID = "gh_init";
+const GITHUB_APP_SETUP_STATE_PROVIDER_PREFIX = "gh_setup:";
+
+export const buildGithubAppSetupStateProviderId = (githubId: string) =>
+	`${GITHUB_APP_SETUP_STATE_PROVIDER_PREFIX}${githubId}`;
+
+export const getGithubIdFromAppSetupStateProviderId = (providerId: string) =>
+	providerId.startsWith(GITHUB_APP_SETUP_STATE_PROVIDER_PREFIX)
+		? providerId.slice(GITHUB_APP_SETUP_STATE_PROVIDER_PREFIX.length)
+		: null;
 
 type GitProviderOAuthStateInput = {
 	providerType: GitProviderOAuthProviderType;

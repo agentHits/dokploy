@@ -1,3 +1,8 @@
+import {
+	GITHUB_APP_INIT_STATE_PROVIDER_ID,
+	getGithubIdFromAppSetupStateProviderId,
+	verifyGitProviderOAuthState,
+} from "@dokploy/server/utils/providers/oauth-state";
 import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -87,9 +92,15 @@ const { gitlabRouter } = await import("../../server/api/routers/gitlab");
 const createGithubCaller = () =>
 	githubRouter.createCaller({
 		db: {},
-		req: {},
+		req: {
+			headers: {
+				host: "dokploy.example.com",
+				"x-forwarded-proto": "https",
+			},
+		},
 		res: {},
 		session: {
+			id: "session-1",
 			userId: "user-1",
 			activeOrganizationId: "org-1",
 		},
@@ -146,6 +157,7 @@ describe("github provider router security boundary", () => {
 			gitProvider: {
 				gitProviderId: "gp-1",
 				organizationId: "org-1",
+				userId: "user-1",
 			},
 			gitProviderId: "gp-1",
 		});
@@ -247,6 +259,65 @@ describe("github provider router security boundary", () => {
 		expect(mocks.assertGitProviderAccess).not.toHaveBeenCalled();
 		expect(mocks.updateGitProvider).not.toHaveBeenCalled();
 		expect(mocks.updateGithub).not.toHaveBeenCalled();
+	});
+
+	it("issues signed GitHub App setup state bound to the current session", async () => {
+		const initState = await createGithubCaller().appSetupState({
+			action: "init",
+		});
+
+		expect(
+			verifyGitProviderOAuthState(initState.state, {
+				providerType: "github-app",
+				providerId: GITHUB_APP_INIT_STATE_PROVIDER_ID,
+				redirectUri: "https://dokploy.example.com/api/providers/github/setup",
+				sessionId: "session-1",
+				userId: "user-1",
+				organizationId: "org-1",
+			}),
+		).toMatchObject({
+			providerId: GITHUB_APP_INIT_STATE_PROVIDER_ID,
+			sessionId: "session-1",
+			userId: "user-1",
+			organizationId: "org-1",
+		});
+
+		const setupState = await createGithubCaller().appSetupState({
+			action: "setup",
+			githubId: "gh-1",
+		});
+		const setupPayload = verifyGitProviderOAuthState(setupState.state, {
+			providerType: "github-app",
+			redirectUri: "https://dokploy.example.com/api/providers/github/setup",
+			sessionId: "session-1",
+			userId: "user-1",
+			organizationId: "org-1",
+		});
+
+		expect(mocks.findGithubById).toHaveBeenCalledWith("gh-1");
+		expect(
+			getGithubIdFromAppSetupStateProviderId(setupPayload.providerId),
+		).toBe("gh-1");
+	});
+
+	it("rejects GitHub App setup state for providers outside the active organization", async () => {
+		mocks.findGithubById.mockResolvedValueOnce({
+			githubId: "gh-1",
+			gitProvider: {
+				gitProviderId: "gp-1",
+				organizationId: "org-2",
+				userId: "user-1",
+			},
+		});
+
+		await expect(
+			createGithubCaller().appSetupState({
+				action: "setup",
+				githubId: "gh-1",
+			}),
+		).rejects.toMatchObject({
+			code: "UNAUTHORIZED",
+		});
 	});
 
 	it("rejects gitlab update when the supplied gitProviderId does not match the gitlab row", async () => {

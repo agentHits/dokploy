@@ -6,8 +6,11 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const providerMocks = vi.hoisted(() => ({
+	createGithub: vi.fn(),
+	findGithubById: vi.fn(),
 	findGiteaById: vi.fn(),
 	findGitlabById: vi.fn(),
+	updateGithub: vi.fn(),
 	updateGitea: vi.fn(),
 	updateGitlab: vi.fn(),
 }));
@@ -16,9 +19,23 @@ const authMocks = vi.hoisted(() => ({
 	validateRequest: vi.fn(),
 }));
 
+const dbMocks = vi.hoisted(() => ({
+	update: vi.fn(),
+	updateSet: vi.fn(),
+	updateWhere: vi.fn(),
+	updateReturning: vi.fn(),
+}));
+
+const octokitMocks = vi.hoisted(() => ({
+	request: vi.fn(),
+}));
+
 vi.mock("@dokploy/server", () => ({
+	createGithub: providerMocks.createGithub,
+	findGithubById: providerMocks.findGithubById,
 	findGiteaById: providerMocks.findGiteaById,
 	findGitlabById: providerMocks.findGitlabById,
+	updateGithub: providerMocks.updateGithub,
 	updateGitea: providerMocks.updateGitea,
 	updateGitlab: providerMocks.updateGitlab,
 }));
@@ -27,6 +44,21 @@ vi.mock("@dokploy/server/lib/auth", () => ({
 	validateRequest: authMocks.validateRequest,
 }));
 
+vi.mock("@dokploy/server/db", () => ({
+	db: {
+		update: dbMocks.update,
+	},
+}));
+
+vi.mock("octokit", () => ({
+	Octokit: class {
+		request = octokitMocks.request;
+	},
+}));
+
+const { default: githubSetupHandler } = await import(
+	"../../pages/api/providers/github/setup"
+);
 const { default: giteaAuthorizeHandler } = await import(
 	"../../pages/api/providers/gitea/authorize"
 );
@@ -63,6 +95,18 @@ const giteaProvider = {
 	redirectUri: "https://dokploy.example.com/api/providers/gitea/callback",
 	giteaUrl: "https://gitea.example.com",
 	giteaInternalUrl: null,
+	gitProvider: {
+		gitProviderId: "git-provider-1",
+		organizationId: "org-1",
+		userId: "user-1",
+	},
+};
+
+const githubProvider = {
+	githubId: "github-1",
+	githubAppName: "https://github.com/apps/dokploy-test",
+	githubInstallationId: null,
+	gitProviderId: "git-provider-1",
 	gitProvider: {
 		gitProviderId: "git-provider-1",
 		organizationId: "org-1",
@@ -134,6 +178,30 @@ const createRequest = (
 describe("Git provider OAuth state callback boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		dbMocks.update.mockReturnValue({
+			set: dbMocks.updateSet,
+		});
+		dbMocks.updateSet.mockReturnValue({
+			where: dbMocks.updateWhere,
+		});
+		dbMocks.updateWhere.mockReturnValue({
+			returning: dbMocks.updateReturning,
+		});
+		dbMocks.updateReturning.mockResolvedValue([{ githubId: "github-1" }]);
+		octokitMocks.request.mockResolvedValue({
+			data: {
+				name: "Dokploy App",
+				html_url: "https://github.com/apps/dokploy-test",
+				id: 123,
+				client_id: "github-client",
+				client_secret: "github-secret",
+				webhook_secret: "webhook-secret",
+				pem: "private-key",
+			},
+		});
+		providerMocks.createGithub.mockResolvedValue({ githubId: "github-1" });
+		providerMocks.findGithubById.mockResolvedValue(githubProvider);
+		providerMocks.updateGithub.mockResolvedValue({ githubId: "github-1" });
 		providerMocks.findGitlabById.mockResolvedValue(gitlabProvider);
 		providerMocks.findGiteaById.mockResolvedValue(giteaProvider);
 		providerMocks.updateGitlab.mockResolvedValue({ gitlabId: "gitlab-1" });
@@ -158,6 +226,134 @@ describe("Git provider OAuth state callback boundary", () => {
 						expires_in: 3600,
 					}),
 			})),
+		);
+	});
+
+	it("rejects unsigned GitHub App setup callback state before provider mutation", async () => {
+		const initResponse = createResponse();
+		await githubSetupHandler(
+			createRequest({
+				code: "manifest-code",
+				state: "gh_init:org-2:user-2",
+			}),
+			initResponse,
+		);
+
+		const setupResponse = createResponse();
+		await githubSetupHandler(
+			createRequest({
+				code: "setup-code",
+				installation_id: "installation-1",
+				state: "gh_setup:github-1",
+			}),
+			setupResponse,
+		);
+
+		expect(octokitMocks.request).not.toHaveBeenCalled();
+		expect(providerMocks.createGithub).not.toHaveBeenCalled();
+		expect(providerMocks.updateGithub).not.toHaveBeenCalled();
+		expect(dbMocks.update).not.toHaveBeenCalled();
+		expect(initResponse.statusCode).toBe(400);
+		expect(setupResponse.statusCode).toBe(400);
+	});
+
+	it("rejects GitHub App setup callback state from a different Dokploy session", async () => {
+		const state = signGitProviderOAuthState({
+			providerType: "github-app",
+			providerId: "gh_init",
+			redirectUri: "https://dokploy.example.com/api/providers/github/setup",
+			sessionId: "other-session",
+			userId: oauthSession.userId,
+			organizationId: oauthSession.activeOrganizationId,
+		});
+
+		const response = createResponse();
+		await githubSetupHandler(
+			createRequest({
+				code: "manifest-code",
+				state,
+			}),
+			response,
+		);
+
+		expect(octokitMocks.request).not.toHaveBeenCalled();
+		expect(providerMocks.createGithub).not.toHaveBeenCalled();
+		expect(response.statusCode).toBe(400);
+	});
+
+	it("rejects tampered GitHub App setup callback state", async () => {
+		const state = signGitProviderOAuthState({
+			providerType: "github-app",
+			providerId: "gh_setup:github-1",
+			redirectUri: "https://dokploy.example.com/api/providers/github/setup",
+			...sessionBinding,
+		});
+		const tamperedState = state.replace(/\.[^.]+$/, ".invalid-signature");
+
+		const response = createResponse();
+		await githubSetupHandler(
+			createRequest({
+				code: "setup-code",
+				installation_id: "installation-1",
+				state: tamperedState,
+			}),
+			response,
+		);
+
+		expect(providerMocks.findGithubById).not.toHaveBeenCalled();
+		expect(providerMocks.updateGithub).not.toHaveBeenCalled();
+		expect(response.statusCode).toBe(400);
+	});
+
+	it("accepts valid signed GitHub App init and installation setup state", async () => {
+		const initState = signGitProviderOAuthState({
+			providerType: "github-app",
+			providerId: "gh_init",
+			redirectUri: "https://dokploy.example.com/api/providers/github/setup",
+			...sessionBinding,
+		});
+		const setupState = signGitProviderOAuthState({
+			providerType: "github-app",
+			providerId: "gh_setup:github-1",
+			redirectUri: "https://dokploy.example.com/api/providers/github/setup",
+			...sessionBinding,
+		});
+
+		const initResponse = createResponse();
+		await githubSetupHandler(
+			createRequest({
+				code: "manifest-code",
+				state: initState,
+			}),
+			initResponse,
+		);
+
+		const setupResponse = createResponse();
+		await githubSetupHandler(
+			createRequest({
+				code: "setup-code",
+				installation_id: "installation-1",
+				state: setupState,
+			}),
+			setupResponse,
+		);
+
+		expect(providerMocks.createGithub).toHaveBeenCalledWith(
+			expect.objectContaining({
+				githubAppName: "https://github.com/apps/dokploy-test",
+				githubClientId: "github-client",
+			}),
+			"org-1",
+			"user-1",
+		);
+		expect(providerMocks.updateGithub).toHaveBeenCalledWith("github-1", {
+			githubInstallationId: "installation-1",
+		});
+		expect(initResponse.headers.location).toBe(
+			"/dashboard/settings/git-providers",
+		);
+		expect(setupResponse.headers.location).toBe(
+			"/dashboard/settings/git-providers",
 		);
 	});
 

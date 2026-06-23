@@ -43,6 +43,50 @@ import { EditGithubProvider } from "./github/edit-github-provider";
 import { AddGitlabProvider } from "./gitlab/add-gitlab-provider";
 import { EditGitlabProvider } from "./gitlab/edit-gitlab-provider";
 
+type GithubAppInstallLinkProps = {
+	canManage: boolean;
+	githubAppName?: string | null;
+	githubId?: string | null;
+};
+
+const GithubAppInstallLink = ({
+	canManage,
+	githubAppName,
+	githubId,
+}: GithubAppInstallLinkProps) => {
+	const { data: githubAppSetupState } = api.github.appSetupState.useQuery(
+		{ action: "setup", githubId: githubId ?? "" },
+		{ enabled: canManage && !!githubAppName && !!githubId },
+	);
+
+	if (
+		!canManage ||
+		!githubAppName ||
+		!githubId ||
+		!githubAppSetupState?.state
+	) {
+		return (
+			<Button disabled size="icon" variant="ghost">
+				<ImportIcon className="size-4 text-primary" />
+			</Button>
+		);
+	}
+
+	return (
+		<Link
+			href={`${githubAppName}/installations/new?state=${encodeURIComponent(
+				githubAppSetupState.state,
+			)}`}
+			className={buttonVariants({
+				size: "icon",
+				variant: "ghost",
+			})}
+		>
+			<ImportIcon className="size-4 text-primary" />
+		</Link>
+	);
+};
+
 export const ShowGitProviders = () => {
 	const { data, isPending, refetch } = api.gitProvider.getAll.useQuery();
 	const { mutateAsync, isPending: isRemoving } =
@@ -229,15 +273,13 @@ export const ShowGitProviders = () => {
 																		>
 																			Action Required
 																		</Badge>
-																		<Link
-																			href={`${gitProvider?.github?.githubAppName}/installations/new?state=gh_setup:${gitProvider?.github?.githubId}`}
-																			className={buttonVariants({
-																				size: "icon",
-																				variant: "ghost",
-																			})}
-																		>
-																			<ImportIcon className="size-4 text-primary" />
-																		</Link>
+																		<GithubAppInstallLink
+																			canManage={canManage}
+																			githubAppName={
+																				gitProvider.github?.githubAppName
+																			}
+																			githubId={gitProvider.github?.githubId}
+																		/>
 																	</div>
 																)}
 																{haveGithubRequirements && isGithub && (
