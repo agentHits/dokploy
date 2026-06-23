@@ -64,7 +64,7 @@ role-matrix, or real deploy smoke tests.
 | F-10 | High | High | Read permission privileged action boundary | Remediated after scan |
 | F-11 | High | High | Docker image pull command boundary | Remediated after scan |
 | F-12 | Medium | Medium | Backup destination ownership boundary | Remediated after scan |
-| F-13 | Medium | Medium | GitHub App callback state boundary | Open, needs revalidation |
+| F-13 | Medium | Medium | GitHub App callback state boundary | Remediated after scan |
 | F-14 | Medium | Medium | Placement and ownership assignment boundary | Open |
 | F-15 | Medium | High | Request log access and logging control boundary | Open |
 | F-16 | Medium | Medium | Outbound URL private address resolution boundary | Open |
@@ -84,6 +84,7 @@ role-matrix, or real deploy smoke tests.
 | F-10 | Remediated after scan | Commit `bfca7226b` split Docker read-only access from container lifecycle, inspect, exec, file upload, and removal permissions, moved server terminals to an explicit execute permission, updated custom role controls, and added focused regression tests. |
 | F-11 | Remediated after scan | Commit `35cca57dd` added argv-safe Docker image pull command construction for application Docker provider and remote database deploy pull paths with focused regression tests. |
 | F-12 | Remediated after scan | Commit `9d15d5a3b` added destination ownership checks before backup and volume-backup create/update persistence and scheduler side effects with focused regression tests. |
+| F-13 | Remediated after scan | Commit `8b8f84325` added signed, expiring, session-bound GitHub App setup state for provider creation and installation binding, enforced authenticated session and provider ownership checks before callback mutations, removed plaintext UI state generation, and added focused regression tests. |
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations plus focused regression tests. Other server-scoped surfaces still need revalidation. |
 | Report tracking | Added | Commit `b072b017c` added a public-safe security remediation tracker. |
 

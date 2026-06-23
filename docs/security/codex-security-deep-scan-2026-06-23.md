@@ -30,6 +30,7 @@
 | F-10 | Remediated after scan | Commit `bfca7226b` split read-only Docker/server access from privileged Docker lifecycle, inspect, exec, file upload, removal, and server terminal permissions with focused regression tests. |
 | F-11 | Remediated after scan | Commit `35cca57dd` secured Docker image pull command boundaries for application Docker provider and remote database deploy pull paths with focused regression tests. |
 | F-12 | Remediated after scan | Commit `9d15d5a3b` secured backup destination ownership checks before backup and volume-backup create/update persistence and scheduler side effects with focused regression tests. |
+| F-13 | Remediated after scan | Commit `8b8f84325` secured GitHub App setup state handling with signed, expiring, session-bound state, authenticated callback checks, provider ownership checks, and focused regression tests. |
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations; related surfaces still need revalidation. |
 
 ## Why This Is Redacted
