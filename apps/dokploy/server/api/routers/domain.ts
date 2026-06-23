@@ -23,6 +23,7 @@ import {
 	withPermission,
 } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
+import { assertTargetServerAccess } from "@/server/api/utils/placement-access";
 import {
 	apiCreateDomain,
 	apiFindCompose,
@@ -83,6 +84,7 @@ export const domainRouter = createTRPCRouter({
 	generateDomain: withPermission("domain", "create")
 		.input(z.object({ appName: z.string(), serverId: z.string().optional() }))
 		.mutation(async ({ input, ctx }) => {
+			await assertTargetServerAccess(ctx, input.serverId);
 			return generateTraefikMeDomain(
 				input.appName,
 				ctx.user.ownerId,
@@ -91,8 +93,9 @@ export const domainRouter = createTRPCRouter({
 		}),
 	canGenerateTraefikMeDomains: withPermission("domain", "read")
 		.input(z.object({ serverId: z.string() }))
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
 			if (input.serverId) {
+				await assertTargetServerAccess(ctx, input.serverId);
 				const server = await findServerById(input.serverId);
 				return server.ipAddress;
 			}

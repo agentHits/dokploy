@@ -3,6 +3,7 @@ import {
 	execAsync,
 	execAsyncRemote,
 	findDestinationById,
+	getAccessibleServerIds,
 	IS_CLOUD,
 	removeDestinationById,
 	updateDestinationById,
@@ -23,6 +24,23 @@ import {
 	apiUpdateDestination,
 	destinations,
 } from "@/server/db/schema";
+
+const assertDestinationServerAccess = async (
+	ctx: { session: Parameters<typeof getAccessibleServerIds>[0] },
+	serverId?: string,
+) => {
+	if (!serverId) {
+		return;
+	}
+
+	const accessibleIds = await getAccessibleServerIds(ctx.session);
+	if (!accessibleIds.has(serverId)) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not authorized to access this server",
+		});
+	}
+};
 
 export const destinationRouter = createTRPCRouter({
 	create: withPermission("destination", "create")
@@ -50,7 +68,17 @@ export const destinationRouter = createTRPCRouter({
 		}),
 	testConnection: withPermission("destination", "create")
 		.input(apiCreateDestination)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ input, ctx }) => {
+			if (IS_CLOUD && !input.serverId) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Server not found",
+				});
+			}
+			if (IS_CLOUD) {
+				await assertDestinationServerAccess(ctx, input.serverId);
+			}
+
 			try {
 				const rcloneCommand = buildRcloneS3Command("ls", input, [
 					"--retries",
@@ -63,13 +91,6 @@ export const destinationRouter = createTRPCRouter({
 					"5s",
 					getRcloneS3Destination(input),
 				]);
-
-				if (IS_CLOUD && !input.serverId) {
-					throw new TRPCError({
-						code: "NOT_FOUND",
-						message: "Server not found",
-					});
-				}
 
 				if (IS_CLOUD) {
 					await execAsyncRemote(input.serverId || "", rcloneCommand);

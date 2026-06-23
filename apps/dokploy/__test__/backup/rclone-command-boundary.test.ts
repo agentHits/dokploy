@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 	findDestinationById: vi.fn(),
 	findEnvironmentById: vi.fn(),
 	findProjectById: vi.fn(),
+	getAccessibleServerIds: vi.fn(),
 	removeDestinationById: vi.fn(),
 	sendDatabaseBackupNotifications: vi.fn(),
 	updateDeploymentStatus: vi.fn(),
@@ -37,6 +38,7 @@ vi.mock("@dokploy/server", () => ({
 	execAsync: mocks.execAsync,
 	execAsyncRemote: mocks.execAsyncRemote,
 	findDestinationById: mocks.findDestinationById,
+	getAccessibleServerIds: mocks.getAccessibleServerIds,
 	removeDestinationById: mocks.removeDestinationById,
 	updateDestinationById: mocks.updateDestinationById,
 }));

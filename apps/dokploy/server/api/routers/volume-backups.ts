@@ -16,7 +16,6 @@ import {
 	volumeBackups,
 } from "@dokploy/server/db/schema";
 import { checkServicePermissionAndAccess } from "@dokploy/server/services/permission";
-import { findServerById } from "@dokploy/server/services/server";
 import {
 	execAsyncRemote,
 	execAsyncStream,
@@ -29,6 +28,7 @@ import { audit } from "@/server/api/utils/audit";
 import { assertDestinationAccess } from "@/server/api/utils/destination-access";
 import {
 	assertServicePlacementAccess,
+	assertTargetServerAccess,
 	type PlacementServiceType,
 } from "@/server/api/utils/placement-access";
 import { removeJob, schedule, updateJob } from "@/server/utils/backup";
@@ -346,15 +346,7 @@ export const volumeBackupsRouter = createTRPCRouter({
 				input.destinationId,
 				ctx.session.activeOrganizationId,
 			);
-			if (input.serverId) {
-				const targetServer = await findServerById(input.serverId);
-				if (targetServer.organizationId !== ctx.session.activeOrganizationId) {
-					throw new TRPCError({
-						code: "UNAUTHORIZED",
-						message: "You don't have access to this server.",
-					});
-				}
-			}
+			await assertTargetServerAccess(ctx, input.serverId);
 			await checkServicePermissionAndAccess(ctx, input.id, {
 				volumeBackup: ["restore"],
 			});

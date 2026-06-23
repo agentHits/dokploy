@@ -1,6 +1,7 @@
 import {
 	createCertificate,
 	findCertificateById,
+	getAccessibleServerIds,
 	IS_CLOUD,
 	removeCertificateById,
 	updateCertificate,
@@ -17,6 +18,23 @@ import {
 	certificates,
 } from "@/server/db/schema";
 
+const assertCertificateServerAccess = async (
+	ctx: { session: Parameters<typeof getAccessibleServerIds>[0] },
+	serverId?: string | null,
+) => {
+	if (!serverId) {
+		return;
+	}
+
+	const accessibleIds = await getAccessibleServerIds(ctx.session);
+	if (!accessibleIds.has(serverId)) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not authorized to access this server",
+		});
+	}
+};
+
 export const certificateRouter = createTRPCRouter({
 	create: withPermission("certificate", "create")
 		.input(apiCreateCertificate)
@@ -27,6 +45,7 @@ export const certificateRouter = createTRPCRouter({
 					message: "Please set a server to create a certificate",
 				});
 			}
+			await assertCertificateServerAccess(ctx, input.serverId);
 			const cert = await createCertificate(
 				input,
 				ctx.session.activeOrganizationId,
@@ -50,6 +69,7 @@ export const certificateRouter = createTRPCRouter({
 					message: "You are not allowed to access this certificate",
 				});
 			}
+			await assertCertificateServerAccess(ctx, certificates.serverId);
 			return certificates;
 		}),
 	remove: withPermission("certificate", "delete")
@@ -62,6 +82,7 @@ export const certificateRouter = createTRPCRouter({
 					message: "You are not allowed to delete this certificate",
 				});
 			}
+			await assertCertificateServerAccess(ctx, certificates.serverId);
 			await audit(ctx, {
 				action: "delete",
 				resourceType: "certificate",
@@ -72,12 +93,17 @@ export const certificateRouter = createTRPCRouter({
 			return true;
 		}),
 	all: withPermission("certificate", "read").query(async ({ ctx }) => {
-		return await db.query.certificates.findMany({
+		const allCertificates = await db.query.certificates.findMany({
 			where: eq(certificates.organizationId, ctx.session.activeOrganizationId),
 			with: {
 				server: true,
 			},
 		});
+		const accessibleIds = await getAccessibleServerIds(ctx.session);
+		return allCertificates.filter(
+			(certificate) =>
+				!certificate.serverId || accessibleIds.has(certificate.serverId),
+		);
 	}),
 	update: withPermission("certificate", "update")
 		.input(apiUpdateCertificate)
@@ -89,6 +115,7 @@ export const certificateRouter = createTRPCRouter({
 					message: "You are not allowed to update this certificate",
 				});
 			}
+			await assertCertificateServerAccess(ctx, certificate.serverId);
 			return await updateCertificate(input.certificateId, {
 				name: input.name,
 				certificateData: input.certificateData,

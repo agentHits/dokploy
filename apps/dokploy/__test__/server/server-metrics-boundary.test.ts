@@ -258,3 +258,75 @@ describe("server.getServerMetrics target boundary", () => {
 		expect(mocks.fetch).not.toHaveBeenCalled();
 	});
 });
+
+describe("server router assigned-server boundary", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.defaultCommand.mockReturnValue("default command");
+		mocks.findUserById.mockResolvedValue({
+			id: "actor-1",
+			serversQuantity: 3,
+		});
+		mocks.findServersByUserId.mockResolvedValue([]);
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
+		mocks.findServerById.mockResolvedValue({
+			serverId: "server-1",
+			name: "primary",
+			organizationId: "org-1",
+			serverStatus: "active",
+			serverType: "deploy",
+		});
+		mocks.haveActiveServices.mockResolvedValue(false);
+		mocks.serverSetup.mockResolvedValue({ serverId: "server-1" });
+		mocks.serverValidate.mockResolvedValue({ docker: { enabled: true } });
+		mocks.serverAudit.mockResolvedValue({ ufw: { installed: true } });
+		mocks.setupMonitoring.mockResolvedValue({ serverId: "server-1" });
+		mocks.updateServerById.mockResolvedValue({ serverId: "server-1" });
+		mocks.deleteServer.mockResolvedValue({ serverId: "server-1" });
+		mocks.removeDeploymentsByServerId.mockResolvedValue(undefined);
+	});
+
+	it("denies inaccessible default command reads before server metadata use", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().getDefaultCommand({ serverId: "server-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.defaultCommand).not.toHaveBeenCalled();
+	});
+
+	it("denies inaccessible server setup before remote setup side effects", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().setup({ serverId: "server-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.serverSetup).not.toHaveBeenCalled();
+		expect(mocks.audit).not.toHaveBeenCalled();
+	});
+
+	it("denies inaccessible server validation before remote validation side effects", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().validate({ serverId: "server-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.serverValidate).not.toHaveBeenCalled();
+	});
+
+	it("denies inaccessible server removal before active-service checks and deletion", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().remove({ serverId: "server-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.haveActiveServices).not.toHaveBeenCalled();
+		expect(mocks.removeDeploymentsByServerId).not.toHaveBeenCalled();
+		expect(mocks.deleteServer).not.toHaveBeenCalled();
+	});
+});

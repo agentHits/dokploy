@@ -56,6 +56,7 @@ import {
 } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { assertDestinationAccess } from "@/server/api/utils/destination-access";
+import { assertTargetServerAccess } from "@/server/api/utils/placement-access";
 import {
 	apiCreateBackup,
 	apiFindOneBackup,
@@ -474,22 +475,12 @@ export const backupRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
+			const destination = await assertDestinationAccess(
+				input.destinationId,
+				ctx.session.activeOrganizationId,
+			);
+			await assertTargetServerAccess(ctx, input.serverId);
 			try {
-				const destination = await assertDestinationAccess(
-					input.destinationId,
-					ctx.session.activeOrganizationId,
-				);
-				if (input.serverId) {
-					const targetServer = await findServerById(input.serverId);
-					if (
-						targetServer.organizationId !== ctx.session.activeOrganizationId
-					) {
-						throw new TRPCError({
-							code: "UNAUTHORIZED",
-							message: "You don't have access to this server.",
-						});
-					}
-				}
 				const lastSlashIndex = input.search.lastIndexOf("/");
 				const baseDir =
 					lastSlashIndex !== -1

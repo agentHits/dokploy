@@ -86,6 +86,19 @@ const getMetricsTarget = async (
 	};
 };
 
+const assertServerAccess = async (
+	ctx: { session: Parameters<typeof getAccessibleServerIds>[0] },
+	serverId: string,
+) => {
+	const accessibleIds = await getAccessibleServerIds(ctx.session);
+	if (!accessibleIds.has(serverId)) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not authorized to access this server",
+		});
+	}
+};
+
 const buildMetricsRequest = ({
 	host,
 	port,
@@ -168,16 +181,9 @@ export const serverRouter = createTRPCRouter({
 	one: withPermission("server", "read")
 		.input(apiFindOneServer)
 		.query(async ({ input, ctx }) => {
+			await assertServerAccess(ctx, input.serverId);
 			const server = await findServerById(input.serverId);
 			if (server.organizationId !== ctx.session.activeOrganizationId) {
-				throw new TRPCError({
-					code: "UNAUTHORIZED",
-					message: "You are not authorized to access this server",
-				});
-			}
-
-			const accessibleIds = await getAccessibleServerIds(ctx.session);
-			if (!accessibleIds.has(input.serverId)) {
 				throw new TRPCError({
 					code: "UNAUTHORIZED",
 					message: "You are not authorized to access this server",
@@ -188,7 +194,8 @@ export const serverRouter = createTRPCRouter({
 		}),
 	getDefaultCommand: withPermission("server", "read")
 		.input(apiFindOneServer)
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
+			await assertServerAccess(ctx, input.serverId);
 			const server = await findServerById(input.serverId);
 			const isBuildServer = server.serverType === "build";
 			return defaultCommand(isBuildServer);
@@ -294,6 +301,7 @@ export const serverRouter = createTRPCRouter({
 		.input(apiFindOneServer)
 		.mutation(async ({ input, ctx }) => {
 			try {
+				await assertServerAccess(ctx, input.serverId);
 				const server = await findServerById(input.serverId);
 				if (server.organizationId !== ctx.session.activeOrganizationId) {
 					throw new TRPCError({
@@ -325,6 +333,7 @@ export const serverRouter = createTRPCRouter({
 		.input(apiFindOneServer)
 		.subscription(async ({ input, ctx }) => {
 			try {
+				await assertServerAccess(ctx, input.serverId);
 				const server = await findServerById(input.serverId);
 				if (server.organizationId !== ctx.session.activeOrganizationId) {
 					throw new TRPCError({
@@ -344,6 +353,7 @@ export const serverRouter = createTRPCRouter({
 	validate: withPermission("server", "read")
 		.input(apiFindOneServer)
 		.query(async ({ input, ctx }) => {
+			await assertServerAccess(ctx, input.serverId);
 			try {
 				const server = await findServerById(input.serverId);
 				if (server.organizationId !== ctx.session.activeOrganizationId) {
@@ -392,6 +402,7 @@ export const serverRouter = createTRPCRouter({
 	security: withPermission("server", "read")
 		.input(apiFindOneServer)
 		.query(async ({ input, ctx }) => {
+			await assertServerAccess(ctx, input.serverId);
 			try {
 				const server = await findServerById(input.serverId);
 				if (server.organizationId !== ctx.session.activeOrganizationId) {
@@ -443,6 +454,7 @@ export const serverRouter = createTRPCRouter({
 		.input(apiUpdateServerMonitoring)
 		.mutation(async ({ input, ctx }) => {
 			try {
+				await assertServerAccess(ctx, input.serverId);
 				const server = await findServerById(input.serverId);
 				if (server.organizationId !== ctx.session.activeOrganizationId) {
 					throw new TRPCError({
@@ -491,6 +503,7 @@ export const serverRouter = createTRPCRouter({
 		.input(apiRemoveServer)
 		.mutation(async ({ input, ctx }) => {
 			try {
+				await assertServerAccess(ctx, input.serverId);
 				const activeServers = await haveActiveServices(input.serverId);
 
 				if (activeServers) {
@@ -524,6 +537,7 @@ export const serverRouter = createTRPCRouter({
 		.input(apiUpdateServer)
 		.mutation(async ({ input, ctx }) => {
 			try {
+				await assertServerAccess(ctx, input.serverId);
 				const server = await findServerById(input.serverId);
 				if (server.organizationId !== ctx.session.activeOrganizationId) {
 					throw new TRPCError({
@@ -562,6 +576,7 @@ export const serverRouter = createTRPCRouter({
 	updateBuildsConcurrency: withPermission("server", "create")
 		.input(apiUpdateServerBuildsConcurrency)
 		.mutation(async ({ input, ctx }) => {
+			await assertServerAccess(ctx, input.serverId);
 			const currentServer = await findServerById(input.serverId);
 			if (currentServer.organizationId !== ctx.session.activeOrganizationId) {
 				throw new TRPCError({

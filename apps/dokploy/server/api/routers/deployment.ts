@@ -6,6 +6,7 @@ import {
 	findAllDeploymentsByServerId,
 	findAllDeploymentsCentralized,
 	findDeploymentById,
+	getAccessibleServerIds,
 	IS_CLOUD,
 	removeDeployment,
 	resolveServicePath,
@@ -13,14 +14,15 @@ import {
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
 import {
+	checkPermission,
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
-import { findServerById } from "@dokploy/server/services/server";
 import { TRPCError } from "@trpc/server";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
+import { assertTargetServerAccess } from "@/server/api/utils/placement-access";
 import {
 	apiFindAllByApplication,
 	apiFindAllByCompose,
@@ -54,13 +56,7 @@ export const deploymentRouter = createTRPCRouter({
 	allByServer: withPermission("deployment", "read")
 		.input(apiFindAllByServer)
 		.query(async ({ input, ctx }) => {
-			const targetServer = await findServerById(input.serverId);
-			if (targetServer.organizationId !== ctx.session.activeOrganizationId) {
-				throw new TRPCError({
-					code: "UNAUTHORIZED",
-					message: "You don't have access to this server.",
-				});
-			}
+			await assertTargetServerAccess(ctx, input.serverId);
 			return await findAllDeploymentsByServerId(input.serverId);
 		}),
 	allCentralized: withPermission("deployment", "read").query(
@@ -82,12 +78,15 @@ export const deploymentRouter = createTRPCRouter({
 		let rows: QueueJobRow[];
 
 		if (IS_CLOUD) {
+			const accessibleIds = await getAccessibleServerIds(ctx.session);
 			const servers = await db.query.server.findMany({
 				where: eq(server.organizationId, orgId),
 				columns: { serverId: true },
 			});
 			const serverRowsArrays = await Promise.all(
-				servers.map(({ serverId }) => fetchDeployApiJobs(serverId)),
+				servers
+					.filter(({ serverId }) => accessibleIds.has(serverId))
+					.map(({ serverId }) => fetchDeployApiJobs(serverId)),
 			);
 			rows = serverRowsArrays.flat();
 			rows.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
@@ -147,18 +146,15 @@ export const deploymentRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			const deployment = await findDeploymentById(input.deploymentId);
 			const serviceId = deployment.applicationId || deployment.composeId;
+			const deploymentServerId =
+				deployment.serverId || deployment.schedule?.serverId;
 			if (serviceId) {
 				await checkServicePermissionAndAccess(ctx, serviceId, {
 					deployment: ["cancel"],
 				});
-			} else if (deployment.schedule?.serverId) {
-				const targetServer = await findServerById(deployment.schedule.serverId);
-				if (targetServer.organizationId !== ctx.session.activeOrganizationId) {
-					throw new TRPCError({
-						code: "UNAUTHORIZED",
-						message: "You don't have access to this deployment.",
-					});
-				}
+			} else if (deploymentServerId) {
+				await checkPermission(ctx, { deployment: ["cancel"] });
+				await assertTargetServerAccess(ctx, deploymentServerId);
 			}
 
 			if (!deployment.pid) {
@@ -192,18 +188,15 @@ export const deploymentRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			const deployment = await findDeploymentById(input.deploymentId);
 			const serviceId = deployment.applicationId || deployment.composeId;
+			const deploymentServerId =
+				deployment.serverId || deployment.schedule?.serverId;
 			if (serviceId) {
 				await checkServicePermissionAndAccess(ctx, serviceId, {
 					deployment: ["cancel"],
 				});
-			} else if (deployment.schedule?.serverId) {
-				const targetServer = await findServerById(deployment.schedule.serverId);
-				if (targetServer.organizationId !== ctx.session.activeOrganizationId) {
-					throw new TRPCError({
-						code: "UNAUTHORIZED",
-						message: "You don't have access to this deployment.",
-					});
-				}
+			} else if (deploymentServerId) {
+				await checkPermission(ctx, { deployment: ["cancel"] });
+				await assertTargetServerAccess(ctx, deploymentServerId);
 			}
 			const result = await removeDeployment(input.deploymentId);
 			await audit(ctx, {
@@ -224,18 +217,15 @@ export const deploymentRouter = createTRPCRouter({
 		.query(async ({ input, ctx }) => {
 			const deployment = await findDeploymentById(input.deploymentId);
 			const serviceId = deployment.applicationId || deployment.composeId;
+			const deploymentServerId =
+				deployment.serverId || deployment.schedule?.serverId;
 			if (serviceId) {
 				await checkServicePermissionAndAccess(ctx, serviceId, {
 					deployment: ["read"],
 				});
-			} else if (deployment.schedule?.serverId) {
-				const targetServer = await findServerById(deployment.schedule.serverId);
-				if (targetServer.organizationId !== ctx.session.activeOrganizationId) {
-					throw new TRPCError({
-						code: "UNAUTHORIZED",
-						message: "You don't have access to this deployment.",
-					});
-				}
+			} else if (deploymentServerId) {
+				await checkPermission(ctx, { deployment: ["read"] });
+				await assertTargetServerAccess(ctx, deploymentServerId);
 			}
 
 			if (!deployment.logPath) {
@@ -243,9 +233,8 @@ export const deploymentRouter = createTRPCRouter({
 			}
 
 			const command = `tail -n ${input.tail} "${deployment.logPath}" 2>/dev/null || echo ""`;
-			const serverId = deployment.serverId || deployment.schedule?.serverId;
-			if (serverId) {
-				const { stdout } = await execAsyncRemote(serverId, command);
+			if (deploymentServerId) {
+				const { stdout } = await execAsyncRemote(deploymentServerId, command);
 				return stdout;
 			}
 

@@ -18,11 +18,11 @@ import {
 	findScheduleById,
 	updateSchedule,
 } from "@dokploy/server/services/schedule";
-import { findServerById } from "@dokploy/server/services/server";
 import { TRPCError } from "@trpc/server";
 import { asc, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
+import { assertTargetServerAccess } from "@/server/api/utils/placement-access";
 import { removeJob, schedule } from "@/server/utils/backup";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 
@@ -64,15 +64,7 @@ export const scheduleRouter = createTRPCRouter({
 				}
 
 				if (input.scheduleType === "server" && input.serverId) {
-					const targetServer = await findServerById(input.serverId);
-					if (
-						targetServer.organizationId !== ctx.session.activeOrganizationId
-					) {
-						throw new TRPCError({
-							code: "UNAUTHORIZED",
-							message: "You don't have access to this server.",
-						});
-					}
+					await assertTargetServerAccess(ctx, input.serverId);
 				}
 			}
 			const newSchedule = await createSchedule({
@@ -157,15 +149,7 @@ export const scheduleRouter = createTRPCRouter({
 					existingSchedule.scheduleType === "server" &&
 					existingSchedule.serverId
 				) {
-					const targetServer = await findServerById(existingSchedule.serverId);
-					if (
-						targetServer.organizationId !== ctx.session.activeOrganizationId
-					) {
-						throw new TRPCError({
-							code: "UNAUTHORIZED",
-							message: "You don't have access to this server.",
-						});
-					}
+					await assertTargetServerAccess(ctx, existingSchedule.serverId);
 				}
 			}
 			const updatedSchedule = await updateSchedule(input);
@@ -240,15 +224,7 @@ export const scheduleRouter = createTRPCRouter({
 				}
 
 				if (scheduleItem.scheduleType === "server" && scheduleItem.serverId) {
-					const targetServer = await findServerById(scheduleItem.serverId);
-					if (
-						targetServer.organizationId !== ctx.session.activeOrganizationId
-					) {
-						throw new TRPCError({
-							code: "UNAUTHORIZED",
-							message: "You don't have access to this server.",
-						});
-					}
+					await assertTargetServerAccess(ctx, scheduleItem.serverId);
 				}
 			}
 			await deleteSchedule(input.scheduleId);
@@ -295,15 +271,7 @@ export const scheduleRouter = createTRPCRouter({
 				await checkPermission(ctx, { schedule: ["read"] });
 
 				if (input.scheduleType === "server") {
-					const targetServer = await findServerById(input.id);
-					if (
-						targetServer.organizationId !== ctx.session.activeOrganizationId
-					) {
-						throw new TRPCError({
-							code: "UNAUTHORIZED",
-							message: "You don't have access to this server.",
-						});
-					}
+					await assertTargetServerAccess(ctx, input.id);
 				}
 
 				if (input.scheduleType === "dokploy-server") {
@@ -355,15 +323,7 @@ export const scheduleRouter = createTRPCRouter({
 				await checkPermission(ctx, { schedule: ["read"] });
 
 				if (schedule.scheduleType === "server" && schedule.serverId) {
-					const targetServer = await findServerById(schedule.serverId);
-					if (
-						targetServer.organizationId !== ctx.session.activeOrganizationId
-					) {
-						throw new TRPCError({
-							code: "UNAUTHORIZED",
-							message: "You don't have access to this schedule.",
-						});
-					}
+					await assertTargetServerAccess(ctx, schedule.serverId);
 				}
 			}
 			return schedule;
@@ -407,15 +367,7 @@ export const scheduleRouter = createTRPCRouter({
 				}
 
 				if (scheduleItem.scheduleType === "server" && scheduleItem.serverId) {
-					const targetServer = await findServerById(scheduleItem.serverId);
-					if (
-						targetServer.organizationId !== ctx.session.activeOrganizationId
-					) {
-						throw new TRPCError({
-							code: "UNAUTHORIZED",
-							message: "You don't have access to this server.",
-						});
-					}
+					await assertTargetServerAccess(ctx, scheduleItem.serverId);
 				}
 			}
 			try {

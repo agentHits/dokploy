@@ -8,10 +8,12 @@ const mocks = vi.hoisted(() => ({
 	createBackup: vi.fn(),
 	execAsync: vi.fn(),
 	execAsyncRemote: vi.fn(),
+	findApplicationById: vi.fn(),
 	findBackupById: vi.fn(),
 	findComposeByBackupId: vi.fn(),
 	findComposeById: vi.fn(),
 	findDestinationById: vi.fn(),
+	findEnvironmentById: vi.fn(),
 	findLibsqlByBackupId: vi.fn(),
 	findLibsqlById: vi.fn(),
 	findMariadbByBackupId: vi.fn(),
@@ -22,7 +24,10 @@ const mocks = vi.hoisted(() => ({
 	findMySqlById: vi.fn(),
 	findPostgresByBackupId: vi.fn(),
 	findPostgresById: vi.fn(),
+	findProjectById: vi.fn(),
+	findRedisById: vi.fn(),
 	findServerById: vi.fn(),
+	getAccessibleServerIds: vi.fn(),
 	getS3Credentials: vi.fn(),
 	keepLatestNBackups: vi.fn(),
 	normalizeS3Path: vi.fn(),
@@ -53,10 +58,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@dokploy/server", () => ({
 	IS_CLOUD: false,
 	createBackup: mocks.createBackup,
+	findApplicationById: mocks.findApplicationById,
 	findBackupById: mocks.findBackupById,
 	findComposeByBackupId: mocks.findComposeByBackupId,
 	findComposeById: mocks.findComposeById,
 	findLibsqlByBackupId: mocks.findLibsqlByBackupId,
+	findEnvironmentById: mocks.findEnvironmentById,
 	findLibsqlById: mocks.findLibsqlById,
 	findMariadbByBackupId: mocks.findMariadbByBackupId,
 	findMariadbById: mocks.findMariadbById,
@@ -66,7 +73,10 @@ vi.mock("@dokploy/server", () => ({
 	findMySqlById: mocks.findMySqlById,
 	findPostgresByBackupId: mocks.findPostgresByBackupId,
 	findPostgresById: mocks.findPostgresById,
+	findProjectById: mocks.findProjectById,
+	findRedisById: mocks.findRedisById,
 	findServerById: mocks.findServerById,
+	getAccessibleServerIds: mocks.getAccessibleServerIds,
 	keepLatestNBackups: mocks.keepLatestNBackups,
 	removeBackupById: mocks.removeBackupById,
 	removeScheduleBackup: mocks.removeScheduleBackup,
@@ -83,10 +93,12 @@ vi.mock("@dokploy/server", () => ({
 vi.mock("@dokploy/server/index", () => ({
 	IS_CLOUD: false,
 	createBackup: mocks.createBackup,
+	findApplicationById: mocks.findApplicationById,
 	findBackupById: mocks.findBackupById,
 	findComposeByBackupId: mocks.findComposeByBackupId,
 	findComposeById: mocks.findComposeById,
 	findLibsqlByBackupId: mocks.findLibsqlByBackupId,
+	findEnvironmentById: mocks.findEnvironmentById,
 	findLibsqlById: mocks.findLibsqlById,
 	findMariadbByBackupId: mocks.findMariadbByBackupId,
 	findMariadbById: mocks.findMariadbById,
@@ -96,7 +108,10 @@ vi.mock("@dokploy/server/index", () => ({
 	findMySqlById: mocks.findMySqlById,
 	findPostgresByBackupId: mocks.findPostgresByBackupId,
 	findPostgresById: mocks.findPostgresById,
+	findProjectById: mocks.findProjectById,
+	findRedisById: mocks.findRedisById,
 	findServerById: mocks.findServerById,
+	getAccessibleServerIds: mocks.getAccessibleServerIds,
 	hasValidLicense: vi.fn().mockResolvedValue(true),
 	keepLatestNBackups: mocks.keepLatestNBackups,
 	removeBackupById: mocks.removeBackupById,
@@ -458,6 +473,25 @@ describe("backup restore route boundary", () => {
 		expect(args).toContain(":s3:bucket$(id);touch/prefix$(id);touch/");
 		expect(args).toContain("--no-mimetype");
 		expect(args).toContain("--no-modtime");
+	});
+
+	it("denies inaccessible backup listing servers before remote rclone execution", async () => {
+		mocks.findDestinationById.mockResolvedValue(safeDestination);
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+		mocks.getS3Credentials.mockReturnValue(["--s3-provider", "AWS"]);
+		mocks.normalizeS3Path.mockReturnValue("prefix/");
+		mocks.execAsyncRemote.mockResolvedValue({ stdout: "[]" });
+
+		await expect(
+			createCaller().listBackupFiles({
+				destinationId: "destination-1",
+				search: "prefix/app",
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+		expect(mocks.execAsync).not.toHaveBeenCalled();
 	});
 });
 

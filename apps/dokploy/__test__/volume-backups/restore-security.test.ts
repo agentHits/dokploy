@@ -11,15 +11,18 @@ const mocks = vi.hoisted(() => ({
 	findApplicationById: vi.fn(),
 	findComposeById: vi.fn(),
 	findDestinationById: vi.fn(),
+	findEnvironmentById: vi.fn(),
 	findLibsqlById: vi.fn(),
 	findMariadbById: vi.fn(),
 	findMongoById: vi.fn(),
 	findMySqlById: vi.fn(),
 	findPostgresById: vi.fn(),
+	findProjectById: vi.fn(),
 	findRedisById: vi.fn(),
 	findMemberByUserId: vi.fn(),
 	findServerById: vi.fn(),
 	findVolumeBackupById: vi.fn(),
+	getAccessibleServerIds: vi.fn(),
 	getS3Credentials: vi.fn(),
 	paths: vi.fn(),
 	removeJob: vi.fn(),
@@ -39,12 +42,15 @@ vi.mock("@dokploy/server", () => ({
 	findApplicationById: mocks.findApplicationById,
 	findComposeById: mocks.findComposeById,
 	findDestinationById: mocks.findDestinationById,
+	findEnvironmentById: mocks.findEnvironmentById,
 	findLibsqlById: mocks.findLibsqlById,
 	findMariadbById: mocks.findMariadbById,
 	findMongoById: mocks.findMongoById,
 	findMySqlById: mocks.findMySqlById,
 	findPostgresById: mocks.findPostgresById,
+	findProjectById: mocks.findProjectById,
 	findRedisById: mocks.findRedisById,
+	getAccessibleServerIds: mocks.getAccessibleServerIds,
 	findVolumeBackupById: mocks.findVolumeBackupById,
 	getS3Credentials: mocks.getS3Credentials,
 	paths: mocks.paths,
@@ -62,12 +68,15 @@ vi.mock("@dokploy/server/index", () => ({
 	findApplicationById: mocks.findApplicationById,
 	findComposeById: mocks.findComposeById,
 	findDestinationById: mocks.findDestinationById,
+	findEnvironmentById: mocks.findEnvironmentById,
 	findLibsqlById: mocks.findLibsqlById,
 	findMariadbById: mocks.findMariadbById,
 	findMongoById: mocks.findMongoById,
 	findMySqlById: mocks.findMySqlById,
 	findPostgresById: mocks.findPostgresById,
+	findProjectById: mocks.findProjectById,
 	findRedisById: mocks.findRedisById,
+	getAccessibleServerIds: mocks.getAccessibleServerIds,
 	findVolumeBackupById: mocks.findVolumeBackupById,
 	getS3Credentials: mocks.getS3Credentials,
 	hasValidLicense: vi.fn().mockResolvedValue(true),
@@ -436,6 +445,7 @@ describe("volume backup restore access boundary", () => {
 			organizationId: "org-1",
 			serverId: "server-1",
 		});
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
 		mocks.restoreVolume.mockResolvedValue("echo restore");
 		mocks.execAsyncStream.mockResolvedValue(undefined);
 		mocks.execAsyncRemote.mockResolvedValue(undefined);
@@ -456,6 +466,25 @@ describe("volume backup restore access boundary", () => {
 				volumeName: "data_volume",
 				id: "app-1",
 				serviceType: "application",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.restoreVolume).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+		expect(mocks.execAsyncStream).not.toHaveBeenCalled();
+	});
+
+	it("denies inaccessible restore execution servers before command generation", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().restoreVolumeBackupWithLogs({
+				backupFileName: "app-one/prefix/data_volume-2026-06-22.tar",
+				destinationId: "destination-1",
+				volumeName: "data_volume",
+				id: "app-1",
+				serviceType: "application",
+				serverId: "server-1",
 			}),
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
