@@ -2,6 +2,11 @@ import { logger } from "@dokploy/server/lib/logger";
 import type { BackupSchedule } from "@dokploy/server/services/backup";
 import type { Destination } from "@dokploy/server/services/destination";
 import {
+	normalizeRestoreDatabaseName,
+	normalizeRestoreServiceName,
+	quoteRestoreShellArg,
+} from "@dokploy/server/utils/restore/safe-input";
+import {
 	quoteShellArgs,
 	quoteShellArgument,
 } from "@dokploy/server/utils/shell";
@@ -130,7 +135,9 @@ export const getPostgresBackupCommand = (
 	database: string,
 	databaseUser: string,
 ) => {
-	return `docker exec -i $CONTAINER_ID bash -c "set -o pipefail; pg_dump -Fc --no-acl --no-owner -h localhost -U ${databaseUser} --no-password '${database}' | gzip"`;
+	const safeDatabase = normalizeRestoreDatabaseName(database);
+	const innerCommand = `set -o pipefail; pg_dump -Fc --no-acl --no-owner -h localhost -U ${quoteRestoreShellArg(databaseUser)} --no-password ${quoteRestoreShellArg(safeDatabase)} | gzip`;
+	return `docker exec -i "$CONTAINER_ID" bash -c ${quoteRestoreShellArg(innerCommand)}`;
 };
 
 export const getMariadbBackupCommand = (
@@ -138,14 +145,18 @@ export const getMariadbBackupCommand = (
 	databaseUser: string,
 	databasePassword: string,
 ) => {
-	return `docker exec -i $CONTAINER_ID bash -c "set -o pipefail; mariadb-dump --user='${databaseUser}' --password='${databasePassword}' --single-transaction --quick --databases ${database} | gzip"`;
+	const safeDatabase = normalizeRestoreDatabaseName(database);
+	const innerCommand = `set -o pipefail; mariadb-dump --user=${quoteRestoreShellArg(databaseUser)} --password=${quoteRestoreShellArg(databasePassword)} --single-transaction --quick --databases ${quoteRestoreShellArg(safeDatabase)} | gzip`;
+	return `docker exec -i "$CONTAINER_ID" bash -c ${quoteRestoreShellArg(innerCommand)}`;
 };
 
 export const getMysqlBackupCommand = (
 	database: string,
 	databasePassword: string,
 ) => {
-	return `docker exec -i $CONTAINER_ID bash -c "set -o pipefail; mysqldump --default-character-set=utf8mb4 -u 'root' --password='${databasePassword}' --single-transaction --no-tablespaces --quick '${database}' | gzip"`;
+	const safeDatabase = normalizeRestoreDatabaseName(database);
+	const innerCommand = `set -o pipefail; mysqldump --default-character-set=utf8mb4 -u root --password=${quoteRestoreShellArg(databasePassword)} --single-transaction --no-tablespaces --quick ${quoteRestoreShellArg(safeDatabase)} | gzip`;
+	return `docker exec -i "$CONTAINER_ID" bash -c ${quoteRestoreShellArg(innerCommand)}`;
 };
 
 export const getMongoBackupCommand = (
@@ -153,15 +164,31 @@ export const getMongoBackupCommand = (
 	databaseUser: string,
 	databasePassword: string,
 ) => {
-	return `docker exec -i $CONTAINER_ID bash -c "set -o pipefail; mongodump -d '${database}' -u '${databaseUser}' -p '${databasePassword}' --archive --authenticationDatabase admin --gzip"`;
+	const safeDatabase = normalizeRestoreDatabaseName(database);
+	const innerCommand = `set -o pipefail; mongodump -d ${quoteRestoreShellArg(safeDatabase)} -u ${quoteRestoreShellArg(databaseUser)} -p ${quoteRestoreShellArg(databasePassword)} --archive --authenticationDatabase admin --gzip`;
+	return `docker exec -i "$CONTAINER_ID" bash -c ${quoteRestoreShellArg(innerCommand)}`;
 };
 
 export const getLibsqlBackupCommand = (database: string) => {
-	return `docker exec -i $CONTAINER_ID sh -c "tar cf - -C /var/lib/sqld ${database} | gzip"`;
+	const safeDatabase = normalizeRestoreDatabaseName(database);
+	const innerCommand = `tar cf - -C /var/lib/sqld ${quoteRestoreShellArg(safeDatabase)} | gzip`;
+	return `docker exec -i "$CONTAINER_ID" sh -c ${quoteRestoreShellArg(innerCommand)}`;
 };
 
 export const getServiceContainerCommand = (appName: string) => {
-	return `docker ps -q --filter "status=running" --filter "label=com.docker.swarm.service.name=${appName}" | head -n 1`;
+	const safeAppName = normalizeRestoreServiceName(appName);
+	if (!safeAppName) {
+		throw new Error("Invalid service name");
+	}
+	return `${quoteShellArgs([
+		"docker",
+		"ps",
+		"-q",
+		"--filter",
+		"status=running",
+		"--filter",
+		`label=com.docker.swarm.service.name=${safeAppName}`,
+	])} | head -n 1`;
 };
 
 export const getComposeContainerCommand = (
@@ -169,10 +196,35 @@ export const getComposeContainerCommand = (
 	serviceName: string,
 	composeType: "stack" | "docker-compose" | undefined,
 ) => {
-	if (composeType === "stack") {
-		return `docker ps -q --filter "status=running" --filter "label=com.docker.stack.namespace=${appName}" --filter "label=com.docker.swarm.service.name=${appName}_${serviceName}" | head -n 1`;
+	const safeAppName = normalizeRestoreServiceName(appName);
+	const safeServiceName = normalizeRestoreServiceName(serviceName);
+	if (!safeAppName || !safeServiceName) {
+		throw new Error("Invalid service name");
 	}
-	return `docker ps -q --filter "status=running" --filter "label=com.docker.compose.project=${appName}" --filter "label=com.docker.compose.service=${serviceName}" | head -n 1`;
+	if (composeType === "stack") {
+		return `${quoteShellArgs([
+			"docker",
+			"ps",
+			"-q",
+			"--filter",
+			"status=running",
+			"--filter",
+			`label=com.docker.stack.namespace=${safeAppName}`,
+			"--filter",
+			`label=com.docker.swarm.service.name=${safeAppName}_${safeServiceName}`,
+		])} | head -n 1`;
+	}
+	return `${quoteShellArgs([
+		"docker",
+		"ps",
+		"-q",
+		"--filter",
+		"status=running",
+		"--filter",
+		`label=com.docker.compose.project=${safeAppName}`,
+		"--filter",
+		`label=com.docker.compose.service=${safeServiceName}`,
+	])} | head -n 1`;
 };
 
 const getContainerSearchCommand = (backup: BackupSchedule) => {

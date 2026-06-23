@@ -201,6 +201,7 @@ describe("destination rclone command boundary", () => {
 				destinationId: "destination-1",
 				prefix: "prefix$(id);touch",
 				postgres: {
+					appName: "postgres-app",
 					databaseUser: "postgres",
 				},
 			} as never,
