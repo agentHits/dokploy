@@ -3,7 +3,9 @@ import {
 	createOrganizationUserWithCredentials,
 	findNotificationById,
 	findOrganizationById,
+	findServerById,
 	findUserById,
+	getAccessibleServerIds,
 	getDokployUrl,
 	getUserByToken,
 	getWebServerSettings,
@@ -60,6 +62,86 @@ const apiCreateApiKey = z.object({
 	refillAmount: z.number().optional(),
 	refillInterval: z.number().optional(),
 });
+
+const getContainerMetricsTarget = async (
+	input: { serverId?: string },
+	ctx: { session: Parameters<typeof getAccessibleServerIds>[0] },
+) => {
+	if (input.serverId) {
+		const accessibleIds = await getAccessibleServerIds(ctx.session);
+		if (!accessibleIds.has(input.serverId)) {
+			throw new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You are not authorized to access this server",
+			});
+		}
+
+		const currentServer = await findServerById(input.serverId);
+		if (currentServer.organizationId !== ctx.session.activeOrganizationId) {
+			throw new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You are not authorized to access this server",
+			});
+		}
+
+		return {
+			host: currentServer.ipAddress,
+			port: currentServer.metricsConfig?.server?.port,
+			token: currentServer.metricsConfig?.server?.token,
+		};
+	}
+
+	const settings = await getWebServerSettings();
+	return {
+		host: settings?.serverIp,
+		port: settings?.metricsConfig?.server?.port,
+		token: settings?.metricsConfig?.server?.token,
+	};
+};
+
+const buildContainerMetricsRequest = ({
+	host,
+	port,
+	token,
+	dataPoints,
+	appName,
+}: {
+	host?: string | null;
+	port?: number | string | null;
+	token?: string | null;
+	dataPoints: string;
+	appName: string;
+}) => {
+	const normalizedHost = host?.trim();
+	const normalizedToken = token?.trim();
+	const normalizedPort = Number(port);
+
+	if (
+		!normalizedHost ||
+		!Number.isInteger(normalizedPort) ||
+		normalizedPort <= 0 ||
+		normalizedPort > 65535 ||
+		!normalizedToken
+	) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Monitoring metrics target is not configured",
+		});
+	}
+
+	const urlHost =
+		normalizedHost.includes(":") && !normalizedHost.startsWith("[")
+			? `[${normalizedHost}]`
+			: normalizedHost;
+	const url = new URL(`http://${urlHost}:${normalizedPort}/metrics/containers`);
+	url.searchParams.append("limit", dataPoints);
+	url.searchParams.append("appName", appName);
+
+	return {
+		url,
+		token: normalizedToken,
+	};
+};
 
 export const userRouter = createTRPCRouter({
 	all: withPermission("member", "read").query(async ({ ctx }) => {
@@ -270,7 +352,13 @@ export const userRouter = createTRPCRouter({
 			return {
 				serverIp: settings?.serverIp,
 				enabledFeatures: user.enablePaidFeatures,
-				metricsConfig: settings?.metricsConfig,
+				metricsConfig: settings?.metricsConfig
+					? {
+							server: {
+								port: settings.metricsConfig.server.port,
+							},
+						}
+					: undefined,
 			};
 		},
 	),
@@ -429,14 +517,15 @@ export const userRouter = createTRPCRouter({
 
 	getContainerMetrics: withPermission("monitoring", "read")
 		.input(
-			z.object({
-				url: z.string(),
-				token: z.string(),
-				appName: z.string(),
-				dataPoints: z.string(),
-			}),
+			z
+				.object({
+					serverId: z.string().optional(),
+					appName: z.string(),
+					dataPoints: z.string(),
+				})
+				.strict(),
 		)
-		.query(async ({ input }) => {
+		.query(async ({ ctx, input }) => {
 			try {
 				if (!input.appName) {
 					throw new Error(
@@ -447,12 +536,15 @@ export const userRouter = createTRPCRouter({
 						].join("\n"),
 					);
 				}
-				const url = new URL(`${input.url}/metrics/containers`);
-				url.searchParams.append("limit", input.dataPoints);
-				url.searchParams.append("appName", input.appName);
-				const response = await fetch(url.toString(), {
+				const target = await getContainerMetricsTarget(input, ctx);
+				const request = buildContainerMetricsRequest({
+					...target,
+					dataPoints: input.dataPoints,
+					appName: input.appName,
+				});
+				const response = await fetch(request.url.toString(), {
 					headers: {
-						Authorization: `Bearer ${input.token}`,
+						Authorization: `Bearer ${request.token}`,
 					},
 				});
 				if (!response.ok) {
