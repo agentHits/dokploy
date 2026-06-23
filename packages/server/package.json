@@ -31,11 +31,11 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.85",
-    "@ai-sdk/azure": "^3.0.76",
+    "@ai-sdk/azure": "^3.0.77",
     "@ai-sdk/cohere": "^3.0.39",
     "@ai-sdk/deepinfra": "^2.0.55",
     "@ai-sdk/mistral": "^3.0.40",
-    "@ai-sdk/openai": "^3.0.73",
+    "@ai-sdk/openai": "^3.0.74",
     "@ai-sdk/openai-compatible": "^2.0.51",
     "@better-auth/api-key": "1.6.20",
     "@better-auth/sso": "1.6.20",
@@ -53,7 +53,7 @@
     "bcrypt": "6.0.0",
     "better-auth": "1.6.20",
     "better-call": "2.0.4",
-    "bl": "7.0.3",
+    "bl": "7.0.4",
     "boxen": "^8.0.1",
     "date-fns": "4.4.0",
     "dockerode": "5.0.0",
@@ -112,7 +112,7 @@
     "tsc-alias": "1.8.17",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
-    "vite": "7.3.5"
+    "vite": "8.1.0"
   },
   "packageManager": "pnpm@10.22.0",
   "engines": {
