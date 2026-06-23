@@ -4,11 +4,7 @@ import {
 	apiUpdateAi,
 	deploySuggestionSchema,
 } from "@dokploy/server/db/schema/ai";
-import {
-	createDomain,
-	createMount,
-	findEnvironmentById,
-} from "@dokploy/server/index";
+import { createDomain, createMount } from "@dokploy/server/index";
 import {
 	deleteAiSettings,
 	getAiSettingById,
@@ -21,7 +17,6 @@ import {
 	addNewService,
 	checkServiceAccess,
 } from "@dokploy/server/services/permission";
-import { findProjectById } from "@dokploy/server/services/project";
 import {
 	getProviderHeaders,
 	getProviderName,
@@ -38,6 +33,10 @@ import {
 	createTRPCRouter,
 	protectedProcedure,
 } from "@/server/api/trpc";
+import {
+	assertTargetEnvironmentAccess,
+	assertTargetServerAccess,
+} from "@/server/api/utils/placement-access";
 import { generatePassword } from "@/templates/utils";
 
 const appendAIProviderPath = (apiUrl: string, pathname: string) =>
@@ -345,8 +344,10 @@ ${input.logs}`,
 	deploy: protectedProcedure
 		.input(deploySuggestionSchema)
 		.mutation(async ({ ctx, input }) => {
-			const environment = await findEnvironmentById(input.environmentId);
-			const project = await findProjectById(environment.projectId);
+			const environment = await assertTargetEnvironmentAccess(
+				ctx,
+				input.environmentId,
+			);
 			await checkServiceAccess(ctx, environment.projectId, "create");
 
 			if (IS_CLOUD && !input.serverId) {
@@ -356,7 +357,9 @@ ${input.logs}`,
 				});
 			}
 
-			const projectName = slugify(`${project.name} ${input.id}`);
+			await assertTargetServerAccess(ctx, input.serverId);
+
+			const projectName = slugify(`${environment.project.name} ${input.id}`);
 
 			const compose = await createComposeByTemplate({
 				...input,

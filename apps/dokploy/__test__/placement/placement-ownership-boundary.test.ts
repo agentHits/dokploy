@@ -251,6 +251,27 @@ const environment = (
 	project: project(projectId, organizationId),
 });
 
+const application = (
+	applicationId: string,
+	environmentId = "env-1",
+	projectId = "project-1",
+	organizationId = "org-1",
+) => ({
+	applicationId,
+	name: applicationId,
+	appName: `${applicationId}-slug`,
+	environmentId,
+	environment: environment(environmentId, projectId, organizationId),
+	domains: [],
+	mounts: [],
+	ports: [],
+	previewDeployments: [],
+	redirects: [],
+	refreshToken: "refresh-token",
+	registry: null,
+	security: [],
+});
+
 describe("project/environment placement ownership boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -287,8 +308,20 @@ describe("project/environment placement ownership boundary", () => {
 					: project(projectId),
 			),
 		);
+		serverMocks.findApplicationById.mockImplementation(
+			(applicationId: string) =>
+				Promise.resolve(
+					applicationId === "app-other"
+						? application("app-other", "env-other", "project-2", "org-2")
+						: application(applicationId),
+				),
+		);
+		serverMocks.createApplication.mockResolvedValue(application("app-copy"));
 		serverMocks.updateEnvironmentById.mockResolvedValue(environment("env-1"));
 		serverMocks.updateProjectById.mockResolvedValue(project("project-1"));
+		serverMocks.createProject.mockResolvedValue({
+			environment: environment("env-target", "project-target"),
+		});
 
 		dbMocks.update.mockReturnValue({ set: dbMocks.updateSet });
 		dbMocks.updateSet.mockReturnValue({ where: dbMocks.updateWhere });
@@ -386,5 +419,40 @@ describe("project/environment placement ownership boundary", () => {
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
 		expect(dbMocks.update).not.toHaveBeenCalled();
+	});
+
+	it("denies project duplicate selected services outside the source environment before clone persistence", async () => {
+		await expect(
+			projectRouter.createCaller(createContext()).duplicate({
+				sourceEnvironmentId: "env-1",
+				name: "duplicate",
+				includeServices: true,
+				selectedServices: [{ id: "app-other", type: "application" }],
+				duplicateInSameProject: false,
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(serverMocks.createProject).not.toHaveBeenCalled();
+		expect(serverMocks.createApplication).not.toHaveBeenCalled();
+		expect(permissionMocks.addNewProject).not.toHaveBeenCalled();
+	});
+
+	it("keeps project duplicate available for selected services from the source environment", async () => {
+		await expect(
+			projectRouter.createCaller(createContext()).duplicate({
+				sourceEnvironmentId: "env-1",
+				name: "duplicate",
+				includeServices: true,
+				selectedServices: [{ id: "app-1", type: "application" }],
+				duplicateInSameProject: false,
+			}),
+		).resolves.toMatchObject({ environmentId: "env-target" });
+
+		expect(serverMocks.createApplication).toHaveBeenCalledWith(
+			expect.objectContaining({
+				appName: "app-1",
+				environmentId: "env-target",
+			}),
+		);
 	});
 });

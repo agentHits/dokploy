@@ -27,8 +27,59 @@ import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
 import { assertDestinationAccess } from "@/server/api/utils/destination-access";
+import {
+	assertServicePlacementAccess,
+	type PlacementServiceType,
+} from "@/server/api/utils/placement-access";
 import { removeJob, schedule, updateJob } from "@/server/utils/backup";
 import { createTRPCRouter, protectedProcedure, withPermission } from "../trpc";
+
+type VolumeBackupServiceFields = {
+	serviceType?: PlacementServiceType | null;
+	applicationId?: string | null;
+	postgresId?: string | null;
+	mysqlId?: string | null;
+	mariadbId?: string | null;
+	mongoId?: string | null;
+	redisId?: string | null;
+	composeId?: string | null;
+	libsqlId?: string | null;
+};
+
+const volumeBackupServiceFields = [
+	{ idField: "applicationId", type: "application" },
+	{ idField: "postgresId", type: "postgres" },
+	{ idField: "mysqlId", type: "mysql" },
+	{ idField: "mariadbId", type: "mariadb" },
+	{ idField: "mongoId", type: "mongo" },
+	{ idField: "redisId", type: "redis" },
+	{ idField: "composeId", type: "compose" },
+	{ idField: "libsqlId", type: "libsql" },
+] as const satisfies readonly {
+	idField: keyof VolumeBackupServiceFields;
+	type: PlacementServiceType;
+}[];
+
+const getVolumeBackupServiceBindings = (
+	volumeBackup: VolumeBackupServiceFields,
+) => {
+	const bindings: { id: string; type: PlacementServiceType }[] = [];
+	for (const { idField, type } of volumeBackupServiceFields) {
+		const id = volumeBackup[idField];
+		if (id) {
+			bindings.push({ id, type });
+		}
+	}
+	return bindings;
+};
+
+const hasVolumeBackupServiceBinding = (
+	bindings: { id: string; type: PlacementServiceType }[],
+	binding: { id: string; type: PlacementServiceType },
+) =>
+	bindings.some(
+		(existing) => existing.id === binding.id && existing.type === binding.type,
+	);
 
 export const volumeBackupsRouter = createTRPCRouter({
 	list: protectedProcedure
@@ -69,19 +120,16 @@ export const volumeBackupsRouter = createTRPCRouter({
 	create: protectedProcedure
 		.input(createVolumeBackupSchema)
 		.mutation(async ({ input, ctx }) => {
-			const serviceId =
-				input.applicationId ||
-				input.postgresId ||
-				input.mysqlId ||
-				input.mariadbId ||
-				input.mongoId ||
-				input.redisId ||
-				input.libsqlId ||
-				input.composeId;
-			if (serviceId) {
-				await checkServicePermissionAndAccess(ctx, serviceId, {
+			const serviceBindings = getVolumeBackupServiceBindings(input);
+			for (const serviceBinding of serviceBindings) {
+				await checkServicePermissionAndAccess(ctx, serviceBinding.id, {
 					volumeBackup: ["create"],
 				});
+				await assertServicePlacementAccess(
+					ctx,
+					serviceBinding.id,
+					serviceBinding.type,
+				);
 			}
 			await assertDestinationAccess(
 				input.destinationId,
@@ -165,19 +213,37 @@ export const volumeBackupsRouter = createTRPCRouter({
 		.input(updateVolumeBackupSchema)
 		.mutation(async ({ input, ctx }) => {
 			const existingVb = await findVolumeBackupById(input.volumeBackupId);
-			const serviceId =
-				existingVb.applicationId ||
-				existingVb.postgresId ||
-				existingVb.mysqlId ||
-				existingVb.mariadbId ||
-				existingVb.mongoId ||
-				existingVb.redisId ||
-				existingVb.libsqlId ||
-				existingVb.composeId;
-			if (serviceId) {
-				await checkServicePermissionAndAccess(ctx, serviceId, {
+			const existingServiceBindings =
+				getVolumeBackupServiceBindings(existingVb);
+			for (const existingServiceBinding of existingServiceBindings) {
+				await checkServicePermissionAndAccess(ctx, existingServiceBinding.id, {
 					volumeBackup: ["update"],
 				});
+				await assertServicePlacementAccess(
+					ctx,
+					existingServiceBinding.id,
+					existingServiceBinding.type,
+				);
+			}
+
+			const inputServiceBindings = getVolumeBackupServiceBindings(input);
+			for (const inputServiceBinding of inputServiceBindings) {
+				if (
+					hasVolumeBackupServiceBinding(
+						existingServiceBindings,
+						inputServiceBinding,
+					)
+				) {
+					continue;
+				}
+				await checkServicePermissionAndAccess(ctx, inputServiceBinding.id, {
+					volumeBackup: ["update"],
+				});
+				await assertServicePlacementAccess(
+					ctx,
+					inputServiceBinding.id,
+					inputServiceBinding.type,
+				);
 			}
 			await assertDestinationAccess(
 				input.destinationId,

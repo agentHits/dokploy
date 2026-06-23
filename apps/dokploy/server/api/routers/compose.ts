@@ -580,7 +580,10 @@ export const composeRouter = createTRPCRouter({
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
-			const environment = await findEnvironmentById(input.environmentId);
+			const environment = await assertTargetEnvironmentAccess(
+				ctx,
+				input.environmentId,
+			);
 
 			await checkServiceAccess(ctx, environment.projectId, "create");
 

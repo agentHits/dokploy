@@ -18,7 +18,6 @@ import {
 	deleteProject,
 	findApplicationById,
 	findComposeById,
-	findEnvironmentById,
 	findLibsqlById,
 	findMariadbById,
 	findMongoById,
@@ -48,6 +47,10 @@ import {
 	withPermission,
 } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
+import {
+	assertServicePlacementAccess,
+	assertTargetEnvironmentAccess,
+} from "@/server/api/utils/placement-access";
 import {
 	apiCreateProject,
 	apiFindOneProject,
@@ -811,37 +814,17 @@ export const projectRouter = createTRPCRouter({
 			try {
 				await checkProjectAccess(ctx, "create");
 
-				const sourceEnvironment = input.duplicateInSameProject
-					? await findEnvironmentById(input.sourceEnvironmentId)
-					: null;
-
-				if (
-					input.duplicateInSameProject &&
-					sourceEnvironment?.project.organizationId !==
-						ctx.session.activeOrganizationId
-				) {
-					throw new TRPCError({
-						code: "UNAUTHORIZED",
-						message: "You are not authorized to access this project",
+				const sourceEnvironment = await assertTargetEnvironmentAccess(
+					ctx,
+					input.sourceEnvironmentId,
+				);
+				const servicesToDuplicate = input.includeServices
+					? input.selectedServices || []
+					: [];
+				for (const service of servicesToDuplicate) {
+					await assertServicePlacementAccess(ctx, service.id, service.type, {
+						sourceEnvironmentId: sourceEnvironment.environmentId,
 					});
-				}
-
-				if (
-					input.duplicateInSameProject &&
-					sourceEnvironment &&
-					ctx.user.role !== "owner" &&
-					ctx.user.role !== "admin"
-				) {
-					const { accessedProjects } = await findMemberByUserId(
-						ctx.user.id,
-						ctx.session.activeOrganizationId,
-					);
-					if (!accessedProjects.includes(sourceEnvironment.project.projectId)) {
-						throw new TRPCError({
-							code: "UNAUTHORIZED",
-							message: "You don't have access to this project",
-						});
-					}
 				}
 
 				const targetProject = input.duplicateInSameProject
@@ -856,8 +839,6 @@ export const projectRouter = createTRPCRouter({
 						).then((value) => value.environment);
 
 				if (input.includeServices) {
-					const servicesToDuplicate = input.selectedServices || [];
-
 					const duplicateService = async (id: string, type: string) => {
 						switch (type) {
 							case "application": {
@@ -1208,6 +1189,9 @@ export const projectRouter = createTRPCRouter({
 				});
 				return targetProject;
 			} catch (error) {
+				if (error instanceof TRPCError) {
+					throw error;
+				}
 				throw new TRPCError({
 					code: "BAD_REQUEST",
 					message: `Error duplicating the project: ${error instanceof Error ? error.message : error}`,

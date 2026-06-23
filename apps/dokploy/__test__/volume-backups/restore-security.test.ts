@@ -11,6 +11,13 @@ const mocks = vi.hoisted(() => ({
 	findApplicationById: vi.fn(),
 	findComposeById: vi.fn(),
 	findDestinationById: vi.fn(),
+	findLibsqlById: vi.fn(),
+	findMariadbById: vi.fn(),
+	findMongoById: vi.fn(),
+	findMySqlById: vi.fn(),
+	findPostgresById: vi.fn(),
+	findRedisById: vi.fn(),
+	findMemberByUserId: vi.fn(),
 	findServerById: vi.fn(),
 	findVolumeBackupById: vi.fn(),
 	getS3Credentials: vi.fn(),
@@ -32,6 +39,12 @@ vi.mock("@dokploy/server", () => ({
 	findApplicationById: mocks.findApplicationById,
 	findComposeById: mocks.findComposeById,
 	findDestinationById: mocks.findDestinationById,
+	findLibsqlById: mocks.findLibsqlById,
+	findMariadbById: mocks.findMariadbById,
+	findMongoById: mocks.findMongoById,
+	findMySqlById: mocks.findMySqlById,
+	findPostgresById: mocks.findPostgresById,
+	findRedisById: mocks.findRedisById,
 	findVolumeBackupById: mocks.findVolumeBackupById,
 	getS3Credentials: mocks.getS3Credentials,
 	paths: mocks.paths,
@@ -49,6 +62,12 @@ vi.mock("@dokploy/server/index", () => ({
 	findApplicationById: mocks.findApplicationById,
 	findComposeById: mocks.findComposeById,
 	findDestinationById: mocks.findDestinationById,
+	findLibsqlById: mocks.findLibsqlById,
+	findMariadbById: mocks.findMariadbById,
+	findMongoById: mocks.findMongoById,
+	findMySqlById: mocks.findMySqlById,
+	findPostgresById: mocks.findPostgresById,
+	findRedisById: mocks.findRedisById,
 	findVolumeBackupById: mocks.findVolumeBackupById,
 	getS3Credentials: mocks.getS3Credentials,
 	hasValidLicense: vi.fn().mockResolvedValue(true),
@@ -95,6 +114,7 @@ vi.mock("@dokploy/server/services/destination", () => ({
 vi.mock("@dokploy/server/services/permission", () => ({
 	checkPermission: mocks.checkPermission,
 	checkServicePermissionAndAccess: mocks.checkServicePermissionAndAccess,
+	findMemberByUserId: mocks.findMemberByUserId,
 }));
 
 vi.mock("@dokploy/server/services/server", () => ({
@@ -178,11 +198,46 @@ const safeUpdateVolumeBackupInput = {
 	volumeBackupId: "volume-backup-1",
 };
 
+const project = (organizationId = "org-1") => ({
+	projectId: "project-1",
+	organizationId,
+});
+
+const applicationService = (
+	applicationId: string,
+	organizationId = "org-1",
+) => ({
+	applicationId,
+	environmentId: "env-1",
+	environment: {
+		environmentId: "env-1",
+		project: project(organizationId),
+	},
+});
+
+const composeService = (composeId: string, organizationId = "org-1") => ({
+	composeId,
+	environmentId: "env-1",
+	environment: {
+		environmentId: "env-1",
+		project: project(organizationId),
+	},
+});
+
 describe("volume backup destination ownership boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 
 		mocks.checkServicePermissionAndAccess.mockResolvedValue(undefined);
+		mocks.findMemberByUserId.mockResolvedValue({
+			role: "admin",
+			accessedEnvironments: [],
+			accessedProjects: [],
+			accessedServices: [],
+		});
+		mocks.findApplicationById.mockImplementation((applicationId: string) =>
+			Promise.resolve(applicationService(applicationId)),
+		);
 		mocks.createVolumeBackup.mockResolvedValue({
 			...safeCreateVolumeBackupInput,
 			volumeBackupId: "volume-backup-1",
@@ -248,6 +303,53 @@ describe("volume backup destination ownership boundary", () => {
 			"volume-backup-1",
 			safeUpdateVolumeBackupInput,
 		);
+	});
+
+	it("rejects volume-backup updates that reassign to a service outside the active organization", async () => {
+		mocks.findDestinationById.mockResolvedValue({
+			bucket: "dokploy-backups",
+			organizationId: "org-1",
+		});
+		mocks.findApplicationById.mockImplementation((applicationId: string) =>
+			Promise.resolve(
+				applicationId === "app-2"
+					? applicationService("app-2", "org-2")
+					: applicationService(applicationId),
+			),
+		);
+
+		await expect(
+			createCaller().update({
+				...safeUpdateVolumeBackupInput,
+				applicationId: "app-2",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.updateVolumeBackup).not.toHaveBeenCalled();
+		expect(mocks.updateJob).not.toHaveBeenCalled();
+		expect(mocks.scheduleVolumeBackup).not.toHaveBeenCalled();
+	});
+
+	it("rejects volume-backup updates that include a foreign secondary service binding", async () => {
+		mocks.findDestinationById.mockResolvedValue({
+			bucket: "dokploy-backups",
+			organizationId: "org-1",
+		});
+		mocks.findComposeById.mockResolvedValue(
+			composeService("compose-2", "org-2"),
+		);
+
+		await expect(
+			createCaller().update({
+				...safeUpdateVolumeBackupInput,
+				composeId: "compose-2",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.findComposeById).toHaveBeenCalledWith("compose-2");
+		expect(mocks.updateVolumeBackup).not.toHaveBeenCalled();
+		expect(mocks.updateJob).not.toHaveBeenCalled();
+		expect(mocks.scheduleVolumeBackup).not.toHaveBeenCalled();
 	});
 });
 

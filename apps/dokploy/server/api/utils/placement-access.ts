@@ -1,6 +1,15 @@
 import {
+	findApplicationById,
+	findComposeById,
 	findEnvironmentById,
+	findLibsqlById,
+	findMariadbById,
+	findMongoById,
+	findMySqlById,
+	findPostgresById,
 	findProjectById,
+	findRedisById,
+	getAccessibleServerIds,
 	type Project,
 } from "@dokploy/server";
 import { findMemberByUserId } from "@dokploy/server/services/permission";
@@ -8,6 +17,7 @@ import { TRPCError } from "@trpc/server";
 
 type PlacementAccessCtx = {
 	session: {
+		userId: string;
 		activeOrganizationId: string;
 	};
 	user: {
@@ -15,6 +25,19 @@ type PlacementAccessCtx = {
 		role: string;
 	};
 };
+
+const serviceFinders = {
+	application: findApplicationById,
+	compose: findComposeById,
+	libsql: findLibsqlById,
+	mariadb: findMariadbById,
+	mongo: findMongoById,
+	mysql: findMySqlById,
+	postgres: findPostgresById,
+	redis: findRedisById,
+} as const;
+
+export type PlacementServiceType = keyof typeof serviceFinders;
 
 const isPrivilegedRole = (role: string) => role === "owner" || role === "admin";
 
@@ -73,4 +96,58 @@ export const assertTargetEnvironmentAccess = async (
 	}
 
 	return environment;
+};
+
+export const assertTargetServerAccess = async (
+	ctx: PlacementAccessCtx,
+	serverId?: string,
+) => {
+	if (!serverId) {
+		return;
+	}
+
+	const accessibleIds = await getAccessibleServerIds(ctx.session);
+	if (!accessibleIds.has(serverId)) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not authorized to access this server",
+		});
+	}
+};
+
+export const assertServicePlacementAccess = async (
+	ctx: PlacementAccessCtx,
+	serviceId: string,
+	serviceType: PlacementServiceType,
+	options?: {
+		sourceEnvironmentId?: string;
+	},
+) => {
+	const service = await serviceFinders[serviceType](serviceId);
+
+	if (
+		options?.sourceEnvironmentId &&
+		service.environmentId !== options.sourceEnvironmentId
+	) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not authorized to access this service",
+		});
+	}
+
+	const member = await assertProjectMembership(
+		ctx,
+		service.environment.project,
+	);
+	if (
+		!isPrivilegedRole(member.role) &&
+		!member.accessedServices.includes(serviceId)
+	) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You don't have access to this service",
+		});
+	}
+
+	return service;
 };
