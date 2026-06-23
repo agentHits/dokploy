@@ -1,0 +1,50 @@
+# Security Remediation Tracker: AgentHits-Dev
+
+> Public-safe tracker for an internal Codex Security deep scan.
+> This file intentionally redacts vulnerability details, affected code paths,
+> exploit conditions, payloads, and remediation specifics until fixes are
+> completed or responsibly disclosed.
+
+## Status
+
+- Branch: `AgentHits-Dev`
+- Source revision scanned: `68d118a8f8ea25260ae327e8d4e9260b0d2c44c6`
+- Scan date: 2026-06-23
+- Scan mode: deep repository source scan
+- Full internal report: `.agent-work/security/codex-security-deep-scan-2026-06-23-full.md`
+- Publication status: redacted for public GitHub storage
+
+## Why This Is Redacted
+
+The upstream project security policy asks researchers not to make vulnerabilities
+public before they are investigated and addressed. This repository is public, so
+the detailed internal report is kept outside Git-tracked files.
+
+## Internal Backlog Summary
+
+The internal report produced a remediation backlog covering authenticated control
+plane boundaries, privileged Docker/SSH/shell execution, outbound request
+handling, tenant/resource authorization, and deployment-host exposure controls.
+
+Current handling model:
+
+1. Re-validate each internal finding against the current `AgentHits-Dev` source.
+2. Fix only findings that are still reachable in the current code.
+3. Add focused regression tests or another repeatable validation artifact.
+4. Run targeted checks plus broader project checks appropriate to the touched
+   surface.
+5. Commit each remediation as a narrow Conventional Commit with a body covering
+   `Что`, `Зачем`, `Проверки`, and `Риски`.
+6. Push only verified fixes and public-safe tracking documents.
+
+## Verification Notes
+
+The internal scan was static and intentionally did not run destructive exploit
+payloads, mutate production/VPS infrastructure, or perform live Docker/SSH
+attacks. Runtime verification is handled per remediation slice.
+
+## Disclosure Notes
+
+Do not copy the full internal report into a public issue, PR description,
+comment, gist, or repository file until the relevant items are fixed or cleared
+for responsible disclosure.
