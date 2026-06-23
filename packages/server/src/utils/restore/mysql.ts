@@ -2,9 +2,9 @@ import type { apiRestoreBackup } from "@dokploy/server/db/schema";
 import type { Destination } from "@dokploy/server/services/destination";
 import type { MySql } from "@dokploy/server/services/mysql";
 import type { z } from "zod";
-import { getS3Credentials } from "../backups/utils";
+import { buildRcloneS3Command, getRcloneS3Destination } from "../backups/utils";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
-import { normalizeRestoreBackupFile, quoteRestoreShellArg } from "./safe-input";
+import { normalizeRestoreBackupFile } from "./safe-input";
 import { getRestoreCommand } from "./utils";
 
 export const restoreMySqlBackup = async (
@@ -16,14 +16,13 @@ export const restoreMySqlBackup = async (
 	try {
 		const { appName, databaseRootPassword, serverId } = mysql;
 
-		const rcloneFlags = getS3Credentials(destination);
-		const bucketPath = `:s3:${destination.bucket}`;
 		const { objectPath } = normalizeRestoreBackupFile(backupInput.backupFile, [
 			".sql.gz",
 		]);
-		const backupPath = `${bucketPath}/${objectPath}`;
-
-		const rcloneCommand = `rclone cat ${rcloneFlags.join(" ")} ${quoteRestoreShellArg(backupPath)} | gunzip`;
+		const backupPath = getRcloneS3Destination(destination, objectPath);
+		const rcloneCommand = `${buildRcloneS3Command("cat", destination, [
+			backupPath,
+		])} | gunzip`;
 
 		const command = getRestoreCommand({
 			appName,

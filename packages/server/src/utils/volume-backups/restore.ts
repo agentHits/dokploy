@@ -3,7 +3,10 @@ import { paths } from "@dokploy/server/constants";
 import { findApplicationById } from "@dokploy/server/services/application";
 import { findComposeById } from "@dokploy/server/services/compose";
 import { findDestinationById } from "@dokploy/server/services/destination";
-import { getS3Credentials } from "@dokploy/server/utils/backups/utils";
+import {
+	buildRcloneS3Command,
+	getRcloneS3Destination,
+} from "@dokploy/server/utils/backups/utils";
 import {
 	normalizeRelativeFilePath,
 	quoteShellArg,
@@ -45,21 +48,21 @@ export const restoreVolume = async (
 	const destination = await findDestinationById(destinationId);
 	const { VOLUME_BACKUPS_PATH } = paths(!!serverId);
 	const volumeBackupPath = path.join(VOLUME_BACKUPS_PATH, safeVolumeName);
-	const rcloneFlags = getS3Credentials(destination);
-	const bucketPath = `:s3:${destination.bucket}`;
-	const backupPath = `${bucketPath}/${backupObjectPath}`;
+	const backupPath = getRcloneS3Destination(destination, backupObjectPath);
 	const localBackupPath = path.join(volumeBackupPath, localBackupFileName);
 	const backupFileInContainer = `/backup/${localBackupFileName}`;
 	const quotedVolumeName = quoteShellArg(safeVolumeName);
 	const quotedVolumeBackupPath = quoteShellArg(volumeBackupPath);
-	const quotedBackupPath = quoteShellArg(backupPath);
 	const quotedLocalBackupPath = quoteShellArg(localBackupPath);
 	const quotedVolumeMount = quoteShellArg(`${safeVolumeName}:/volume_data`);
 	const quotedBackupMount = quoteShellArg(`${volumeBackupPath}:/backup`);
 	const quotedBackupFileInContainer = quoteShellArg(backupFileInContainer);
 
 	// Command to download backup file from S3
-	const downloadCommand = `rclone copyto ${rcloneFlags.join(" ")} ${quotedBackupPath} ${quotedLocalBackupPath}`;
+	const downloadCommand = buildRcloneS3Command("copyto", destination, [
+		backupPath,
+		localBackupPath,
+	]);
 
 	// Base restore command that creates the volume and restores data
 	const baseRestoreCommand = `

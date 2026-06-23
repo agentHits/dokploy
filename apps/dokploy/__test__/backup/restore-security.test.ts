@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { parse } from "shell-quote";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -105,20 +106,37 @@ vi.mock("@dokploy/server/utils/backups/compose", () => ({
 	runComposeBackup: mocks.runComposeBackup,
 }));
 
-vi.mock("@dokploy/server/utils/backups/utils", () => ({
-	getComposeContainerCommand: (
-		appName: string,
-		serviceName: string,
-		composeType: "stack" | "docker-compose" | undefined,
-	) =>
-		composeType === "stack"
-			? `docker ps -q --filter "status=running" --filter "label=com.docker.stack.namespace=${appName}" --filter "label=com.docker.swarm.service.name=${appName}_${serviceName}" | head -n 1`
-			: `docker ps -q --filter "status=running" --filter "label=com.docker.compose.project=${appName}" --filter "label=com.docker.compose.service=${serviceName}" | head -n 1`,
-	getS3Credentials: mocks.getS3Credentials,
-	getServiceContainerCommand: (appName: string) =>
-		`docker ps -q --filter "status=running" --filter "label=com.docker.swarm.service.name=${appName}" | head -n 1`,
-	normalizeS3Path: mocks.normalizeS3Path,
-}));
+vi.mock("@dokploy/server/utils/backups/utils", async () => {
+	const { quote } = await import("shell-quote");
+
+	return {
+		buildRcloneS3Command: (
+			command: string,
+			destination: { bucket: string },
+			args: string[],
+		) =>
+			quote([
+				"rclone",
+				command,
+				...mocks.getS3Credentials(destination),
+				...args,
+			]),
+		getComposeContainerCommand: (
+			appName: string,
+			serviceName: string,
+			composeType: "stack" | "docker-compose" | undefined,
+		) =>
+			composeType === "stack"
+				? `docker ps -q --filter "status=running" --filter "label=com.docker.stack.namespace=${appName}" --filter "label=com.docker.swarm.service.name=${appName}_${serviceName}" | head -n 1`
+				: `docker ps -q --filter "status=running" --filter "label=com.docker.compose.project=${appName}" --filter "label=com.docker.compose.service=${serviceName}" | head -n 1`,
+		getRcloneS3Destination: (destination: { bucket: string }, path?: string) =>
+			`:s3:${destination.bucket}${path ? `/${path}` : ""}`,
+		getS3Credentials: mocks.getS3Credentials,
+		getServiceContainerCommand: (appName: string) =>
+			`docker ps -q --filter "status=running" --filter "label=com.docker.swarm.service.name=${appName}" | head -n 1`,
+		normalizeS3Path: mocks.normalizeS3Path,
+	};
+});
 
 vi.mock("@dokploy/server/utils/process/execAsync", () => ({
 	execAsync: mocks.execAsync,
@@ -202,6 +220,9 @@ const runRestoreSubscription = async (
 const emittedLogs: string[] = [];
 const emit = (log: string) => emittedLogs.push(log);
 
+const parseShellArgs = (command: string) =>
+	parse(command).filter((part): part is string => typeof part === "string");
+
 describe("backup restore route boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -280,6 +301,33 @@ describe("backup restore route boundary", () => {
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
 		expect(mocks.restoreWebServerBackup).not.toHaveBeenCalled();
+	});
+
+	it("quotes destination fields when listing backup files", async () => {
+		mocks.findDestinationById.mockResolvedValue({
+			...safeDestination,
+			bucket: "bucket$(id);touch",
+		});
+		mocks.getS3Credentials.mockReturnValue(["--s3-provider", "AWS"]);
+		mocks.normalizeS3Path.mockReturnValue("prefix$(id);touch/");
+		mocks.execAsync.mockResolvedValue({ stdout: "[]" });
+
+		await expect(
+			createCaller().listBackupFiles({
+				destinationId: "destination-1",
+				search: "prefix$(id);touch/app",
+			}),
+		).resolves.toEqual([]);
+
+		const command = mocks.execAsync.mock.calls[0]?.[0] as string;
+		expect(command).not.toContain('":s3:bucket$(id);touch/prefix$(id);touch/"');
+		const rcloneCommand = command.replace(/\s+2>\/dev\/null$/, "");
+		const args = parseShellArgs(rcloneCommand);
+
+		expect(args.slice(0, 2)).toEqual(["rclone", "lsjson"]);
+		expect(args).toContain(":s3:bucket$(id);touch/prefix$(id);touch/");
+		expect(args).toContain("--no-mimetype");
+		expect(args).toContain("--no-modtime");
 	});
 });
 

@@ -2,9 +2,13 @@ import type { apiRestoreBackup } from "@dokploy/server/db/schema";
 import type { Destination } from "@dokploy/server/services/destination";
 import type { Libsql } from "@dokploy/server/services/libsql";
 import type { z } from "zod";
-import { getS3Credentials, getServiceContainerCommand } from "../backups/utils";
+import {
+	buildRcloneS3Command,
+	getRcloneS3Destination,
+	getServiceContainerCommand,
+} from "../backups/utils";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
-import { normalizeRestoreBackupFile, quoteRestoreShellArg } from "./safe-input";
+import { normalizeRestoreBackupFile } from "./safe-input";
 
 export const restoreLibsqlBackup = async (
 	libsql: Libsql,
@@ -15,15 +19,14 @@ export const restoreLibsqlBackup = async (
 	try {
 		const { appName, serverId } = libsql;
 
-		const rcloneFlags = getS3Credentials(destination);
-		const bucketPath = `:s3:${destination.bucket}`;
 		const { objectPath } = normalizeRestoreBackupFile(backupInput.backupFile, [
 			".sql.gz",
 		]);
+		const backupPath = getRcloneS3Destination(destination, objectPath);
 
-		const backupPath = `${bucketPath}/${objectPath}`;
-
-		const rcloneCommand = `rclone cat ${rcloneFlags.join(" ")} ${quoteRestoreShellArg(backupPath)}`;
+		const rcloneCommand = buildRcloneS3Command("cat", destination, [
+			backupPath,
+		]);
 
 		const containerSearch = getServiceContainerCommand(appName);
 		const restoreCommand = `docker exec -i $CONTAINER_ID sh -c "tar xzf - -C /var/lib/sqld"`;

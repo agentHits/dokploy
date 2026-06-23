@@ -1,6 +1,10 @@
 import { logger } from "@dokploy/server/lib/logger";
 import type { BackupSchedule } from "@dokploy/server/services/backup";
 import type { Destination } from "@dokploy/server/services/destination";
+import {
+	quoteShellArgs,
+	quoteShellArgument,
+} from "@dokploy/server/utils/shell";
 import { scheduledJobs, scheduleJob } from "node-schedule";
 import { keepLatestNBackups } from ".";
 import { runComposeBackup } from "./compose";
@@ -66,28 +70,61 @@ export const normalizeS3Path = (prefix: string) => {
 	return normalizedPrefix ? `${normalizedPrefix}/` : "";
 };
 
-export const getS3Credentials = (destination: Destination) => {
+export type RcloneS3Destination = Pick<
+	Destination,
+	| "accessKey"
+	| "secretAccessKey"
+	| "region"
+	| "endpoint"
+	| "provider"
+	| "additionalFlags"
+	| "bucket"
+>;
+
+export const getS3CredentialArgs = (destination: RcloneS3Destination) => {
 	const { accessKey, secretAccessKey, region, endpoint, provider } =
 		destination;
-	const rcloneFlags = [
-		`--s3-access-key-id="${accessKey}"`,
-		`--s3-secret-access-key="${secretAccessKey}"`,
-		`--s3-region="${region}"`,
-		`--s3-endpoint="${endpoint}"`,
+	const rcloneArgs = [
+		"--s3-access-key-id",
+		accessKey,
+		"--s3-secret-access-key",
+		secretAccessKey,
+		"--s3-region",
+		region,
+		"--s3-endpoint",
+		endpoint,
 		"--s3-no-check-bucket",
 		"--s3-force-path-style",
 	];
 
 	if (provider) {
-		rcloneFlags.unshift(`--s3-provider="${provider}"`);
+		rcloneArgs.unshift("--s3-provider", provider);
 	}
 
 	if (destination.additionalFlags?.length) {
-		rcloneFlags.push(...destination.additionalFlags);
+		rcloneArgs.push(...destination.additionalFlags);
 	}
 
-	return rcloneFlags;
+	return rcloneArgs;
 };
+
+export const getS3Credentials = (destination: RcloneS3Destination) =>
+	getS3CredentialArgs(destination).map((arg) => quoteShellArgument(arg));
+
+export const getRcloneS3Destination = (
+	destination: Pick<RcloneS3Destination, "bucket">,
+	path?: string,
+) => `:s3:${destination.bucket}${path ? `/${path}` : ""}`;
+
+export const buildRcloneCommand = (args: readonly string[]) =>
+	quoteShellArgs(["rclone", ...args]);
+
+export const buildRcloneS3Command = (
+	command: string,
+	destination: RcloneS3Destination,
+	args: readonly string[],
+) =>
+	buildRcloneCommand([command, ...getS3CredentialArgs(destination), ...args]);
 
 export const getPostgresBackupCommand = (
 	database: string,

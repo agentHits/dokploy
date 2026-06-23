@@ -92,9 +92,26 @@ vi.mock("@dokploy/server/services/server", () => ({
 	findServerById: mocks.findServerById,
 }));
 
-vi.mock("@dokploy/server/utils/backups/utils", () => ({
-	getS3Credentials: mocks.getS3Credentials,
-}));
+vi.mock("@dokploy/server/utils/backups/utils", async () => {
+	const { quote } = await import("shell-quote");
+
+	return {
+		buildRcloneS3Command: (
+			command: string,
+			destination: { bucket: string },
+			args: string[],
+		) =>
+			quote([
+				"rclone",
+				command,
+				...mocks.getS3Credentials(destination),
+				...args,
+			]),
+		getRcloneS3Destination: (destination: { bucket: string }, path?: string) =>
+			`:s3:${destination.bucket}${path ? `/${path}` : ""}`,
+		getS3Credentials: mocks.getS3Credentials,
+	};
+});
 
 vi.mock("@dokploy/server/utils/process/execAsync", () => ({
 	execAsyncRemote: mocks.execAsyncRemote,

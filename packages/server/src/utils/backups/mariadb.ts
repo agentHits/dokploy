@@ -10,9 +10,10 @@ import { findProjectById } from "@dokploy/server/services/project";
 import { sendDatabaseBackupNotifications } from "../notifications/database-backup";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
 import {
+	buildRcloneS3Command,
 	getBackupCommand,
 	getBackupTimestamp,
-	getS3Credentials,
+	getRcloneS3Destination,
 	normalizeS3Path,
 } from "./utils";
 
@@ -33,9 +34,9 @@ export const runMariadbBackup = async (
 		description: "MariaDB Backup",
 	});
 	try {
-		const rcloneFlags = getS3Credentials(destination);
-		const rcloneDestination = `:s3:${destination.bucket}/${bucketDestination}`;
-		const rcloneCommand = `rclone rcat ${rcloneFlags.join(" ")} "${rcloneDestination}"`;
+		const rcloneCommand = buildRcloneS3Command("rcat", destination, [
+			getRcloneS3Destination(destination, bucketDestination),
+		]);
 
 		const backupCommand = getBackupCommand(
 			backup,

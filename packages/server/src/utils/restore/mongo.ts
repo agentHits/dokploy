@@ -2,9 +2,9 @@ import type { apiRestoreBackup } from "@dokploy/server/db/schema";
 import type { Destination } from "@dokploy/server/services/destination";
 import type { Mongo } from "@dokploy/server/services/mongo";
 import type { z } from "zod";
-import { getS3Credentials } from "../backups/utils";
+import { buildRcloneS3Command, getRcloneS3Destination } from "../backups/utils";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
-import { normalizeRestoreBackupFile, quoteRestoreShellArg } from "./safe-input";
+import { normalizeRestoreBackupFile } from "./safe-input";
 import { getRestoreCommand } from "./utils";
 
 export const restoreMongoBackup = async (
@@ -16,13 +16,13 @@ export const restoreMongoBackup = async (
 	try {
 		const { appName, databasePassword, databaseUser, serverId } = mongo;
 
-		const rcloneFlags = getS3Credentials(destination);
-		const bucketPath = `:s3:${destination.bucket}`;
 		const { objectPath } = normalizeRestoreBackupFile(backupInput.backupFile, [
 			".bson.gz",
 		]);
-		const backupPath = `${bucketPath}/${objectPath}`;
-		const rcloneCommand = `rclone copy ${rcloneFlags.join(" ")} ${quoteRestoreShellArg(backupPath)}`;
+		const backupPath = getRcloneS3Destination(destination, objectPath);
+		const rcloneCommand = buildRcloneS3Command("copy", destination, [
+			backupPath,
+		]);
 
 		const command = getRestoreCommand({
 			appName,

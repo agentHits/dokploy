@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IS_CLOUD, paths } from "@dokploy/server/constants";
 import type { Destination } from "@dokploy/server/services/destination";
-import { getS3Credentials } from "../backups/utils";
+import { buildRcloneS3Command, getRcloneS3Destination } from "../backups/utils";
 import { execAsync } from "../process/execAsync";
 import { normalizeRestoreBackupFile, quoteRestoreShellArg } from "./safe-input";
 
@@ -16,12 +16,10 @@ export const restoreWebServerBackup = async (
 		return;
 	}
 	try {
-		const rcloneFlags = getS3Credentials(destination);
-		const bucketPath = `:s3:${destination.bucket}`;
 		const { fileName, objectPath } = normalizeRestoreBackupFile(backupFile, [
 			".zip",
 		]);
-		const backupPath = `${bucketPath}/${objectPath}`;
+		const backupPath = getRcloneS3Destination(destination, objectPath);
 		const { BASE_PATH } = paths();
 
 		// Create a temporary directory outside of BASE_PATH
@@ -45,7 +43,10 @@ export const restoreWebServerBackup = async (
 			// Download backup from S3
 			emit("Downloading backup from S3...");
 			await execAsync(
-				`rclone copyto ${rcloneFlags.join(" ")} ${quoteRestoreShellArg(backupPath)} ${quoteRestoreShellArg(localBackupPath)}`,
+				buildRcloneS3Command("copyto", destination, [
+					backupPath,
+					localBackupPath,
+				]),
 			);
 
 			// List files before extraction
