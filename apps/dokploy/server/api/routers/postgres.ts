@@ -37,6 +37,7 @@ import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { buildPostgresPasswordChangeCommand } from "@/server/api/utils/database-password";
+import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
 import {
 	apiChangePostgresStatus,
 	apiCreatePostgres,
@@ -485,6 +486,7 @@ export const postgresRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.postgresId, {
 				service: ["create"],
 			});
+			await assertTargetEnvironmentAccess(ctx, input.targetEnvironmentId);
 
 			const updatedPostgres = await db
 				.update(postgresTable)

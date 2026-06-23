@@ -20,6 +20,7 @@ import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
+import { assertTargetProjectAccess } from "@/server/api/utils/placement-access";
 import {
 	apiCreateEnvironment,
 	apiDuplicateEnvironment,
@@ -67,6 +68,7 @@ export const environmentRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			try {
 				await checkEnvironmentCreationPermission(ctx, input.projectId);
+				await assertTargetProjectAccess(ctx, input.projectId);
 
 				if (input.name === "production") {
 					throw new TRPCError({

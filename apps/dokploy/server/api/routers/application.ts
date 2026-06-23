@@ -51,6 +51,7 @@ import {
 	withPermission,
 } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
+import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
 import {
 	apiCreateApplication,
 	apiDeployApplication,
@@ -895,6 +896,7 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertTargetEnvironmentAccess(ctx, input.targetEnvironmentId);
 
 			const updatedApplication = await db
 				.update(applications)

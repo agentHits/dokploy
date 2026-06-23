@@ -37,6 +37,7 @@ import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { buildMysqlPasswordChangeCommand } from "@/server/api/utils/database-password";
+import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
 import {
 	apiChangeMariaDBStatus,
 	apiCreateMariaDB,
@@ -466,6 +467,7 @@ export const mariadbRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.mariadbId, {
 				service: ["create"],
 			});
+			await assertTargetEnvironmentAccess(ctx, input.targetEnvironmentId);
 
 			const updatedMariadb = await db
 				.update(mariadbTable)

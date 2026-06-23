@@ -81,6 +81,7 @@ import { cancelDeployment, deploy } from "@/server/utils/deploy";
 import { generatePassword } from "@/templates/utils";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { audit } from "../utils/audit";
+import { assertTargetEnvironmentAccess } from "../utils/placement-access";
 
 export const composeRouter = createTRPCRouter({
 	create: protectedProcedure
@@ -774,6 +775,7 @@ export const composeRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.composeId, {
 				service: ["create"],
 			});
+			await assertTargetEnvironmentAccess(ctx, input.targetEnvironmentId);
 
 			const updatedCompose = await db
 				.update(composeTable)

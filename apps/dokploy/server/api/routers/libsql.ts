@@ -29,6 +29,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
+import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
 import { db } from "@/server/db";
 import {
 	apiChangeLibsqlStatus,
@@ -432,6 +433,7 @@ export const libsqlRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.libsqlId, {
 				service: ["create"],
 			});
+			await assertTargetEnvironmentAccess(ctx, input.targetEnvironmentId);
 
 			const updatedLibsql = await db
 				.update(libsqlTable)

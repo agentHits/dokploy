@@ -764,9 +764,8 @@ export const projectRouter = createTRPCRouter({
 					await checkPermission(ctx, { projectEnvVars: ["write"] });
 				}
 
-				const project = await updateProjectById(input.projectId, {
-					...input,
-				});
+				const { projectId, ...updateData } = input;
+				const project = await updateProjectById(projectId, updateData);
 
 				if (project) {
 					await audit(ctx, {

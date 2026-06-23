@@ -35,6 +35,7 @@ import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
+import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
 import {
 	apiChangeMongoStatus,
 	apiCreateMongo,
@@ -474,6 +475,7 @@ export const mongoRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.mongoId, {
 				service: ["create"],
 			});
+			await assertTargetEnvironmentAccess(ctx, input.targetEnvironmentId);
 
 			const updatedMongo = await db
 				.update(mongoTable)
