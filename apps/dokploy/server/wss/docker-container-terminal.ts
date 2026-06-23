@@ -55,7 +55,9 @@ export const setupDockerContainerTerminalWebSocketServer = (
 		// Default to 'sh' if no shell specified
 		const shell = activeWay || "sh";
 
-		if (!(await canAccessDockerTerminalWebSocket({ user, session }))) {
+		if (
+			!(await canAccessDockerTerminalWebSocket({ user, session, serverId }))
+		) {
 			ws.close();
 			return;
 		}

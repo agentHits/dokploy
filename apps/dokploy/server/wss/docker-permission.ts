@@ -1,13 +1,16 @@
 import { checkPermission } from "@dokploy/server/services/permission";
+import { getAccessibleServerIds } from "@dokploy/server/services/server";
 
 type DockerWebSocketAuthContext = {
 	user: { id: string } | null;
 	session: { activeOrganizationId: string } | null;
+	serverId?: string | null;
 };
 
 const canAccessDockerByPermission = async ({
 	user,
 	session,
+	serverId,
 	permission,
 }: DockerWebSocketAuthContext & {
 	permission: "read" | "execute";
@@ -24,6 +27,13 @@ const canAccessDockerByPermission = async ({
 			},
 			{ docker: [permission] },
 		);
+		if (serverId) {
+			const accessibleIds = await getAccessibleServerIds({
+				userId: user.id,
+				activeOrganizationId: session.activeOrganizationId,
+			});
+			return accessibleIds.has(serverId);
+		}
 		return true;
 	} catch {
 		return false;

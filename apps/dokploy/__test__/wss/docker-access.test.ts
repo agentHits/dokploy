@@ -6,6 +6,7 @@ import { WebSocket } from "ws";
 const mocks = vi.hoisted(() => ({
 	checkPermission: vi.fn(),
 	findServerById: vi.fn(),
+	getAccessibleServerIds: vi.fn(),
 	spawn: vi.fn(),
 	validateRequest: vi.fn(),
 }));
@@ -18,6 +19,10 @@ vi.mock("@dokploy/server", () => ({
 
 vi.mock("@dokploy/server/services/permission", () => ({
 	checkPermission: mocks.checkPermission,
+}));
+
+vi.mock("@dokploy/server/services/server", () => ({
+	getAccessibleServerIds: mocks.getAccessibleServerIds,
 }));
 
 vi.mock("node-pty", () => ({
@@ -83,6 +88,7 @@ describe("Docker WebSocket permission gate", () => {
 			session: { activeOrganizationId: "org-1" },
 		});
 		mocks.checkPermission.mockRejectedValue(new Error("Permission denied"));
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
 	});
 
 	afterEach(async () => {
@@ -115,6 +121,28 @@ describe("Docker WebSocket permission gate", () => {
 		expect(mocks.spawn).not.toHaveBeenCalled();
 	});
 
+	it("closes logs sockets before remote server lookup when server is not assigned", async () => {
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+		server = http.createServer();
+		setupDockerContainerLogsWebSocketServer(server);
+		const port = await listen(server);
+
+		await expect(
+			openAndWaitForClose(
+				port,
+				"/docker-container-logs?containerId=abc123def456&serverId=server-1",
+			),
+		).resolves.toEqual({ code: 1005, reason: "" });
+
+		expect(mocks.getAccessibleServerIds).toHaveBeenCalledWith({
+			userId: "user-1",
+			activeOrganizationId: "org-1",
+		});
+		expect(mocks.findServerById).not.toHaveBeenCalled();
+		expect(mocks.spawn).not.toHaveBeenCalled();
+	});
+
 	it("closes terminal sockets before local Docker spawn when docker.execute is denied", async () => {
 		server = http.createServer();
 		setupDockerContainerTerminalWebSocketServer(server);
@@ -134,6 +162,28 @@ describe("Docker WebSocket permission gate", () => {
 			},
 			{ docker: ["execute"] },
 		);
+		expect(mocks.findServerById).not.toHaveBeenCalled();
+		expect(mocks.spawn).not.toHaveBeenCalled();
+	});
+
+	it("closes terminal sockets before remote server lookup when server is not assigned", async () => {
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+		server = http.createServer();
+		setupDockerContainerTerminalWebSocketServer(server);
+		const port = await listen(server);
+
+		await expect(
+			openAndWaitForClose(
+				port,
+				"/docker-container-terminal?containerId=abc123def456&serverId=server-1",
+			),
+		).resolves.toEqual({ code: 1005, reason: "" });
+
+		expect(mocks.getAccessibleServerIds).toHaveBeenCalledWith({
+			userId: "user-1",
+			activeOrganizationId: "org-1",
+		});
 		expect(mocks.findServerById).not.toHaveBeenCalled();
 		expect(mocks.spawn).not.toHaveBeenCalled();
 	});

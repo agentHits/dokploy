@@ -2,10 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	checkPermission: vi.fn(),
+	getAccessibleServerIds: vi.fn(),
 }));
 
 vi.mock("@dokploy/server/services/permission", () => ({
 	checkPermission: mocks.checkPermission,
+}));
+
+vi.mock("@dokploy/server/services/server", () => ({
+	getAccessibleServerIds: mocks.getAccessibleServerIds,
 }));
 
 const { canAccessDockerLogsWebSocket, canAccessDockerTerminalWebSocket } =
@@ -14,6 +19,7 @@ const { canAccessDockerLogsWebSocket, canAccessDockerTerminalWebSocket } =
 describe("Docker WebSocket split permission helpers", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mocks.getAccessibleServerIds.mockReset();
 	});
 
 	it("rejects unauthenticated websocket requests", async () => {
@@ -43,6 +49,7 @@ describe("Docker WebSocket split permission helpers", () => {
 			},
 			{ docker: ["read"] },
 		);
+		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
 	});
 
 	it("allows terminal callers with docker.execute permission", async () => {
@@ -62,6 +69,64 @@ describe("Docker WebSocket split permission helpers", () => {
 			},
 			{ docker: ["execute"] },
 		);
+		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
+	});
+
+	it("allows remote log callers only for accessible servers", async () => {
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
+
+		await expect(
+			canAccessDockerLogsWebSocket({
+				user: { id: "user-1" },
+				session: { activeOrganizationId: "org-1" },
+				serverId: "server-1",
+			}),
+		).resolves.toBe(true);
+
+		expect(mocks.getAccessibleServerIds).toHaveBeenCalledWith({
+			userId: "user-1",
+			activeOrganizationId: "org-1",
+		});
+	});
+
+	it("rejects remote log callers for inaccessible servers", async () => {
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			canAccessDockerLogsWebSocket({
+				user: { id: "user-1" },
+				session: { activeOrganizationId: "org-1" },
+				serverId: "server-1",
+			}),
+		).resolves.toBe(false);
+	});
+
+	it("allows remote terminal callers only for accessible servers", async () => {
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
+
+		await expect(
+			canAccessDockerTerminalWebSocket({
+				user: { id: "user-1" },
+				session: { activeOrganizationId: "org-1" },
+				serverId: "server-1",
+			}),
+		).resolves.toBe(true);
+	});
+
+	it("rejects remote terminal callers for inaccessible servers", async () => {
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			canAccessDockerTerminalWebSocket({
+				user: { id: "user-1" },
+				session: { activeOrganizationId: "org-1" },
+				serverId: "server-1",
+			}),
+		).resolves.toBe(false);
 	});
 
 	it("rejects callers without docker.read permission for logs", async () => {
