@@ -15,14 +15,16 @@ vi.mock("@dokploy/server/utils/process/execAsync", () => ({
 	execAsyncRemote: mocks.execAsyncRemote,
 }));
 
-const { readConfigInPath, writeTraefikConfigInPath } = await import(
-	"@dokploy/server/utils/traefik/application"
-);
+const { readConfigInPath, writeTraefikConfigInPath, writeTraefikConfigRemote } =
+	await import("@dokploy/server/utils/traefik/application");
 
 describe("Traefik file path boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mocks.paths.mockImplementation((remote?: boolean) => ({
+			DYNAMIC_TRAEFIK_PATH: remote
+				? "/etc/dokploy/traefik/dynamic"
+				: "/var/lib/dokploy/traefik/dynamic",
 			MAIN_TRAEFIK_PATH: remote
 				? "/etc/dokploy/traefik"
 				: "/var/lib/dokploy/traefik",
@@ -82,6 +84,57 @@ describe("Traefik file path boundary", () => {
 		const writeCommand = mocks.execAsyncRemote.mock.calls.at(-1)?.[1];
 		expect(writeCommand).toContain(
 			`base64 -d > "/etc/dokploy/traefik/dynamic/app'\\$(id).yml"`,
+		);
+	});
+
+	it("writes remote Traefik YAML as encoded data instead of raw shell text", async () => {
+		await writeTraefikConfigRemote(
+			{
+				http: {
+					middlewares: {
+						"redirect-app-1": {
+							redirectRegex: {
+								regex: "Host(`example.com`)'; touch /tmp/pwn #",
+								replacement: "https://example.com/$1$(id)",
+								permanent: true,
+							},
+						},
+					},
+				},
+			},
+			"middlewares",
+			"server-1",
+		);
+
+		const writeCommand = mocks.execAsyncRemote.mock.calls.at(-1)?.[1] as string;
+		expect(writeCommand).toMatch(
+			/^echo "[A-Za-z0-9+/=]+" \| base64 -d > \/etc\/dokploy\/traefik\/dynamic\/middlewares\.yml$/,
+		);
+		expect(writeCommand).not.toContain("echo '");
+		expect(writeCommand).not.toContain("touch /tmp/pwn");
+		expect(writeCommand).not.toContain("$(id)");
+
+		const encodedPayload = writeCommand.match(/^echo "([^"]+)"/)?.[1] ?? "";
+		const decodedPayload = Buffer.from(encodedPayload, "base64").toString(
+			"utf8",
+		);
+		expect(decodedPayload).toContain("touch /tmp/pwn");
+		expect(decodedPayload).toContain("$(id)");
+	});
+
+	it("quotes remote Traefik YAML destination paths before shell execution", async () => {
+		await writeTraefikConfigRemote(
+			{ http: { middlewares: {} } },
+			"middlewares'$(id)",
+			"server-1",
+		);
+
+		const writeCommand = mocks.execAsyncRemote.mock.calls.at(-1)?.[1] as string;
+		expect(writeCommand).toContain(
+			`base64 -d > "/etc/dokploy/traefik/dynamic/middlewares'\\$(id).yml"`,
+		);
+		expect(writeCommand).not.toContain(
+			"> /etc/dokploy/traefik/dynamic/middlewares'$(id).yml",
 		);
 	});
 });
