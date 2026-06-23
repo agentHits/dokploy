@@ -56,6 +56,8 @@ const mocks = vi.hoisted(() => ({
 	writeTraefikSetup: vi.fn(),
 }));
 
+const redactWebServerSettings = <T>(settings: T) => settings;
+
 vi.mock("@dokploy/server", () => ({
 	CLEANUP_CRON_JOB: "0 0 * * *",
 	DEFAULT_UPDATE_DATA: {},
@@ -90,6 +92,7 @@ vi.mock("@dokploy/server", () => ({
 	readEnvironmentVariables: mocks.readEnvironmentVariables,
 	readMainConfig: mocks.readMainConfig,
 	readMonitoringConfig: mocks.readMonitoringConfig,
+	redactWebServerSettings,
 	readPorts: mocks.readPorts,
 	recreateDirectory: mocks.recreateDirectory,
 	reloadDockerResource: mocks.reloadDockerResource,

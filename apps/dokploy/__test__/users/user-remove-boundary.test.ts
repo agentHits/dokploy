@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	audit: vi.fn(),
+	checkPermission: vi.fn(),
 	createApiKey: vi.fn(),
 	createOrganizationUserWithCredentials: vi.fn(),
 	findNotificationById: vi.fn(),
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 	getDokployUrl: vi.fn(),
 	getUserByToken: vi.fn(),
 	getWebServerSettings: vi.fn(),
+	invitationFindFirst: vi.fn(),
 	memberFindFirst: vi.fn(),
 	memberFindMany: vi.fn(),
 	removeUserById: vi.fn(),
@@ -44,6 +46,9 @@ vi.mock("@dokploy/server/db", () => ({
 				findFirst: mocks.memberFindFirst,
 				findMany: mocks.memberFindMany,
 			},
+			invitation: {
+				findFirst: mocks.invitationFindFirst,
+			},
 		},
 	},
 }));
@@ -53,6 +58,7 @@ vi.mock("@dokploy/server/lib/auth", () => ({
 }));
 
 vi.mock("@dokploy/server/services/permission", () => ({
+	checkPermission: mocks.checkPermission,
 	hasPermission: vi.fn(),
 	resolvePermissions: vi.fn(),
 }));
@@ -89,6 +95,7 @@ const createCaller = (role: "owner" | "admin" | "member" = "owner") =>
 describe("user.remove membership boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mocks.checkPermission.mockResolvedValue(undefined);
 		mocks.memberFindFirst.mockResolvedValue({
 			id: "member-active",
 			userId: "target-1",
@@ -101,7 +108,25 @@ describe("user.remove membership boundary", () => {
 		mocks.memberFindMany.mockResolvedValue([
 			{ id: "member-active", organizationId: "org-1", userId: "target-1" },
 		]);
+		mocks.findNotificationById.mockResolvedValue({
+			notificationId: "notification-1",
+			organizationId: "org-1",
+			email: {
+				emailId: "email-1",
+				toAddresses: [],
+			},
+			resend: null,
+		});
+		mocks.findOrganizationById.mockResolvedValue({ name: "Org One" });
+		mocks.getDokployUrl.mockResolvedValue("https://dokploy.example.com");
+		mocks.invitationFindFirst.mockResolvedValue({
+			id: "invitation-1",
+			email: "invitee@example.com",
+			organizationId: "org-1",
+		});
 		mocks.removeUserById.mockResolvedValue(true);
+		mocks.renderInvitationEmail.mockResolvedValue("<p>invite</p>");
+		mocks.sendEmailNotification.mockResolvedValue(undefined);
 	});
 
 	it("rejects deleting a global user that still belongs to another organization", async () => {
@@ -133,6 +158,61 @@ describe("user.remove membership boundary", () => {
 				resourceId: "target-1",
 				resourceType: "user",
 			}),
+		);
+	});
+
+	it("rejects resending invitations through another organization's notification provider", async () => {
+		mocks.findNotificationById.mockResolvedValue({
+			notificationId: "notification-other",
+			organizationId: "org-2",
+			email: {
+				emailId: "email-1",
+				toAddresses: [],
+			},
+			resend: null,
+		});
+
+		await expect(
+			createCaller().sendInvitation({
+				invitationId: "invitation-1",
+				notificationId: "notification-other",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.invitationFindFirst).not.toHaveBeenCalled();
+		expect(mocks.sendEmailNotification).not.toHaveBeenCalled();
+	});
+
+	it("rejects resending invitations for tokens outside the active organization", async () => {
+		mocks.invitationFindFirst.mockResolvedValue(undefined);
+
+		await expect(
+			createCaller().sendInvitation({
+				invitationId: "invitation-other",
+				notificationId: "notification-1",
+			}),
+		).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+		expect(mocks.sendEmailNotification).not.toHaveBeenCalled();
+	});
+
+	it("sends invitations only after notification and invitation match the active organization", async () => {
+		await expect(
+			createCaller().sendInvitation({
+				invitationId: "invitation-1",
+				notificationId: "notification-1",
+			}),
+		).resolves.toBe(
+			"https://dokploy.example.com/invitation?token=invitation-1",
+		);
+
+		expect(mocks.invitationFindFirst).toHaveBeenCalled();
+		expect(mocks.sendEmailNotification).toHaveBeenCalledWith(
+			expect.objectContaining({
+				toAddresses: ["invitee@example.com"],
+			}),
+			expect.stringContaining("Org One"),
+			"<p>invite</p>",
 		);
 	});
 });

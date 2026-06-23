@@ -13,6 +13,11 @@ import {
 	buildRcloneS3Command,
 	getRcloneS3Destination,
 } from "@dokploy/server/utils/backups/utils";
+import {
+	isRedactedSecretValue,
+	redactSecretFields,
+	redactSecretFieldsList,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { desc, eq } from "drizzle-orm";
 import { createTRPCRouter, withPermission } from "@/server/api/trpc";
@@ -118,13 +123,14 @@ export const destinationRouter = createTRPCRouter({
 					message: "You are not allowed to access this destination",
 				});
 			}
-			return destination;
+			return redactSecretFields(destination, ["secretAccessKey"]);
 		}),
 	all: withPermission("destination", "read").query(async ({ ctx }) => {
-		return await db.query.destinations.findMany({
+		const destinationList = await db.query.destinations.findMany({
 			where: eq(destinations.organizationId, ctx.session.activeOrganizationId),
 			orderBy: [desc(destinations.createdAt)],
 		});
+		return redactSecretFieldsList(destinationList, ["secretAccessKey"]);
 	}),
 	remove: withPermission("destination", "delete")
 		.input(apiRemoveDestination)
@@ -164,8 +170,12 @@ export const destinationRouter = createTRPCRouter({
 						message: "You are not allowed to update this destination",
 					});
 				}
+				const secretAccessKey = isRedactedSecretValue(input.secretAccessKey)
+					? destination.secretAccessKey
+					: input.secretAccessKey;
 				const result = await updateDestinationById(input.destinationId, {
 					...input,
+					secretAccessKey,
 					organizationId: ctx.session.activeOrganizationId,
 				});
 				await audit(ctx, {
@@ -174,7 +184,7 @@ export const destinationRouter = createTRPCRouter({
 					resourceId: input.destinationId,
 					resourceName: input.name,
 				});
-				return result;
+				return redactSecretFields(result, ["secretAccessKey"]);
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",

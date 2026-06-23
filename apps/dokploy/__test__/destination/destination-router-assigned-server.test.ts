@@ -1,9 +1,11 @@
+import { REDACTED_SECRET_VALUE } from "@dokploy/server/utils/security/redaction";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	audit: vi.fn(),
 	checkPermission: vi.fn(),
 	createDestination: vi.fn(),
+	destinationFindMany: vi.fn(),
 	execAsync: vi.fn(),
 	execAsyncRemote: vi.fn(),
 	findDestinationById: vi.fn(),
@@ -27,7 +29,7 @@ vi.mock("@dokploy/server/db", () => ({
 	db: {
 		query: {
 			destinations: {
-				findMany: vi.fn(),
+				findMany: mocks.destinationFindMany,
 			},
 		},
 	},
@@ -76,9 +78,85 @@ describe("destination router assigned-server boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.destinationFindMany.mockResolvedValue([]);
 		mocks.execAsync.mockResolvedValue({ stdout: "", stderr: "" });
 		mocks.execAsyncRemote.mockResolvedValue({ stdout: "", stderr: "" });
+		mocks.findDestinationById.mockResolvedValue({
+			destinationId: "destination-1",
+			name: "destination",
+			provider: "AWS",
+			accessKey: "AKIA",
+			secretAccessKey: "stored-secret",
+			bucket: "bucket",
+			region: "us-east-1",
+			endpoint: "https://s3.example.com",
+			additionalFlags: [],
+			organizationId: "org-1",
+		});
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
+	});
+
+	it("redacts destination secrets from one and all", async () => {
+		mocks.destinationFindMany.mockResolvedValue([
+			{
+				destinationId: "destination-1",
+				name: "destination",
+				provider: "AWS",
+				accessKey: "AKIA",
+				secretAccessKey: "stored-secret",
+				bucket: "bucket",
+				region: "us-east-1",
+				endpoint: "https://s3.example.com",
+				additionalFlags: [],
+				organizationId: "org-1",
+			},
+		]);
+
+		await expect(
+			createCaller().one({ destinationId: "destination-1" }),
+		).resolves.toMatchObject({
+			secretAccessKey: REDACTED_SECRET_VALUE,
+			accessKey: "AKIA",
+		});
+
+		const [result] = await createCaller().all();
+		expect(result?.secretAccessKey).toBe(REDACTED_SECRET_VALUE);
+		expect(result?.bucket).toBe("bucket");
+	});
+
+	it("preserves stored destination secrets when update receives the redacted placeholder", async () => {
+		mocks.updateDestinationById.mockResolvedValue({
+			destinationId: "destination-1",
+			name: "destination",
+			provider: "AWS",
+			accessKey: "AKIA",
+			secretAccessKey: "stored-secret",
+			bucket: "bucket",
+			region: "us-east-1",
+			endpoint: "https://s3.example.com",
+			additionalFlags: [],
+			organizationId: "org-1",
+		});
+
+		const result = await createCaller().update({
+			destinationId: "destination-1",
+			name: "destination",
+			provider: "AWS",
+			accessKey: "AKIA",
+			secretAccessKey: REDACTED_SECRET_VALUE,
+			bucket: "bucket",
+			region: "us-east-1",
+			endpoint: "https://s3.example.com",
+			additionalFlags: [],
+		});
+
+		expect(mocks.updateDestinationById).toHaveBeenCalledWith(
+			"destination-1",
+			expect.objectContaining({
+				secretAccessKey: "stored-secret",
+			}),
+		);
+		expect(result?.secretAccessKey).toBe(REDACTED_SECRET_VALUE);
 	});
 
 	it("denies cloud connection tests on inaccessible servers before remote rclone", async () => {

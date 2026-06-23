@@ -1,3 +1,4 @@
+import { REDACTED_SECRET_VALUE } from "@dokploy/server/utils/security/redaction";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const escapeShell = (value: string | undefined) =>
@@ -9,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 	execAsyncRemote: vi.fn(),
 	execFileAsync: vi.fn(),
 	findRegistryById: vi.fn(),
+	findRegistryMany: vi.fn(),
 	findRegistryRecord: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
 	removeRegistry: vi.fn(),
@@ -40,6 +42,7 @@ vi.mock("@dokploy/server/db", () => ({
 		query: {
 			registry: {
 				findFirst: mocks.findRegistryRecord,
+				findMany: mocks.findRegistryMany,
 			},
 		},
 	},
@@ -80,7 +83,57 @@ describe("registry router remote test login boundary", () => {
 		mocks.checkPermission.mockResolvedValue(undefined);
 		mocks.execAsyncRemote.mockResolvedValue("");
 		mocks.execFileAsync.mockResolvedValue("");
+		mocks.findRegistryMany.mockResolvedValue([]);
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
+	});
+
+	it("redacts stored registry passwords from list reads", async () => {
+		mocks.findRegistryMany.mockResolvedValue([
+			{
+				registryId: "registry-1",
+				registryName: "registry",
+				registryUrl: "registry.example.com",
+				registryType: "cloud",
+				username: "user",
+				password: "registry-secret",
+				organizationId: "org-1",
+			},
+		]);
+
+		const [result] = await createCaller().all();
+
+		expect(result?.password).toBe(REDACTED_SECRET_VALUE);
+		expect(result?.username).toBe("user");
+	});
+
+	it("does not persist a redacted registry password placeholder on update", async () => {
+		mocks.findRegistryById.mockResolvedValue({
+			registryId: "registry-1",
+			registryName: "registry",
+			registryUrl: "registry.example.com",
+			registryType: "cloud",
+			username: "user",
+			organizationId: "org-1",
+		});
+		mocks.updateRegistry.mockResolvedValue({ registryId: "registry-1" });
+
+		await expect(
+			createCaller().update({
+				registryId: "registry-1",
+				registryName: "registry",
+				registryUrl: "registry.example.com",
+				registryType: "cloud",
+				username: "user",
+				password: REDACTED_SECRET_VALUE,
+			}),
+		).resolves.toBe(true);
+
+		expect(mocks.updateRegistry).toHaveBeenCalledWith(
+			"registry-1",
+			expect.not.objectContaining({
+				password: REDACTED_SECRET_VALUE,
+			}),
+		);
 	});
 
 	it("tests ad-hoc remote registry credentials with a shell-escaped docker login command", async () => {

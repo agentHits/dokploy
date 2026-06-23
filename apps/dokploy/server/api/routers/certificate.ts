@@ -7,6 +7,11 @@ import {
 	updateCertificate,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
+import {
+	isRedactedSecretValue,
+	redactSecretFields,
+	redactSecretFieldsList,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import { createTRPCRouter, withPermission } from "@/server/api/trpc";
@@ -70,7 +75,7 @@ export const certificateRouter = createTRPCRouter({
 				});
 			}
 			await assertCertificateServerAccess(ctx, certificates.serverId);
-			return certificates;
+			return redactSecretFields(certificates, ["privateKey"]);
 		}),
 	remove: withPermission("certificate", "delete")
 		.input(apiFindCertificate)
@@ -100,9 +105,12 @@ export const certificateRouter = createTRPCRouter({
 			},
 		});
 		const accessibleIds = await getAccessibleServerIds(ctx.session);
-		return allCertificates.filter(
-			(certificate) =>
-				!certificate.serverId || accessibleIds.has(certificate.serverId),
+		return redactSecretFieldsList(
+			allCertificates.filter(
+				(certificate) =>
+					!certificate.serverId || accessibleIds.has(certificate.serverId),
+			),
+			["privateKey"],
 		);
 	}),
 	update: withPermission("certificate", "update")
@@ -116,10 +124,15 @@ export const certificateRouter = createTRPCRouter({
 				});
 			}
 			await assertCertificateServerAccess(ctx, certificate.serverId);
-			return await updateCertificate(input.certificateId, {
+			const updates = {
 				name: input.name,
 				certificateData: input.certificateData,
 				privateKey: input.privateKey,
-			});
+			};
+			if (isRedactedSecretValue(updates.privateKey)) {
+				delete updates.privateKey;
+			}
+			const updated = await updateCertificate(input.certificateId, updates);
+			return redactSecretFields(updated, ["privateKey"]);
 		}),
 });

@@ -6,6 +6,10 @@ import {
 	updateSSHKeyById,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
+import {
+	redactSecretFields,
+	redactSecretFieldsList,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { desc, eq } from "drizzle-orm";
 import {
@@ -79,13 +83,14 @@ export const sshRouter = createTRPCRouter({
 					message: "You are not allowed to access this SSH key",
 				});
 			}
-			return sshKey;
+			return redactSecretFields(sshKey, ["privateKey"]);
 		}),
 	all: withPermission("sshKeys", "read").query(async ({ ctx }) => {
-		return await db.query.sshKeys.findMany({
+		const sshKeyList = await db.query.sshKeys.findMany({
 			where: eq(sshKeys.organizationId, ctx.session.activeOrganizationId),
 			orderBy: desc(sshKeys.createdAt),
 		});
+		return redactSecretFieldsList(sshKeyList, ["privateKey"]);
 	}),
 	allForApps: protectedProcedure.query(async ({ ctx }) => {
 		return await db.query.sshKeys.findMany({
@@ -120,7 +125,7 @@ export const sshRouter = createTRPCRouter({
 					resourceId: sshKey.sshKeyId,
 					resourceName: sshKey.name,
 				});
-				return result;
+				return redactSecretFields(result, ["privateKey"]);
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",

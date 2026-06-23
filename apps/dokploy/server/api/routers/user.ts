@@ -743,13 +743,29 @@ export const userRouter = createTRPCRouter({
 			}
 
 			const notification = await findNotificationById(input.notificationId);
+			if (notification.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not allowed to access this notification",
+				});
+			}
 
 			const email = notification.email;
 			const resend = notification.resend;
 
 			const currentInvitation = await db.query.invitation.findFirst({
-				where: eq(invitation.id, input.invitationId),
+				where: and(
+					eq(invitation.id, input.invitationId),
+					eq(invitation.organizationId, ctx.session.activeOrganizationId),
+				),
 			});
+
+			if (!currentInvitation) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Invitation not found",
+				});
+			}
 
 			if (!email && !resend) {
 				throw new TRPCError({

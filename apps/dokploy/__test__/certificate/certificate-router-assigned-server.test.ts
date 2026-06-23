@@ -1,3 +1,4 @@
+import { REDACTED_SECRET_VALUE } from "@dokploy/server/utils/security/redaction";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -80,18 +81,24 @@ describe("certificate router assigned-server boundary", () => {
 			{
 				certificateId: "certificate-1",
 				name: "accessible",
+				certificateData: "certificate-data",
+				privateKey: "private-key",
 				organizationId: "org-1",
 				serverId: "server-1",
 			},
 			{
 				certificateId: "certificate-2",
 				name: "inaccessible",
+				certificateData: "certificate-data",
+				privateKey: "private-key",
 				organizationId: "org-1",
 				serverId: "server-2",
 			},
 			{
 				certificateId: "certificate-local",
 				name: "local",
+				certificateData: "certificate-data",
+				privateKey: "private-key",
 				organizationId: "org-1",
 				serverId: null,
 			},
@@ -99,6 +106,8 @@ describe("certificate router assigned-server boundary", () => {
 		mocks.findCertificateById.mockResolvedValue({
 			certificateId: "certificate-1",
 			name: "certificate",
+			certificateData: "certificate-data",
+			privateKey: "private-key",
 			organizationId: "org-1",
 			serverId: "server-1",
 		});
@@ -107,9 +116,45 @@ describe("certificate router assigned-server boundary", () => {
 		mocks.updateCertificate.mockResolvedValue({
 			certificateId: "certificate-1",
 			name: "updated",
+			certificateData: "certificate-data",
+			privateKey: "private-key",
 			organizationId: "org-1",
 			serverId: "server-1",
 		});
+	});
+
+	it("redacts certificate private keys from one and all", async () => {
+		await expect(
+			createCaller().one({ certificateId: "certificate-1" }),
+		).resolves.toMatchObject({
+			certificateData: "certificate-data",
+			privateKey: REDACTED_SECRET_VALUE,
+		});
+
+		const results = await createCaller().all();
+		expect(results).toEqual([
+			expect.objectContaining({
+				certificateId: "certificate-1",
+				privateKey: REDACTED_SECRET_VALUE,
+			}),
+			expect.objectContaining({
+				certificateId: "certificate-local",
+				privateKey: REDACTED_SECRET_VALUE,
+			}),
+		]);
+	});
+
+	it("preserves stored certificate private keys when update receives the redacted placeholder", async () => {
+		const result = await createCaller().update({
+			certificateId: "certificate-1",
+			name: "updated",
+			privateKey: REDACTED_SECRET_VALUE,
+		});
+
+		expect(mocks.updateCertificate.mock.calls[0]?.[1]).not.toHaveProperty(
+			"privateKey",
+		);
+		expect(result.privateKey).toBe(REDACTED_SECRET_VALUE);
 	});
 
 	it("denies cloud certificate creation on inaccessible servers before file writes", async () => {

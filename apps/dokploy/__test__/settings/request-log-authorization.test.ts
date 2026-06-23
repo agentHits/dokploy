@@ -1,5 +1,35 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const REDACTED_SECRET_VALUE = "__DOKPLOY_REDACTED_SECRET__";
+
+const redactWebServerSettings = <
+	T extends { sshPrivateKey?: unknown; metricsConfig?: any } | null,
+>(
+	settings: T,
+) => {
+	if (!settings) {
+		return settings;
+	}
+
+	return {
+		...settings,
+		sshPrivateKey: settings.sshPrivateKey
+			? REDACTED_SECRET_VALUE
+			: settings.sshPrivateKey,
+		metricsConfig: settings.metricsConfig
+			? {
+					...settings.metricsConfig,
+					server: {
+						...settings.metricsConfig.server,
+						token: settings.metricsConfig.server?.token
+							? REDACTED_SECRET_VALUE
+							: settings.metricsConfig.server?.token,
+					},
+				}
+			: settings.metricsConfig,
+	};
+};
+
 const mocks = vi.hoisted(() => ({
 	audit: vi.fn(),
 	checkGPUStatus: vi.fn(),
@@ -89,6 +119,7 @@ vi.mock("@dokploy/server", () => ({
 	readEnvironmentVariables: mocks.readEnvironmentVariables,
 	readMainConfig: mocks.readMainConfig,
 	readMonitoringConfig: mocks.readMonitoringConfig,
+	redactWebServerSettings,
 	readPorts: mocks.readPorts,
 	recreateDirectory: mocks.recreateDirectory,
 	reloadDockerResource: mocks.reloadDockerResource,
@@ -195,6 +226,43 @@ describe("settings request log authorization", () => {
 
 		expect(mocks.readMonitoringConfig).not.toHaveBeenCalled();
 		expect(mocks.parseRawConfig).not.toHaveBeenCalled();
+	});
+
+	it("redacts host SSH key and metrics token from web server settings reads", async () => {
+		mocks.getWebServerSettings.mockResolvedValue({
+			id: "settings-1",
+			serverIp: "203.0.113.10",
+			sshPrivateKey: "host-private-key",
+			metricsConfig: {
+				server: {
+					type: "Dokploy",
+					refreshRate: 60,
+					port: 4500,
+					token: "metrics-token",
+					urlCallback:
+						"https://dokploy.example.com/api/trpc/notification.receiveNotification",
+					retentionDays: 7,
+					cronJob: "0 0 * * *",
+					thresholds: {
+						cpu: 80,
+						memory: 80,
+					},
+				},
+				containers: {
+					refreshRate: 60,
+					services: {
+						include: [],
+						exclude: [],
+					},
+				},
+			},
+		});
+
+		const result = await createCaller("member").getWebServerSettings();
+
+		expect(result?.sshPrivateKey).toBe(REDACTED_SECRET_VALUE);
+		expect(result?.metricsConfig?.server.token).toBe(REDACTED_SECRET_VALUE);
+		expect(result?.serverIp).toBe("203.0.113.10");
 	});
 
 	it("denies request logging status reads to authenticated members before reading config", async () => {

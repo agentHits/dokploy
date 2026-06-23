@@ -10,6 +10,10 @@ import {
 	updateRegistry,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
+import {
+	isRedactedSecretValue,
+	redactSecretFieldsList,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import { audit } from "@/server/api/utils/audit";
@@ -109,8 +113,12 @@ export const registryRouter = createTRPCRouter({
 					message: "You are not allowed to update this registry",
 				});
 			}
+			const updateData = { ...rest };
+			if (isRedactedSecretValue(updateData.password)) {
+				delete updateData.password;
+			}
 			const application = await updateRegistry(registryId, {
-				...rest,
+				...updateData,
 			});
 
 			if (!application) {
@@ -132,7 +140,7 @@ export const registryRouter = createTRPCRouter({
 		const registryResponse = await db.query.registry.findMany({
 			where: eq(registry.organizationId, ctx.session.activeOrganizationId),
 		});
-		return registryResponse;
+		return redactSecretFieldsList(registryResponse, ["password"]);
 	}),
 	one: withPermission("registry", "read")
 		.input(apiFindOneRegistry)

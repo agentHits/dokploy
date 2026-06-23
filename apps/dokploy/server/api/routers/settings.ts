@@ -34,6 +34,7 @@ import {
 	readMonitoringConfig,
 	readPorts,
 	recreateDirectory,
+	redactWebServerSettings,
 	reloadDockerResource,
 	sendDockerCleanupNotifications,
 	setupGPUSupport,
@@ -113,7 +114,7 @@ export const settingsRouter = createTRPCRouter({
 			return null;
 		}
 		const settings = await getWebServerSettings();
-		return settings;
+		return redactWebServerSettings(settings);
 	}),
 	reloadServer: adminProcedure.mutation(async ({ ctx }) => {
 		if (IS_CLOUD) {
@@ -384,7 +385,7 @@ export const settingsRouter = createTRPCRouter({
 				resourceType: "settings",
 				resourceName: "assign-domain-server",
 			});
-			return settings;
+			return redactWebServerSettings(settings);
 		}),
 	cleanSSHPrivateKey: adminProcedure.mutation(async ({ ctx }) => {
 		if (IS_CLOUD) {
@@ -728,7 +729,7 @@ export const settingsRouter = createTRPCRouter({
 				resourceType: "settings",
 				resourceName: "server-ip",
 			});
-			return settings;
+			return redactWebServerSettings(settings);
 		}),
 
 	getOpenApiDocument: protectedProcedure.query(

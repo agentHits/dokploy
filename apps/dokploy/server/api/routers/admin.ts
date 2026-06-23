@@ -1,6 +1,8 @@
 import {
 	getWebServerSettings,
 	IS_CLOUD,
+	redactWebServerSettings,
+	resolveWebServerMetricsConfigUpdate,
 	setupWebMonitoring,
 	updateWebServerSettings,
 } from "@dokploy/server";
@@ -20,26 +22,32 @@ export const adminRouter = createTRPCRouter({
 					});
 				}
 
+				const currentSettings = await getWebServerSettings();
+				const metricsConfig = resolveWebServerMetricsConfigUpdate(
+					input.metricsConfig,
+					currentSettings?.metricsConfig,
+				);
+
 				await updateWebServerSettings({
 					metricsConfig: {
 						server: {
 							type: "Dokploy",
-							refreshRate: input.metricsConfig.server.refreshRate,
-							port: input.metricsConfig.server.port,
-							token: input.metricsConfig.server.token,
-							cronJob: input.metricsConfig.server.cronJob,
-							urlCallback: input.metricsConfig.server.urlCallback,
-							retentionDays: input.metricsConfig.server.retentionDays,
+							refreshRate: metricsConfig.server.refreshRate,
+							port: metricsConfig.server.port,
+							token: metricsConfig.server.token,
+							cronJob: metricsConfig.server.cronJob,
+							urlCallback: metricsConfig.server.urlCallback,
+							retentionDays: metricsConfig.server.retentionDays,
 							thresholds: {
-								cpu: input.metricsConfig.server.thresholds.cpu,
-								memory: input.metricsConfig.server.thresholds.memory,
+								cpu: metricsConfig.server.thresholds.cpu,
+								memory: metricsConfig.server.thresholds.memory,
 							},
 						},
 						containers: {
-							refreshRate: input.metricsConfig.containers.refreshRate,
+							refreshRate: metricsConfig.containers.refreshRate,
 							services: {
-								include: input.metricsConfig.containers.services.include || [],
-								exclude: input.metricsConfig.containers.services.exclude || [],
+								include: metricsConfig.containers.services.include || [],
+								exclude: metricsConfig.containers.services.exclude || [],
 							},
 						},
 					},
@@ -47,7 +55,7 @@ export const adminRouter = createTRPCRouter({
 
 				await setupWebMonitoring();
 				const settings = await getWebServerSettings();
-				return settings;
+				return redactWebServerSettings(settings);
 			} catch (error) {
 				throw error;
 			}
