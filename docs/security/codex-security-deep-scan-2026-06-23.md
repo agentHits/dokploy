@@ -34,6 +34,7 @@
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations; related surfaces still need revalidation. |
 | F-14 | Remediated after scan | Commits `3f9c68cad` and `87cce3235` secured target project/environment/server/service placement checks, project/environment ownership-field mass-assignment boundaries, project duplicate selected-service authorization, and volume-backup service binding reassignment checks with focused regression tests. |
 | F-15 | Remediated after scan | Commit `1f1f1b676` restricted request-log reads and logging controls to the admin settings boundary, aligned Requests navigation/page gating, and added focused regression tests. |
+| F-16 | Remediated after scan | Commit `6ef8254ad` added DNS-resolution guards for configurable outbound AI, notification, and Git provider targets with focused deterministic lookup regression tests. |
 
 ## Why This Is Redacted
 
