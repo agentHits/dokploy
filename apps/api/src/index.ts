@@ -4,6 +4,7 @@ import "dotenv/config";
 import { zValidator } from "@hono/zod-validator";
 import { Inngest } from "inngest";
 import { serve as serveInngest } from "inngest/hono";
+import { isValidApiKey } from "./auth.js";
 import { logger } from "./logger.js";
 import {
 	cancelDeploymentSchema,
@@ -89,7 +90,7 @@ app.use(async (c, next) => {
 
 	const authHeader = c.req.header("X-API-Key");
 
-	if (process.env.API_KEY !== authHeader) {
+	if (!isValidApiKey(process.env.API_KEY, authHeader)) {
 		return c.json({ message: "Invalid API Key" }, 403);
 	}
 
