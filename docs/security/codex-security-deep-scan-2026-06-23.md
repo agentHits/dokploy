@@ -29,6 +29,7 @@
 | F-09 | Remediated after scan | Commit `c3333c886` constrained bind mount host paths to service-owned Dokploy directories at create/update time and before Docker mount generation, with focused regression tests for unsafe paths, persisted rows, compose context, exact service roots, and symlink escapes. |
 | F-10 | Remediated after scan | Commit `bfca7226b` split read-only Docker/server access from privileged Docker lifecycle, inspect, exec, file upload, removal, and server terminal permissions with focused regression tests. |
 | F-11 | Remediated after scan | Commit `35cca57dd` secured Docker image pull command boundaries for application Docker provider and remote database deploy pull paths with focused regression tests. |
+| F-12 | Remediated after scan | Commit `9d15d5a3b` secured backup destination ownership checks before backup and volume-backup create/update persistence and scheduler side effects with focused regression tests. |
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations; related surfaces still need revalidation. |
 
 ## Why This Is Redacted
