@@ -63,7 +63,11 @@ Current handling model:
 
 The internal scan was static and intentionally did not run destructive exploit
 payloads, mutate production/VPS infrastructure, or perform live Docker/SSH
-attacks. Runtime verification is handled per remediation slice.
+attacks. Runtime verification was handled per remediation slice. After the final
+recorded remediation set, the local Dokploy Vitest suite excluding the real
+deploy file passed on 2026-06-23 (`94 files / 820 tests`). Remaining confidence
+gaps are live VPS/production deploy smoke, exhaustive browser role-matrix smoke,
+and a fresh independent deep source scan after remediation.
 
 ## Disclosure Notes
 

@@ -104,11 +104,16 @@ role-matrix, or real deploy smoke tests.
 
 ## Residual Verification Gaps
 
-- No real VPS or Linux Docker deploy smoke was completed for the final scan tail.
-- No browser role-matrix auth smoke was completed for every reported route.
+- No live VPS or production deploy smoke was completed after the final
+  remediation set. The local post-remediation Dokploy Vitest suite excluding the
+  real deploy file passed on 2026-06-23 (`94 files / 820 tests`).
+- No exhaustive browser role-matrix auth smoke was completed for every reported
+  route.
 - No destructive exploit payloads were executed against live Docker or SSH targets.
-- Static source findings still require per-slice runtime or test validation while
-  being remediated.
+- The public F-01 through F-16 entries have focused per-slice regression
+  evidence recorded in the remediation commits. Remaining confidence gaps are a
+  fresh independent deep source scan and live runtime/deploy/browser smoke, not
+  in-progress remediation status.
 
 ## Canonical Local Artifacts
 
