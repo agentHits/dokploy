@@ -65,7 +65,7 @@ role-matrix, or real deploy smoke tests.
 | F-11 | High | High | Docker image pull command boundary | Remediated after scan |
 | F-12 | Medium | Medium | Backup destination ownership boundary | Remediated after scan |
 | F-13 | Medium | Medium | GitHub App callback state boundary | Remediated after scan |
-| F-14 | Medium | Medium | Placement and ownership assignment boundary | Partially remediated after scan |
+| F-14 | Medium | Medium | Placement and ownership assignment boundary | Remediated after scan |
 | F-15 | Medium | High | Request log access and logging control boundary | Open |
 | F-16 | Medium | Medium | Outbound URL private address resolution boundary | Open |
 
@@ -86,7 +86,7 @@ role-matrix, or real deploy smoke tests.
 | F-12 | Remediated after scan | Commit `9d15d5a3b` added destination ownership checks before backup and volume-backup create/update persistence and scheduler side effects with focused regression tests. |
 | F-13 | Remediated after scan | Commit `8b8f84325` added signed, expiring, session-bound GitHub App setup state for provider creation and installation binding, enforced authenticated session and provider ownership checks before callback mutations, removed plaintext UI state generation, and added focused regression tests. |
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations plus focused regression tests. Other server-scoped surfaces still need revalidation. |
-| F-14 | Partially remediated after scan | Commit `3f9c68cad` added target project/environment ownership checks for environment creation and service moves, narrowed project/environment update schemas and services to avoid ownership-field mass assignment, and added focused regression tests. Related grouped surfaces still need separate revalidation. |
+| F-14 | Remediated after scan | Commits `3f9c68cad` and `87cce3235` added target project/environment/server/service placement checks, narrowed project/environment update schemas and services to avoid ownership-field mass assignment, guarded project duplicate selected services before target project creation, guarded volume-backup service bindings before persistence, and added focused regression tests. |
 | Report tracking | Added | Commit `b072b017c` added a public-safe security remediation tracker. |
 
 ## Working Plan
