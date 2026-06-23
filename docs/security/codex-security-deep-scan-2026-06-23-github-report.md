@@ -61,7 +61,7 @@ role-matrix, or real deploy smoke tests.
 | F-07 | High | High | Backup destination command boundary | Remediated after scan |
 | F-08 | High | High | Git provider clone command boundary | Remediated after scan |
 | F-09 | High | Medium | Host path mount exposure boundary | Remediated after scan |
-| F-10 | High | High | Read permission privileged action boundary | Open |
+| F-10 | High | High | Read permission privileged action boundary | Remediated after scan |
 | F-11 | High | High | Docker image pull command boundary | Open |
 | F-12 | Medium | Medium | Backup destination ownership boundary | Open |
 | F-13 | Medium | Medium | GitHub App callback state boundary | Open, needs revalidation |
@@ -81,6 +81,7 @@ role-matrix, or real deploy smoke tests.
 | F-07 | Remediated after scan | Commit `154cca676` added argv-safe rclone command construction for backup destinations, backup file listing, backup upload, restore, volume backup, and retention paths with focused regression tests. |
 | F-08 | Remediated after scan | Commit `e68bf5f07` added argv-safe Git provider clone command construction for custom Git, GitHub, GitLab, Bitbucket, and Gitea clone paths with focused regression tests. |
 | F-09 | Remediated after scan | Commit `c3333c886` constrained bind mount host paths to service-owned Dokploy directories at create/update time and before Docker mount generation, with focused regression tests for unsafe paths, persisted rows, compose context, exact service roots, and symlink escapes. |
+| F-10 | Remediated after scan | Commit `bfca7226b` split Docker read-only access from container lifecycle, inspect, exec, file upload, and removal permissions, moved server terminals to an explicit execute permission, updated custom role controls, and added focused regression tests. |
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations plus focused regression tests. Other server-scoped surfaces still need revalidation. |
 | Report tracking | Added | Commit `b072b017c` added a public-safe security remediation tracker. |
 
