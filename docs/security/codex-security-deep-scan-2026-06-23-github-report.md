@@ -18,6 +18,7 @@ payload guidance.
 | Confidence mix | 9 high, 7 medium |
 | Coverage | Partial static source coverage |
 | Public status | Redacted for GitHub storage |
+| Raw report SHA-256 | `44c713f17772807177772b419e1c059547ffb557f645122c968a8c1cddf33641` |
 
 ## Disclosure Boundary
 
@@ -33,7 +34,8 @@ The private raw report is intentionally kept outside tracked source files:
 ```
 
 The private raw report was restored locally from the sealed `report.md`
-projection on 2026-06-23. It remains excluded from Git tracking.
+projection and rechecked against the user-supplied `report.md` attachment on
+2026-06-23. It remains excluded from Git tracking.
 
 ## Executive Summary
 
