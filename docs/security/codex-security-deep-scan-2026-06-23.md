@@ -26,6 +26,7 @@
 | F-06 | Remediated after scan | Commit `25d6648b9` secured remote Traefik config writes with focused regression tests. |
 | F-07 | Remediated after scan | Commit `154cca676` secured backup destination rclone command boundaries across backup listing, upload, restore, volume backup, and retention paths with focused regression tests. |
 | F-08 | Remediated after scan | Commit `e68bf5f07` secured Git provider clone command boundaries across custom Git, GitHub, GitLab, Bitbucket, and Gitea clone paths with focused regression tests. |
+| F-09 | Remediated after scan | Commit `c3333c886` constrained bind mount host paths to service-owned Dokploy directories at create/update time and before Docker mount generation, with focused regression tests for unsafe paths, persisted rows, compose context, exact service roots, and symlink escapes. |
 | F-03 | Partially remediated after scan | Commit `9debcd67c` added assigned-server access checks for cluster and docker router operations; related surfaces still need revalidation. |
 
 ## Why This Is Redacted
