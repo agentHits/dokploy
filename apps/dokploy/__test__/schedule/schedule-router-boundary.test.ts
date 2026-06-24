@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
 	checkPermission: vi.fn(),
 	checkServicePermissionAndAccess: vi.fn(),
 	createSchedule: vi.fn(),
+	deleteSchedule: vi.fn(),
 	findMemberByUserId: vi.fn(),
 	findScheduleById: vi.fn(),
 	removeJob: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock("@dokploy/server/services/schedule", async (importOriginal) => {
 	return {
 		...actual,
 		createSchedule: mocks.createSchedule,
+		deleteSchedule: mocks.deleteSchedule,
 		findScheduleById: mocks.findScheduleById,
 		updateSchedule: mocks.updateSchedule,
 	};
@@ -116,6 +118,18 @@ describe("schedule service/server binding boundary", () => {
 		});
 	});
 
+	const mockForeignHostSchedule = () => {
+		mocks.findScheduleById.mockResolvedValue({
+			...scheduleInput,
+			scheduleId: "host-schedule-1",
+			scheduleType: "dokploy-server",
+			applicationId: null,
+			composeId: null,
+			serverId: null,
+			organizationId: "org-2",
+		});
+	};
+
 	it("rejects creating a service-bound schedule as a server schedule", async () => {
 		await expect(
 			createCaller().create({
@@ -180,5 +194,51 @@ describe("schedule service/server binding boundary", () => {
 				scheduleId: "schedule-1",
 			}),
 		);
+	});
+
+	it("rejects reading a host-level schedule from another organization by global id", async () => {
+		mockForeignHostSchedule();
+
+		await expect(
+			createCaller().one({ scheduleId: "host-schedule-1" }),
+		).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+		expect(mocks.findMemberByUserId).not.toHaveBeenCalled();
+	});
+
+	it("rejects updating a host-level schedule from another organization before side effects", async () => {
+		mockForeignHostSchedule();
+
+		await expect(
+			createCaller().update({
+				...scheduleInput,
+				scheduleId: "host-schedule-1",
+				name: "renamed",
+			}),
+		).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+		expect(mocks.updateSchedule).not.toHaveBeenCalled();
+		expect(mocks.scheduleJob).not.toHaveBeenCalled();
+	});
+
+	it("rejects deleting a host-level schedule from another organization before side effects", async () => {
+		mockForeignHostSchedule();
+
+		await expect(
+			createCaller().delete({ scheduleId: "host-schedule-1" }),
+		).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+		expect(mocks.deleteSchedule).not.toHaveBeenCalled();
+		expect(mocks.removeScheduleJob).not.toHaveBeenCalled();
+	});
+
+	it("rejects running a host-level schedule from another organization before command execution", async () => {
+		mockForeignHostSchedule();
+
+		await expect(
+			createCaller().runManually({ scheduleId: "host-schedule-1" }),
+		).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+		expect(mocks.runCommand).not.toHaveBeenCalled();
 	});
 });

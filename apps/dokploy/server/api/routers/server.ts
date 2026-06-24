@@ -10,7 +10,10 @@ import {
 	getWebServerSettings,
 	haveActiveServices,
 	IS_CLOUD,
+	redactServer,
+	redactServers,
 	removeDeploymentsByServerId,
+	resolveServerMetricsConfigUpdate,
 	serverAudit,
 	serverSetup,
 	serverValidate,
@@ -18,7 +21,9 @@ import {
 	updateServerById,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
+import { checkPermission } from "@dokploy/server/services/permission";
 import { hasValidLicense } from "@dokploy/server/services/proprietary/license-key";
+import { assertSshKeyAccess } from "@dokploy/server/services/ssh-key";
 import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
 import { TRPCError } from "@trpc/server";
 import { observable } from "@trpc/server/observable";
@@ -100,6 +105,28 @@ const assertServerAccess = async (
 	}
 };
 
+const assertServerSshKeyUseAllowed = async (
+	ctx: {
+		user: { id: string };
+		session: { activeOrganizationId: string };
+	},
+	sshKeyId: string | null | undefined,
+) => {
+	if (!sshKeyId) {
+		return;
+	}
+
+	await checkPermission(ctx, { sshKeys: ["read"] });
+	await assertSshKeyAccess(sshKeyId, ctx.session);
+};
+
+const assertServerExecuteAllowed = async (ctx: {
+	user: { id: string };
+	session: { activeOrganizationId: string };
+}) => {
+	await checkPermission(ctx, { server: ["execute"] });
+};
+
 const buildMetricsRequest = ({
 	host,
 	port,
@@ -154,6 +181,7 @@ export const serverRouter = createTRPCRouter({
 						message: "You cannot create more servers",
 					});
 				}
+				await assertServerSshKeyUseAllowed(ctx, input.sshKeyId);
 				const project = await createServer(
 					input,
 					ctx.session.activeOrganizationId,
@@ -169,8 +197,11 @@ export const serverRouter = createTRPCRouter({
 					resourceId: project.serverId,
 					resourceName: project.name,
 				});
-				return project;
+				return redactServer(project);
 			} catch (error) {
+				if (error instanceof TRPCError) {
+					throw error;
+				}
 				throw new TRPCError({
 					code: "BAD_REQUEST",
 					message: "Error creating the server",
@@ -191,7 +222,7 @@ export const serverRouter = createTRPCRouter({
 				});
 			}
 
-			return server;
+			return redactServer(server);
 		}),
 	getDefaultCommand: withPermission("server", "read")
 		.input(apiFindOneServer)
@@ -221,7 +252,7 @@ export const serverRouter = createTRPCRouter({
 			.orderBy(desc(server.createdAt))
 			.groupBy(server.serverId);
 
-		return result.filter((s) => accessibleIds.has(s.serverId));
+		return redactServers(result.filter((s) => accessibleIds.has(s.serverId)));
 	}),
 	allForPermissions: withPermission("member", "update")
 		.use(async ({ ctx, next }) => {
@@ -276,7 +307,7 @@ export const serverRouter = createTRPCRouter({
 						eq(server.serverType, "deploy"),
 					),
 		});
-		return result.filter((s) => accessibleIds.has(s.serverId));
+		return redactServers(result.filter((s) => accessibleIds.has(s.serverId)));
 	}),
 	buildServers: withPermission("server", "read").query(async ({ ctx }) => {
 		const accessibleIds = await getAccessibleServerIds(ctx.session);
@@ -296,9 +327,9 @@ export const serverRouter = createTRPCRouter({
 						eq(server.serverType, "build"),
 					),
 		});
-		return result.filter((s) => accessibleIds.has(s.serverId));
+		return redactServers(result.filter((s) => accessibleIds.has(s.serverId)));
 	}),
-	setup: withPermission("server", "create")
+	setup: withPermission("server", "execute")
 		.input(apiFindOneServer)
 		.mutation(async ({ input, ctx }) => {
 			try {
@@ -322,7 +353,7 @@ export const serverRouter = createTRPCRouter({
 				throw error;
 			}
 		}),
-	setupWithLogs: withPermission("server", "create")
+	setupWithLogs: withPermission("server", "execute")
 		.meta({
 			openapi: {
 				path: "/deploy/server-with-logs",
@@ -451,7 +482,7 @@ export const serverRouter = createTRPCRouter({
 				});
 			}
 		}),
-	setupMonitoring: withPermission("server", "create")
+	setupMonitoring: withPermission("server", "execute")
 		.input(apiUpdateServerMonitoring)
 		.mutation(async ({ input, ctx }) => {
 			try {
@@ -464,8 +495,8 @@ export const serverRouter = createTRPCRouter({
 					});
 				}
 
-				await updateServerById(input.serverId, {
-					metricsConfig: {
+				const metricsConfig = resolveServerMetricsConfigUpdate(
+					{
 						server: {
 							type: "Remote",
 							refreshRate: input.metricsConfig.server.refreshRate,
@@ -487,6 +518,11 @@ export const serverRouter = createTRPCRouter({
 							},
 						},
 					},
+					server.metricsConfig,
+				);
+
+				await updateServerById(input.serverId, {
+					metricsConfig,
 				});
 				const currentServer = await setupMonitoring(input.serverId);
 				await audit(ctx, {
@@ -529,7 +565,7 @@ export const serverRouter = createTRPCRouter({
 					await updateServersBasedOnQuantity(admin.id, admin.serversQuantity);
 				}
 
-				return currentServer;
+				return redactServer(currentServer);
 			} catch (error) {
 				throw error;
 			}
@@ -553,6 +589,10 @@ export const serverRouter = createTRPCRouter({
 						message: "Server is inactive",
 					});
 				}
+				await assertServerSshKeyUseAllowed(ctx, input.sshKeyId);
+				if (input.command !== undefined) {
+					await assertServerExecuteAllowed(ctx);
+				}
 				const currentServer = await updateServerById(input.serverId, {
 					...input,
 				});
@@ -569,7 +609,7 @@ export const serverRouter = createTRPCRouter({
 					resourceId: input.serverId,
 					resourceName: server.name,
 				});
-				return currentServer;
+				return redactServer(currentServer);
 			} catch (error) {
 				throw error;
 			}

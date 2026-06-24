@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+	assertRoleAssignmentAllowed: vi.fn(),
 	audit: vi.fn(),
 	checkPermission: vi.fn(),
 	createApiKey: vi.fn(),
@@ -71,6 +72,7 @@ vi.mock("@dokploy/server/lib/auth", () => ({
 }));
 
 vi.mock("@dokploy/server/services/permission", () => ({
+	assertRoleAssignmentAllowed: mocks.assertRoleAssignmentAllowed,
 	checkPermission: mocks.checkPermission,
 	hasPermission: vi.fn(),
 	resolvePermissions: vi.fn(),
@@ -108,6 +110,7 @@ const createCaller = (role: "owner" | "admin" | "member" = "owner") =>
 describe("user.remove membership boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mocks.assertRoleAssignmentAllowed.mockResolvedValue(undefined);
 		mocks.checkPermission.mockResolvedValue(undefined);
 		mocks.memberFindFirst.mockResolvedValue({
 			id: "member-active",
@@ -313,5 +316,31 @@ describe("user.remove membership boundary", () => {
 		).rejects.toMatchObject({ code: "FORBIDDEN" });
 
 		expect(mocks.createOrganizationUserWithCredentials).not.toHaveBeenCalled();
+	});
+
+	it("checks delegation policy before self-host credential creation with a custom role", async () => {
+		mocks.createOrganizationUserWithCredentials.mockResolvedValue({
+			userId: "new-user",
+			email: "new-custom@example.com",
+			role: "power-role",
+		});
+
+		await expect(
+			createCaller("owner").createUserWithCredentials({
+				email: "new-custom@example.com",
+				password: "password-123",
+				role: "power-role",
+			}),
+		).resolves.toMatchObject({ role: "power-role" });
+
+		expect(mocks.assertRoleAssignmentAllowed).toHaveBeenCalledWith(
+			expect.anything(),
+			"power-role",
+		);
+		expect(mocks.createOrganizationUserWithCredentials).toHaveBeenCalledWith(
+			expect.objectContaining({
+				role: "power-role",
+			}),
+		);
 	});
 });

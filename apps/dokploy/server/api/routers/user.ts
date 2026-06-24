@@ -29,6 +29,7 @@ import {
 	user,
 } from "@dokploy/server/db/schema";
 import {
+	assertRoleAssignmentAllowed,
 	checkPermission,
 	hasPermission,
 	resolvePermissions,
@@ -287,12 +288,13 @@ export const userRouter = createTRPCRouter({
 	update: protectedProcedure
 		.input(apiUpdateUser)
 		.mutation(async ({ input, ctx }) => {
-			if (input.password || input.currentPassword) {
+			const { password, currentPassword, ...profileUpdate } = input;
+			if (password || currentPassword) {
 				const currentAuth = await db.query.account.findFirst({
 					where: eq(account.userId, ctx.user.id),
 				});
 				const correctPassword = bcrypt.compareSync(
-					input.currentPassword || "",
+					currentPassword || "",
 					currentAuth?.password || "",
 				);
 
@@ -303,7 +305,7 @@ export const userRouter = createTRPCRouter({
 					});
 				}
 
-				if (!input.password) {
+				if (!password) {
 					throw new TRPCError({
 						code: "BAD_REQUEST",
 						message: "New password is required",
@@ -312,7 +314,7 @@ export const userRouter = createTRPCRouter({
 				await db
 					.update(account)
 					.set({
-						password: bcrypt.hashSync(input.password, 10),
+						password: bcrypt.hashSync(password, 10),
 					})
 					.where(eq(account.userId, ctx.user.id));
 
@@ -327,7 +329,7 @@ export const userRouter = createTRPCRouter({
 			}
 
 			try {
-				const result = await updateUser(ctx.user.id, input);
+				const result = await updateUser(ctx.user.id, profileUpdate);
 				await audit(ctx, {
 					action: "update",
 					resourceType: "user",
@@ -743,6 +745,8 @@ export const userRouter = createTRPCRouter({
 					message: "Cannot create a user with a privileged static role",
 				});
 			}
+
+			await assertRoleAssignmentAllowed(ctx, input.role);
 
 			return await createOrganizationUserWithCredentials({
 				organizationId: ctx.session.activeOrganizationId,

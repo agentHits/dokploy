@@ -1,17 +1,12 @@
 import { db } from "@dokploy/server/db";
 import { IS_CLOUD, sendInvitationEmail } from "@dokploy/server/index";
+import { assertRoleAssignmentAllowed } from "@dokploy/server/services/permission";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, exists } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
-import {
-	invitation,
-	member,
-	organization,
-	organizationRole,
-	user,
-} from "@/server/db/schema";
+import { invitation, member, organization, user } from "@/server/db/schema";
 import { createTRPCRouter, protectedProcedure, withPermission } from "../trpc";
 
 const assertAdminRoleAssignmentAllowed = (callerRole: string) => {
@@ -316,22 +311,7 @@ export const organizationRouter = createTRPCRouter({
 				assertAdminRoleAssignmentAllowed(ctx.user.role);
 			}
 
-			// If assigning a custom role, verify it exists
-			if (!["owner", "admin", "member"].includes(input.role)) {
-				const customRole = await db.query.organizationRole.findFirst({
-					where: and(
-						eq(organizationRole.organizationId, orgId),
-						eq(organizationRole.role, input.role),
-					),
-				});
-
-				if (!customRole) {
-					throw new TRPCError({
-						code: "NOT_FOUND",
-						message: `Role "${input.role}" not found`,
-					});
-				}
-			}
+			await assertRoleAssignmentAllowed(ctx, input.role);
 
 			const [created] = await db
 				.insert(invitation)
@@ -462,25 +442,7 @@ export const organizationRouter = createTRPCRouter({
 				assertAdminRoleAssignmentAllowed(ctx.user.role);
 			}
 
-			// If assigning a custom role (not admin/member), verify it exists
-			if (input.role !== "admin" && input.role !== "member") {
-				const customRole = await db.query.organizationRole.findFirst({
-					where: and(
-						eq(
-							organizationRole.organizationId,
-							ctx.session.activeOrganizationId,
-						),
-						eq(organizationRole.role, input.role),
-					),
-				});
-
-				if (!customRole) {
-					throw new TRPCError({
-						code: "NOT_FOUND",
-						message: `Custom role "${input.role}" not found`,
-					});
-				}
-			}
+			await assertRoleAssignmentAllowed(ctx, input.role);
 
 			// Update the target member's role
 			await db

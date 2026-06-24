@@ -193,6 +193,101 @@ const getLegacyOverrides = (
 	};
 };
 
+const resolveCustomRolePermissions = async (
+	roleName: string,
+	organizationId: string,
+): Promise<Permissions | null> => {
+	const licensed = await hasValidLicense(organizationId);
+	if (!licensed) {
+		return null;
+	}
+
+	const customRoles = await db.query.organizationRole.findMany({
+		where: and(
+			eq(organizationRole.organizationId, organizationId),
+			eq(organizationRole.role, roleName),
+		),
+	});
+
+	if (customRoles.length === 0) {
+		return null;
+	}
+
+	const merged: Record<string, string[]> = {};
+	for (const entry of customRoles) {
+		const parsed = JSON.parse(entry.permission) as Record<string, string[]>;
+		for (const [resource, actions] of Object.entries(parsed)) {
+			merged[resource] = [
+				...new Set([...(merged[resource] ?? []), ...actions]),
+			];
+		}
+	}
+
+	return merged as Permissions;
+};
+
+export const assertRoleAssignmentAllowed = async (
+	ctx: PermissionCtx,
+	roleName: string,
+) => {
+	const organizationId = ctx.session.activeOrganizationId;
+	const actor = await findMemberByUserId(ctx.user.id, organizationId);
+
+	if (roleName === "owner") {
+		throw new TRPCError({
+			code: "FORBIDDEN",
+			message: "Cannot assign the owner role",
+		});
+	}
+
+	if (roleName === "admin") {
+		if (actor.role !== "owner") {
+			throw new TRPCError({
+				code: "FORBIDDEN",
+				message: "Only organization owners can assign admin roles",
+			});
+		}
+		return;
+	}
+
+	if (roleName === "member") {
+		return;
+	}
+
+	const targetPermissions = await resolveCustomRolePermissions(
+		roleName,
+		organizationId,
+	);
+	if (!targetPermissions) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: `Role "${roleName}" not found`,
+		});
+	}
+
+	if (actor.role === "owner") {
+		return;
+	}
+
+	const actorPermissions = await resolvePermissions(ctx);
+	const missingPermission = Object.entries(targetPermissions).find(
+		([resource, actions]) =>
+			(actions as string[]).some(
+				(action) =>
+					!(actorPermissions as Record<string, Record<string, boolean>>)[
+						resource
+					]?.[action],
+			),
+	);
+
+	if (missingPermission) {
+		throw new TRPCError({
+			code: "FORBIDDEN",
+			message: "Cannot assign a role with permissions you do not have",
+		});
+	}
+};
+
 const serviceOrganizationId = (service: ServiceWithOrganization | null) =>
 	service?.environment?.project?.organizationId ?? null;
 

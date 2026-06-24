@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 	applyDockerCleanupSchedule: vi.fn(),
 	assertBuildsConcurrencyAllowed: vi.fn(),
 	audit: vi.fn(),
+	assertSshKeyAccess: vi.fn(),
 	checkPermission: vi.fn(),
 	createServer: vi.fn(),
 	defaultCommand: vi.fn(),
@@ -39,6 +40,30 @@ const mocks = vi.hoisted(() => ({
 	hasValidLicense: vi.fn(),
 	haveActiveServices: vi.fn(),
 	removeDeploymentsByServerId: vi.fn(),
+	redactServer: vi.fn((server) => {
+		if (!server) {
+			return server;
+		}
+
+		return {
+			...server,
+			metricsConfig: server.metricsConfig
+				? {
+						...server.metricsConfig,
+						server: {
+							...server.metricsConfig.server,
+							token: "__DOKPLOY_REDACTED_SECRET__",
+						},
+					}
+				: server.metricsConfig,
+			sshKey: server.sshKey
+				? {
+						...server.sshKey,
+						privateKey: "__DOKPLOY_REDACTED_SECRET__",
+					}
+				: server.sshKey,
+		};
+	}),
 	serverAudit: vi.fn(),
 	serverSetup: vi.fn(),
 	serverValidate: vi.fn(),
@@ -61,6 +86,20 @@ vi.mock("@dokploy/server", () => ({
 	hasValidLicense: mocks.hasValidLicense,
 	haveActiveServices: mocks.haveActiveServices,
 	removeDeploymentsByServerId: mocks.removeDeploymentsByServerId,
+	redactServer: mocks.redactServer,
+	redactServers: vi.fn((servers) => servers.map(mocks.redactServer)),
+	resolveServerMetricsConfigUpdate: vi.fn(
+		(metricsConfig, currentMetricsConfig) => ({
+			...metricsConfig,
+			server: {
+				...metricsConfig.server,
+				token:
+					metricsConfig.server.token === "__DOKPLOY_REDACTED_SECRET__"
+						? currentMetricsConfig?.server?.token || ""
+						: metricsConfig.server.token,
+			},
+		}),
+	),
 	serverAudit: mocks.serverAudit,
 	serverSetup: mocks.serverSetup,
 	serverValidate: mocks.serverValidate,
@@ -82,6 +121,20 @@ vi.mock("@dokploy/server/index", () => ({
 	hasValidLicense: mocks.hasValidLicense,
 	haveActiveServices: mocks.haveActiveServices,
 	removeDeploymentsByServerId: mocks.removeDeploymentsByServerId,
+	redactServer: mocks.redactServer,
+	redactServers: vi.fn((servers) => servers.map(mocks.redactServer)),
+	resolveServerMetricsConfigUpdate: vi.fn(
+		(metricsConfig, currentMetricsConfig) => ({
+			...metricsConfig,
+			server: {
+				...metricsConfig.server,
+				token:
+					metricsConfig.server.token === "__DOKPLOY_REDACTED_SECRET__"
+						? currentMetricsConfig?.server?.token || ""
+						: metricsConfig.server.token,
+			},
+		}),
+	),
 	serverAudit: mocks.serverAudit,
 	serverSetup: mocks.serverSetup,
 	serverValidate: mocks.serverValidate,
@@ -97,6 +150,10 @@ vi.mock("@dokploy/server/services/permission", () => ({
 	checkPermission: mocks.checkPermission,
 	hasPermission: vi.fn(),
 	resolvePermissions: vi.fn(),
+}));
+
+vi.mock("@dokploy/server/services/ssh-key", () => ({
+	assertSshKeyAccess: mocks.assertSshKeyAccess,
 }));
 
 vi.mock("@dokploy/server/services/proprietary/license-key", () => ({
@@ -148,6 +205,7 @@ describe("server.getServerMetrics target boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.assertSshKeyAccess.mockResolvedValue(undefined);
 		mocks.fetch.mockResolvedValue({
 			ok: true,
 			json: async () => [metric],
@@ -290,6 +348,42 @@ describe("server router assigned-server boundary", () => {
 		mocks.removeDeploymentsByServerId.mockResolvedValue(undefined);
 	});
 
+	it("redacts SSH private key and monitoring token from server reads", async () => {
+		mocks.findServerById.mockResolvedValue({
+			serverId: "server-1",
+			name: "primary",
+			organizationId: "org-1",
+			serverStatus: "active",
+			serverType: "deploy",
+			metricsConfig: {
+				server: {
+					port: 4500,
+					token: "stored-monitoring-token",
+				},
+			},
+			sshKey: {
+				sshKeyId: "ssh-1",
+				name: "deploy-key",
+				privateKey: "-----BEGIN PRIVATE KEY-----",
+				publicKey: "ssh-ed25519 AAAA",
+			},
+		});
+
+		await expect(
+			createCaller().one({ serverId: "server-1" }),
+		).resolves.toMatchObject({
+			metricsConfig: {
+				server: {
+					token: "__DOKPLOY_REDACTED_SECRET__",
+				},
+			},
+			sshKey: {
+				privateKey: "__DOKPLOY_REDACTED_SECRET__",
+				publicKey: "ssh-ed25519 AAAA",
+			},
+		});
+	});
+
 	it("denies inaccessible default command reads before server metadata use", async () => {
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
 
@@ -309,6 +403,63 @@ describe("server router assigned-server boundary", () => {
 
 		expect(mocks.serverSetup).not.toHaveBeenCalled();
 		expect(mocks.audit).not.toHaveBeenCalled();
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			server: ["execute"],
+		});
+	});
+
+	it("requires SSH key read permission before creating a server bound to an SSH key", async () => {
+		mocks.createServer.mockResolvedValue({
+			serverId: "server-2",
+			name: "remote",
+			metricsConfig: {
+				server: {
+					token: "",
+				},
+			},
+		});
+
+		await expect(
+			createCaller().create({
+				name: "remote",
+				description: null,
+				ipAddress: "203.0.113.20",
+				port: 22,
+				username: "root",
+				sshKeyId: "ssh-1",
+				serverType: "deploy",
+				enableDockerCleanup: true,
+			}),
+		).resolves.toMatchObject({ serverId: "server-2" });
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			sshKeys: ["read"],
+		});
+		expect(mocks.assertSshKeyAccess).toHaveBeenCalledWith("ssh-1", {
+			activeOrganizationId: "org-1",
+			userId: "actor-1",
+		});
+	});
+
+	it("requires server.execute before persisting a custom setup command", async () => {
+		await expect(
+			createCaller().update({
+				serverId: "server-1",
+				name: "primary",
+				description: null,
+				ipAddress: "203.0.113.10",
+				port: 22,
+				username: "root",
+				sshKeyId: null,
+				serverType: "deploy",
+				enableDockerCleanup: true,
+				command: "curl https://example.com/install.sh | sh",
+			}),
+		).resolves.toMatchObject({ serverId: "server-1" });
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			server: ["execute"],
+		});
 	});
 
 	it("denies inaccessible server validation before remote validation side effects", async () => {

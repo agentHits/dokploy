@@ -1,7 +1,9 @@
+import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	audit: vi.fn(),
+	assertRoleAssignmentAllowed: vi.fn(),
 	checkPermission: vi.fn(),
 	insertInvitationReturning: vi.fn(),
 	insertInvitationValues: vi.fn(),
@@ -53,6 +55,7 @@ vi.mock("@dokploy/server/db", () => ({
 }));
 
 vi.mock("@dokploy/server/services/permission", () => ({
+	assertRoleAssignmentAllowed: mocks.assertRoleAssignmentAllowed,
 	checkPermission: mocks.checkPermission,
 }));
 
@@ -82,6 +85,7 @@ const createCaller = (role: string) =>
 describe("organization member static role boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mocks.assertRoleAssignmentAllowed.mockResolvedValue(undefined);
 		mocks.checkPermission.mockResolvedValue(undefined);
 		mocks.userFindFirst.mockResolvedValue(undefined);
 		mocks.invitationFindFirst.mockResolvedValue(undefined);
@@ -126,6 +130,45 @@ describe("organization member static role boundary", () => {
 		);
 	});
 
+	it("checks delegation policy before inviting a custom role", async () => {
+		await expect(
+			createCaller("member-manager").inviteMember({
+				email: "custom@example.com",
+				role: "power-role",
+			}),
+		).resolves.toMatchObject({
+			id: "invitation-1",
+		});
+
+		expect(mocks.assertRoleAssignmentAllowed).toHaveBeenCalledWith(
+			expect.anything(),
+			"power-role",
+		);
+		expect(mocks.insertInvitationValues).toHaveBeenCalledWith(
+			expect.objectContaining({
+				role: "power-role",
+			}),
+		);
+	});
+
+	it("rejects custom role invitations when delegation policy fails", async () => {
+		mocks.assertRoleAssignmentAllowed.mockRejectedValueOnce(
+			new TRPCError({
+				code: "FORBIDDEN",
+				message: "Cannot assign role",
+			}),
+		);
+
+		await expect(
+			createCaller("member-manager").inviteMember({
+				email: "custom@example.com",
+				role: "power-role",
+			}),
+		).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+		expect(mocks.insertInvitationValues).not.toHaveBeenCalled();
+	});
+
 	it("rejects delegated member managers promoting members to static admin", async () => {
 		mocks.memberFindFirst.mockResolvedValue({
 			id: "member-2",
@@ -145,5 +188,30 @@ describe("organization member static role boundary", () => {
 		).rejects.toMatchObject({ code: "FORBIDDEN" });
 
 		expect(mocks.updateMemberSet).not.toHaveBeenCalled();
+	});
+
+	it("checks delegation policy before changing a member to a custom role", async () => {
+		mocks.memberFindFirst.mockResolvedValue({
+			id: "member-2",
+			organizationId: "org-1",
+			role: "member",
+			userId: "user-2",
+			user: {
+				email: "member@example.com",
+			},
+		});
+
+		await expect(
+			createCaller("member-manager").updateMemberRole({
+				memberId: "member-2",
+				role: "power-role",
+			}),
+		).resolves.toBe(true);
+
+		expect(mocks.assertRoleAssignmentAllowed).toHaveBeenCalledWith(
+			expect.anything(),
+			"power-role",
+		);
+		expect(mocks.updateMemberSet).toHaveBeenCalledWith({ role: "power-role" });
 	});
 });

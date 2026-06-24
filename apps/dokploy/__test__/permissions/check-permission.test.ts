@@ -49,7 +49,9 @@ vi.mock("@dokploy/server/services/proprietary/license-key", () => ({
 	hasValidLicense: vi.fn(() => Promise.resolve(hasValidLicenseToReturn)),
 }));
 
-const { checkPermission } = await import("@dokploy/server/services/permission");
+const { assertRoleAssignmentAllowed, checkPermission } = await import(
+	"@dokploy/server/services/permission"
+);
 
 const ctx = {
 	user: { id: "user-1" },
@@ -244,5 +246,41 @@ describe("custom role read permissions stay least-privileged", () => {
 		await expect(
 			checkPermission(ctx, { server: ["execute"] } as any),
 		).rejects.toThrow();
+	});
+});
+
+describe("custom role assignment dominance", () => {
+	it("rejects admin assigning a custom role with permissions admin does not have", async () => {
+		memberToReturn = mockMemberData("admin");
+		hasValidLicenseToReturn = true;
+		organizationRolesToReturn = [
+			{ permission: JSON.stringify({ organization: ["delete"] }) },
+		];
+
+		await expect(
+			assertRoleAssignmentAllowed(ctx, "power-role"),
+		).rejects.toThrow("Cannot assign a role with permissions you do not have");
+	});
+
+	it("allows owner assigning a custom role after the role exists", async () => {
+		memberToReturn = mockMemberData("owner");
+		hasValidLicenseToReturn = true;
+		organizationRolesToReturn = [
+			{ permission: JSON.stringify({ organization: ["delete"] }) },
+		];
+
+		await expect(
+			assertRoleAssignmentAllowed(ctx, "power-role"),
+		).resolves.toBeUndefined();
+	});
+
+	it("rejects assigning a missing custom role", async () => {
+		memberToReturn = mockMemberData("owner");
+		hasValidLicenseToReturn = true;
+		organizationRolesToReturn = [];
+
+		await expect(
+			assertRoleAssignmentAllowed(ctx, "missing-role"),
+		).rejects.toThrow('Role "missing-role" not found');
 	});
 });

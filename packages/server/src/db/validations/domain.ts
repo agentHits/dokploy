@@ -1,16 +1,73 @@
 import { z } from "zod";
 
+const TRAEFIK_RULE_UNSAFE_HOST_CHARS = /[\s`"'(){}[\]|&!;,:/\\]/;
+const TRAEFIK_RULE_UNSAFE_PATH_CHARS = /[\s`"'(){}[\]|&!;\\]/;
+const HOST_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+
+const isValidTraefikHost = (host: string) => {
+	if (host !== host.trim() || TRAEFIK_RULE_UNSAFE_HOST_CHARS.test(host)) {
+		return false;
+	}
+
+	const isWildcard = host.startsWith("*.");
+	const hostToParse = isWildcard ? host.slice(2) : host;
+	if (!hostToParse || hostToParse.includes("*")) {
+		return false;
+	}
+
+	try {
+		const asciiHost = new URL(`http://${hostToParse}`).hostname;
+		if (!asciiHost || asciiHost.length > 253 || asciiHost.endsWith(".")) {
+			return false;
+		}
+
+		if (asciiHost === "localhost") {
+			return true;
+		}
+
+		return asciiHost.split(".").every((label) => HOST_LABEL_REGEX.test(label));
+	} catch {
+		return false;
+	}
+};
+
+const isValidTraefikPath = (path: string | null | undefined) => {
+	if (path === null || path === undefined) {
+		return true;
+	}
+
+	return (
+		path.startsWith("/") &&
+		path === path.trim() &&
+		!TRAEFIK_RULE_UNSAFE_PATH_CHARS.test(path)
+	);
+};
+
+const hostSchema = z
+	.string()
+	.min(1, { message: "Add a hostname" })
+	.refine((val) => val === val.trim(), {
+		message: "Domain name cannot have leading or trailing spaces",
+	})
+	.refine(isValidTraefikHost, {
+		message: "Invalid hostname",
+	})
+	.transform((val) => val.trim());
+
+const pathSchema = z
+	.string()
+	.min(1)
+	.refine(isValidTraefikPath, {
+		message: "Path must start with '/' and cannot contain Traefik rule syntax",
+	})
+	.nullable()
+	.optional();
+
 export const domain = z
 	.object({
-		host: z
-			.string()
-			.min(1, { message: "Add a hostname" })
-			.refine((val) => val === val.trim(), {
-				message: "Domain name cannot have leading or trailing spaces",
-			})
-			.transform((val) => val.trim()),
-		path: z.string().min(1).nullable().optional(),
-		internalPath: z.string().nullable().optional(),
+		host: hostSchema,
+		path: pathSchema,
+		internalPath: pathSchema,
 		stripPath: z.boolean().optional(),
 		port: z
 			.number()
@@ -49,32 +106,13 @@ export const domain = z
 					"Strip path can only be enabled when a path other than '/' is specified",
 			});
 		}
-
-		// Validate internalPath starts with /
-		if (
-			input.internalPath &&
-			input.internalPath !== "/" &&
-			!input.internalPath.startsWith("/")
-		) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: ["internalPath"],
-				message: "Internal path must start with '/'",
-			});
-		}
 	});
 
 export const domainCompose = z
 	.object({
-		host: z
-			.string()
-			.min(1, { message: "Add a hostname" })
-			.refine((val) => val === val.trim(), {
-				message: "Domain name cannot have leading or trailing spaces",
-			})
-			.transform((val) => val.trim()),
-		path: z.string().min(1).nullable().optional(),
-		internalPath: z.string().nullable().optional(),
+		host: hostSchema,
+		path: pathSchema,
+		internalPath: pathSchema,
 		stripPath: z.boolean().optional(),
 		port: z
 			.number()
@@ -112,19 +150,6 @@ export const domainCompose = z
 				path: ["stripPath"],
 				message:
 					"Strip path can only be enabled when a path other than '/' is specified",
-			});
-		}
-
-		// Validate internalPath starts with /
-		if (
-			input.internalPath &&
-			input.internalPath !== "/" &&
-			!input.internalPath.startsWith("/")
-		) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: ["internalPath"],
-				message: "Internal path must start with '/'",
 			});
 		}
 	});

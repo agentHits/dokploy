@@ -155,6 +155,9 @@ describe("cluster router assigned-server boundary", () => {
 
 		expect(mocks.getRemoteDocker).not.toHaveBeenCalled();
 		expect(dockerClient.swarmInspect).not.toHaveBeenCalled();
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			server: ["execute"],
+		});
 	});
 
 	it("allows accessible worker join token reads", async () => {
@@ -168,6 +171,9 @@ describe("cluster router assigned-server boundary", () => {
 		expect(mocks.getAccessibleServerIds).toHaveBeenCalledWith({
 			userId: "user-1",
 			activeOrganizationId: "org-1",
+		});
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			server: ["execute"],
 		});
 		expect(mocks.getRemoteDocker).toHaveBeenCalledWith("server-1");
 	});

@@ -102,7 +102,7 @@ export const clusterRouter = createTRPCRouter({
 			}
 		}),
 
-	addWorker: withPermission("server", "create")
+	addWorker: withPermission("server", "execute")
 		.input(
 			z.object({
 				serverId: z.string().optional(),
@@ -128,7 +128,7 @@ export const clusterRouter = createTRPCRouter({
 			};
 		}),
 
-	addManager: withPermission("server", "create")
+	addManager: withPermission("server", "execute")
 		.input(
 			z.object({
 				serverId: z.string().optional(),
