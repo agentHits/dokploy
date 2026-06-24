@@ -7,6 +7,7 @@ import {
 } from "@dokploy/server/services/gitea";
 import type { InferResultType } from "@dokploy/server/types/with";
 import { TRPCError } from "@trpc/server";
+import { fetchWithPublicEgress } from "../url/network";
 import {
 	buildCreateDirectoryCommand,
 	buildGitCloneCommand,
@@ -65,7 +66,6 @@ export const refreshGiteaToken = async (giteaProviderId: string) => {
 	const baseUrl = await getGiteaProviderBaseUrl(giteaProvider);
 
 	try {
-		const tokenEndpoint = `${baseUrl}/login/oauth/access_token`;
 		const params = new URLSearchParams({
 			grant_type: "refresh_token",
 			refresh_token: giteaProvider.refreshToken,
@@ -73,14 +73,18 @@ export const refreshGiteaToken = async (giteaProviderId: string) => {
 			client_secret: giteaProvider.clientSecret,
 		});
 
-		const response = await fetch(tokenEndpoint, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/x-www-form-urlencoded",
-				Accept: "application/json",
+		const response = await fetchWithPublicEgress(
+			new URL("login/oauth/access_token", `${baseUrl}/`),
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/x-www-form-urlencoded",
+					Accept: "application/json",
+				},
+				body: params.toString(),
 			},
-			body: params.toString(),
-		});
+			{ fieldName: "Gitea provider URL" },
+		);
 
 		if (!response.ok) {
 			return giteaProvider?.accessToken || null;
@@ -241,14 +245,15 @@ export const testGiteaConnection = async (input: { giteaId: string }) => {
 		const limit = 50; // Max per page
 
 		while (true) {
-			const response = await fetch(
-				`${baseUrl}/api/v1/user/repos?page=${page}&limit=${limit}`,
+			const response = await fetchWithPublicEgress(
+				new URL(`api/v1/user/repos?page=${page}&limit=${limit}`, `${baseUrl}/`),
 				{
 					headers: {
 						Accept: "application/json",
 						Authorization: `token ${provider.accessToken}`,
 					},
 				},
+				{ fieldName: "Gitea provider URL" },
 			);
 
 			if (!response.ok) {
@@ -298,14 +303,15 @@ export const getGiteaRepositories = async (giteaId?: string) => {
 	const limit = 50; // Max per page
 
 	while (true) {
-		const response = await fetch(
-			`${baseUrl}/api/v1/user/repos?page=${page}&limit=${limit}`,
+		const response = await fetchWithPublicEgress(
+			new URL(`api/v1/user/repos?page=${page}&limit=${limit}`, `${baseUrl}/`),
 			{
 				headers: {
 					Accept: "application/json",
 					Authorization: `token ${giteaProvider.accessToken}`,
 				},
 			},
+			{ fieldName: "Gitea provider URL" },
 		);
 
 		if (!response.ok) {
@@ -363,14 +369,18 @@ export const getGiteaBranches = async (input: {
 	const limit = 50; // Max per page
 
 	while (true) {
-		const response = await fetch(
-			`${baseUrl}/api/v1/repos/${input.owner}/${input.repo}/branches?page=${page}&limit=${limit}`,
+		const response = await fetchWithPublicEgress(
+			new URL(
+				`api/v1/repos/${input.owner}/${input.repo}/branches?page=${page}&limit=${limit}`,
+				`${baseUrl}/`,
+			),
 			{
 				headers: {
 					Accept: "application/json",
 					Authorization: `token ${giteaProvider.accessToken}`,
 				},
 			},
+			{ fieldName: "Gitea provider URL" },
 		);
 
 		if (!response.ok) {

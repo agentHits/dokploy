@@ -4,27 +4,36 @@ import {
 	canManageGitProviderOAuth,
 	verifyGitProviderOAuthState,
 } from "@dokploy/server/utils/providers/oauth-state";
+import { assertGitProviderBaseUrlAllowed } from "@dokploy/server/utils/providers/url";
+import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { findGitea, type Gitea, redirectWithError } from "./helper";
 
 // Helper to fetch access token from Gitea
 const fetchAccessToken = async (gitea: Gitea, code: string) => {
 	// Use internal URL for token exchange when Gitea is on same instance as Dokploy
-	const baseUrl = gitea.giteaInternalUrl || gitea.giteaUrl;
-	const response = await fetch(`${baseUrl}/login/oauth/access_token`, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/x-www-form-urlencoded",
-			Accept: "application/json",
+	const baseUrl = await assertGitProviderBaseUrlAllowed(
+		gitea.giteaInternalUrl || gitea.giteaUrl,
+		{ fieldName: "Gitea provider URL" },
+	);
+	const response = await fetchWithPublicEgress(
+		new URL("login/oauth/access_token", `${baseUrl}/`),
+		{
+			method: "POST",
+			headers: {
+				"Content-Type": "application/x-www-form-urlencoded",
+				Accept: "application/json",
+			},
+			body: new URLSearchParams({
+				client_id: gitea.clientId as string,
+				client_secret: gitea.clientSecret as string,
+				code,
+				grant_type: "authorization_code",
+				redirect_uri: gitea.redirectUri || "",
+			}),
 		},
-		body: new URLSearchParams({
-			client_id: gitea.clientId as string,
-			client_secret: gitea.clientSecret as string,
-			code,
-			grant_type: "authorization_code",
-			redirect_uri: gitea.redirectUri || "",
-		}),
-	});
+		{ fieldName: "Gitea provider URL" },
+	);
 
 	const responseText = await response.text();
 	return response.ok
@@ -77,7 +86,21 @@ export default async function handler(
 	}
 
 	// Fetch the access token from Gitea
-	const result = await fetchAccessToken(gitea, code as string);
+	let result: {
+		error?: string;
+		access_token?: string;
+		refresh_token?: string;
+		expires_in?: number;
+		organizationName?: string;
+	};
+	try {
+		result = await fetchAccessToken(gitea, code as string);
+	} catch (error) {
+		return redirectWithError(
+			res,
+			error instanceof Error ? error.message : "Token exchange failed",
+		);
+	}
 
 	if (result.error) {
 		console.error("Token exchange failed:", result);

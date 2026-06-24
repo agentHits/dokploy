@@ -44,6 +44,8 @@ serviceName = "postgres"
 port = 5432
 `;
 
+const publicLookup = async () => [{ address: "8.8.8.8", family: 4 }];
+
 describe("template GitHub base URL boundary", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
@@ -80,7 +82,9 @@ describe("template GitHub base URL boundary", () => {
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(
-			fetchTemplatesList("https://templates.example.com/"),
+			fetchTemplatesList("https://templates.example.com/", {
+				lookup: publicLookup,
+			}),
 		).resolves.toEqual(metadata);
 
 		expect(fetchMock).toHaveBeenCalledWith(
@@ -90,6 +94,21 @@ describe("template GitHub base URL boundary", () => {
 				signal: expect.any(AbortSignal),
 			}),
 		);
+	});
+
+	it("rejects public-looking template sources that resolve to private addresses before fetching", async () => {
+		const fetchMock = vi.fn(async () => {
+			return new Response(JSON.stringify(metadata), { status: 200 });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(
+			fetchTemplatesList("https://templates.example.com/", {
+				lookup: async () => [{ address: "10.0.0.10", family: 4 }],
+			}),
+		).rejects.toThrow(/template base URL/i);
+
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it("rejects unsafe template file sources before fetching", async () => {
@@ -117,7 +136,9 @@ describe("template GitHub base URL boundary", () => {
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(
-			fetchTemplateFiles("postgres", "https://templates.example.com/"),
+			fetchTemplateFiles("postgres", "https://templates.example.com/", {
+				lookup: publicLookup,
+			}),
 		).resolves.toMatchObject({
 			dockerCompose: "services:\n  postgres:\n    image: postgres\n",
 		});

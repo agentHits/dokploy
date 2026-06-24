@@ -24,6 +24,7 @@ import {
 	type Model,
 	selectAIProvider,
 } from "@dokploy/server/utils/ai/select-ai-provider";
+import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
 import { TRPCError } from "@trpc/server";
 import { generateText } from "ai";
 import { z } from "zod";
@@ -62,21 +63,28 @@ export const aiRouter = createTRPCRouter({
 				let response = null;
 				switch (providerName) {
 					case "ollama":
-						response = await fetch(appendAIProviderPath(apiUrl, "api/tags"), {
-							headers,
-							redirect: "error",
-						});
+						response = await fetchWithPublicEgress(
+							appendAIProviderPath(apiUrl, "api/tags"),
+							{
+								headers,
+								redirect: "error",
+							},
+							{ fieldName: "AI provider URL" },
+						);
 						break;
-					case "gemini":
-						{
-							const modelsUrl = new URL(appendAIProviderPath(apiUrl, "models"));
-							modelsUrl.searchParams.set("key", input.apiKey);
-							response = await fetch(modelsUrl, {
+					case "gemini": {
+						const modelsUrl = new URL(appendAIProviderPath(apiUrl, "models"));
+						modelsUrl.searchParams.set("key", input.apiKey);
+						response = await fetchWithPublicEgress(
+							modelsUrl,
+							{
 								headers: {},
 								redirect: "error",
-							});
-						}
+							},
+							{ fieldName: "AI provider URL" },
+						);
 						break;
+					}
 					case "perplexity":
 						// Perplexity doesn't have a /models endpoint, return hardcoded list
 						return [
@@ -136,15 +144,20 @@ export const aiRouter = createTRPCRouter({
 							},
 						] as Model[];
 					default:
-						if (!input.apiKey)
+						if (!input.apiKey) {
 							throw new TRPCError({
 								code: "BAD_REQUEST",
 								message: "API key must contain at least 1 character(s)",
 							});
-						response = await fetch(appendAIProviderPath(apiUrl, "models"), {
-							headers,
-							redirect: "error",
-						});
+						}
+						response = await fetchWithPublicEgress(
+							appendAIProviderPath(apiUrl, "models"),
+							{
+								headers,
+								redirect: "error",
+							},
+							{ fieldName: "AI provider URL" },
+						);
 				}
 
 				if (!response.ok) {

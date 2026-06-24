@@ -13,6 +13,7 @@ import {
 	buildRcloneS3Command,
 	getRcloneS3Destination,
 } from "@dokploy/server/utils/backups/utils";
+import { assertDestinationEndpointAllowed } from "@dokploy/server/utils/destination/endpoint";
 import {
 	isRedactedSecretValue,
 	redactSecretFields,
@@ -47,13 +48,26 @@ const assertDestinationServerAccess = async (
 	}
 };
 
+const normalizeDestinationEndpointInput = async <
+	T extends { endpoint: string },
+>(
+	input: T,
+) => ({
+	...input,
+	endpoint: await assertDestinationEndpointAllowed(input.endpoint, {
+		allowPrivateNetwork: !IS_CLOUD,
+		fieldName: "S3 endpoint",
+	}),
+});
+
 export const destinationRouter = createTRPCRouter({
 	create: withPermission("destination", "create")
 		.input(apiCreateDestination)
 		.mutation(async ({ input, ctx }) => {
 			try {
+				const destinationInput = await normalizeDestinationEndpointInput(input);
 				const result = await createDestination(
-					input,
+					destinationInput,
 					ctx.session.activeOrganizationId,
 				);
 				await audit(ctx, {
@@ -85,7 +99,8 @@ export const destinationRouter = createTRPCRouter({
 			}
 
 			try {
-				const rcloneCommand = buildRcloneS3Command("ls", input, [
+				const destinationInput = await normalizeDestinationEndpointInput(input);
+				const rcloneCommand = buildRcloneS3Command("ls", destinationInput, [
 					"--retries",
 					"1",
 					"--low-level-retries",
@@ -94,11 +109,11 @@ export const destinationRouter = createTRPCRouter({
 					"10s",
 					"--contimeout",
 					"5s",
-					getRcloneS3Destination(input),
+					getRcloneS3Destination(destinationInput),
 				]);
 
 				if (IS_CLOUD) {
-					await execAsyncRemote(input.serverId || "", rcloneCommand);
+					await execAsyncRemote(destinationInput.serverId || "", rcloneCommand);
 				} else {
 					await execAsync(rcloneCommand);
 				}
@@ -173,8 +188,9 @@ export const destinationRouter = createTRPCRouter({
 				const secretAccessKey = isRedactedSecretValue(input.secretAccessKey)
 					? destination.secretAccessKey
 					: input.secretAccessKey;
+				const destinationInput = await normalizeDestinationEndpointInput(input);
 				const result = await updateDestinationById(input.destinationId, {
-					...input,
+					...destinationInput,
 					secretAccessKey,
 					organizationId: ctx.session.activeOrganizationId,
 				});

@@ -1,5 +1,6 @@
 import { lookup as lookupHost } from "node:dns/promises";
 import { isIP } from "node:net";
+import { Agent } from "undici";
 
 export type HostAddress = {
 	address: string;
@@ -7,6 +8,11 @@ export type HostAddress = {
 };
 
 export type HostnameLookup = (hostname: string) => Promise<HostAddress[]>;
+
+export type ResolvedPublicHost = {
+	hostname: string;
+	addresses: HostAddress[];
+};
 
 export const normalizeHostname = (hostname: string) =>
 	hostname
@@ -106,16 +112,20 @@ export const assertCloudHostResolvesPublic = async (
 		fieldName?: string;
 		lookup?: HostnameLookup;
 	} = {},
-) => {
+): Promise<ResolvedPublicHost> => {
 	const fieldName = options.fieldName ?? "Host";
 	const normalizedHostname = normalizeHostname(hostname);
+	const ipVersion = isIP(normalizedHostname);
 
 	if (isBlockedCloudHost(normalizedHostname)) {
 		throw new Error(`${fieldName} is not allowed in cloud deployments`);
 	}
 
-	if (isIP(normalizedHostname)) {
-		return;
+	if (ipVersion) {
+		return {
+			hostname: normalizedHostname,
+			addresses: [{ address: normalizedHostname, family: ipVersion }],
+		};
 	}
 
 	const lookup = options.lookup ?? defaultLookup;
@@ -134,5 +144,118 @@ export const assertCloudHostResolvesPublic = async (
 		throw new Error(
 			`${fieldName} resolves to a host that is not allowed in cloud deployments`,
 		);
+	}
+
+	return {
+		hostname: normalizedHostname,
+		addresses,
+	};
+};
+
+type FetchInitWithDispatcher = RequestInit & {
+	dispatcher?: Agent;
+};
+
+type PublicEgressFetchOptions = {
+	allowPrivateNetwork?: boolean;
+	fieldName?: string;
+	lookup?: HostnameLookup;
+};
+
+const resolveAllowPrivateNetwork = (allowPrivateNetwork: boolean | undefined) =>
+	allowPrivateNetwork ?? process.env.IS_CLOUD !== "true";
+
+const createPinnedPublicHostDispatcher = (resolvedHost: ResolvedPublicHost) => {
+	let addressIndex = 0;
+
+	return new Agent({
+		connect: {
+			lookup(hostname, _options, callback) {
+				const normalizedLookupHostname = normalizeHostname(String(hostname));
+				if (normalizedLookupHostname !== resolvedHost.hostname) {
+					callback(
+						new Error(
+							"Outbound request attempted to resolve an unvalidated host",
+						),
+						"",
+						4,
+					);
+					return;
+				}
+
+				const address =
+					resolvedHost.addresses[addressIndex % resolvedHost.addresses.length];
+				addressIndex += 1;
+				if (!address) {
+					callback(
+						new Error("No validated address available for outbound host"),
+						"",
+						4,
+					);
+					return;
+				}
+
+				callback(null, address.address, address.family === 6 ? 6 : 4);
+			},
+		},
+	});
+};
+
+export const fetchWithPublicEgress = async (
+	input: RequestInfo | URL,
+	init: RequestInit = {},
+	options: PublicEgressFetchOptions = {},
+) => {
+	const allowPrivateNetwork = resolveAllowPrivateNetwork(
+		options.allowPrivateNetwork,
+	);
+	if (allowPrivateNetwork) {
+		return fetch(input, init);
+	}
+
+	const fieldName = options.fieldName ?? "Outbound URL";
+	let url: URL;
+	try {
+		url = new URL(input instanceof Request ? input.url : input.toString());
+	} catch {
+		throw new Error(`${fieldName} must be a valid URL`);
+	}
+
+	if (url.protocol !== "https:" && url.protocol !== "http:") {
+		throw new Error(`${fieldName} must use http or https`);
+	}
+
+	if (url.protocol !== "https:") {
+		throw new Error(`${fieldName} must use https in cloud deployments`);
+	}
+
+	if (url.username || url.password) {
+		throw new Error(`${fieldName} must not include credentials`);
+	}
+
+	if (url.hash) {
+		throw new Error(`${fieldName} must not include fragment data`);
+	}
+
+	const resolvedHost = await assertCloudHostResolvesPublic(url.hostname, {
+		fieldName,
+		lookup: options.lookup,
+	});
+	const dispatcher = createPinnedPublicHostDispatcher(resolvedHost);
+
+	try {
+		const response = await fetch(input, {
+			...init,
+			dispatcher,
+		} as FetchInitWithDispatcher);
+		const body = await response.arrayBuffer();
+
+		return new Response(body.byteLength === 0 ? null : body, {
+			headers: response.headers,
+			status: response.status,
+			statusText: response.statusText,
+		});
+	} finally {
+		await dispatcher.close().catch(() => undefined);
 	}
 };

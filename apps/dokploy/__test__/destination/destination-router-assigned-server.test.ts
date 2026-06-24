@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 	findDestinationById: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
 	removeDestinationById: vi.fn(),
+	assertDestinationEndpointAllowed: vi.fn(),
 	updateDestinationById: vi.fn(),
 }));
 
@@ -37,6 +38,10 @@ vi.mock("@dokploy/server/db", () => ({
 
 vi.mock("@dokploy/server/services/permission", () => ({
 	checkPermission: mocks.checkPermission,
+}));
+
+vi.mock("@dokploy/server/utils/destination/endpoint", () => ({
+	assertDestinationEndpointAllowed: mocks.assertDestinationEndpointAllowed,
 }));
 
 vi.mock("@/server/api/utils/audit", () => ({
@@ -81,6 +86,9 @@ describe("destination router assigned-server boundary", () => {
 		mocks.destinationFindMany.mockResolvedValue([]);
 		mocks.execAsync.mockResolvedValue({ stdout: "", stderr: "" });
 		mocks.execAsyncRemote.mockResolvedValue({ stdout: "", stderr: "" });
+		mocks.assertDestinationEndpointAllowed.mockImplementation(
+			async (endpoint: string) => endpoint,
+		);
 		mocks.findDestinationById.mockResolvedValue({
 			destinationId: "destination-1",
 			name: "destination",
@@ -165,6 +173,21 @@ describe("destination router assigned-server boundary", () => {
 		await expect(
 			createCaller().testConnection(destinationInput),
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+	});
+
+	it("rejects unsafe cloud S3 endpoints before remote rclone", async () => {
+		mocks.assertDestinationEndpointAllowed.mockRejectedValueOnce(
+			new Error("S3 endpoint host is not allowed in cloud deployments"),
+		);
+
+		await expect(
+			createCaller().testConnection({
+				...destinationInput,
+				endpoint: "https://169.254.169.254",
+			}),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
 
 		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
 	});

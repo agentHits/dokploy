@@ -7,6 +7,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
 	assertCloudHostResolvesPublic,
+	fetchWithPublicEgress,
 	type HostnameLookup,
 	isBlockedCloudHost,
 	normalizeHostname,
@@ -113,6 +114,12 @@ export function getProviderName(apiUrl: string) {
 	return "custom";
 }
 
+const aiProviderFetch = (input: RequestInfo | URL, init?: RequestInit) => {
+	return fetchWithPublicEgress(input, init, {
+		fieldName: "AI provider URL",
+	});
+};
+
 export function selectAIProvider(config: { apiUrl: string; apiKey: string }) {
 	const apiUrl = normalizeAIProviderApiUrl(config.apiUrl);
 	const providerName = getProviderName(apiUrl);
@@ -122,6 +129,7 @@ export function selectAIProvider(config: { apiUrl: string; apiKey: string }) {
 			return createOpenAI({
 				apiKey: config.apiKey,
 				baseURL: apiUrl,
+				fetch: aiProviderFetch,
 			});
 		case "azure":
 			// Azure OpenAI-compatible endpoints already include /v1 in the path.
@@ -130,6 +138,7 @@ export function selectAIProvider(config: { apiUrl: string; apiKey: string }) {
 				return createOpenAICompatible({
 					name: "azure",
 					baseURL: apiUrl,
+					fetch: aiProviderFetch,
 					headers: {
 						"api-key": config.apiKey,
 						Authorization: `Bearer ${config.apiKey}`,
@@ -139,21 +148,25 @@ export function selectAIProvider(config: { apiUrl: string; apiKey: string }) {
 			return createAzure({
 				apiKey: config.apiKey,
 				baseURL: apiUrl,
+				fetch: aiProviderFetch,
 			});
 		case "anthropic":
 			return createAnthropic({
 				apiKey: config.apiKey,
 				baseURL: apiUrl,
+				fetch: aiProviderFetch,
 			});
 		case "cohere":
 			return createCohere({
 				baseURL: apiUrl,
 				apiKey: config.apiKey,
+				fetch: aiProviderFetch,
 			});
 		case "perplexity":
 			return createOpenAICompatible({
 				name: "perplexity",
 				baseURL: apiUrl,
+				fetch: aiProviderFetch,
 				headers: {
 					Authorization: `Bearer ${config.apiKey}`,
 				},
@@ -162,21 +175,25 @@ export function selectAIProvider(config: { apiUrl: string; apiKey: string }) {
 			return createMistral({
 				baseURL: apiUrl,
 				apiKey: config.apiKey,
+				fetch: aiProviderFetch,
 			});
 		case "ollama":
 			return createOllama({
 				// optional settings, e.g.
 				baseURL: apiUrl,
+				fetch: aiProviderFetch,
 			});
 		case "deepinfra":
 			return createDeepInfra({
 				baseURL: apiUrl,
 				apiKey: config.apiKey,
+				fetch: aiProviderFetch,
 			});
 		case "gemini":
 			return createOpenAICompatible({
 				name: "gemini",
 				baseURL: apiUrl,
+				fetch: aiProviderFetch,
 				headers: {
 					Authorization: `Bearer ${config.apiKey}`,
 				},
@@ -185,6 +202,7 @@ export function selectAIProvider(config: { apiUrl: string; apiKey: string }) {
 			return createOpenAICompatible({
 				name: "openrouter",
 				baseURL: apiUrl,
+				fetch: aiProviderFetch,
 				headers: {
 					Authorization: `Bearer ${config.apiKey}`,
 				},
@@ -193,6 +211,7 @@ export function selectAIProvider(config: { apiUrl: string; apiKey: string }) {
 			return createOpenAICompatible({
 				name: "zai",
 				baseURL: apiUrl,
+				fetch: aiProviderFetch,
 				headers: {
 					Authorization: `Bearer ${config.apiKey}`,
 				},
@@ -201,6 +220,7 @@ export function selectAIProvider(config: { apiUrl: string; apiKey: string }) {
 			return createOpenAICompatible({
 				name: "minimax",
 				baseURL: apiUrl,
+				fetch: aiProviderFetch,
 				headers: {
 					Authorization: `Bearer ${config.apiKey}`,
 				},
@@ -209,6 +229,7 @@ export function selectAIProvider(config: { apiUrl: string; apiKey: string }) {
 			return createOpenAICompatible({
 				name: "custom",
 				baseURL: apiUrl,
+				fetch: aiProviderFetch,
 				headers: {
 					Authorization: `Bearer ${config.apiKey}`,
 				},

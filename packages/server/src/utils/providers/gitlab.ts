@@ -9,6 +9,7 @@ import {
 import type { InferResultType } from "@dokploy/server/types/with";
 import { TRPCError } from "@trpc/server";
 import type { z } from "zod";
+import { fetchWithPublicEgress } from "../url/network";
 import {
 	buildCreateDirectoryCommand,
 	buildGitCloneCommand,
@@ -42,18 +43,22 @@ export const refreshGitlabToken = async (gitlabProviderId: string) => {
 
 	// Use internal URL for token refresh when GitLab is on same instance as Dokploy
 	const baseUrl = await getGitlabProviderBaseUrl(gitlabProvider);
-	const response = await fetch(`${baseUrl}/oauth/token`, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/x-www-form-urlencoded",
+	const response = await fetchWithPublicEgress(
+		new URL("oauth/token", `${baseUrl}/`),
+		{
+			method: "POST",
+			headers: {
+				"Content-Type": "application/x-www-form-urlencoded",
+			},
+			body: new URLSearchParams({
+				grant_type: "refresh_token",
+				refresh_token: gitlabProvider.refreshToken as string,
+				client_id: gitlabProvider.applicationId as string,
+				client_secret: gitlabProvider.secret as string,
+			}),
 		},
-		body: new URLSearchParams({
-			grant_type: "refresh_token",
-			refresh_token: gitlabProvider.refreshToken as string,
-			client_id: gitlabProvider.applicationId as string,
-			client_secret: gitlabProvider.secret as string,
-		}),
-	});
+		{ fieldName: "GitLab provider URL" },
+	);
 
 	if (!response.ok) {
 		throw new Error(`Failed to refresh token: ${response.statusText}`);
@@ -251,13 +256,17 @@ export const getGitlabBranches = async (input: {
 	const baseUrl = await getGitlabProviderBaseUrl(gitlabProvider);
 
 	while (true) {
-		const branchesResponse = await fetch(
-			`${baseUrl}/api/v4/projects/${input.id}/repository/branches?page=${page}&per_page=${perPage}`,
+		const branchesResponse = await fetchWithPublicEgress(
+			new URL(
+				`api/v4/projects/${input.id}/repository/branches?page=${page}&per_page=${perPage}`,
+				`${baseUrl}/`,
+			),
 			{
 				headers: {
 					Authorization: `Bearer ${gitlabProvider.accessToken}`,
 				},
 			},
+			{ fieldName: "GitLab provider URL" },
 		);
 
 		if (!branchesResponse.ok) {
@@ -330,13 +339,17 @@ export const validateGitlabProvider = async (gitlabProvider: Gitlab) => {
 		const baseUrl = await getGitlabProviderBaseUrl(gitlabProvider);
 
 		while (true) {
-			const response = await fetch(
-				`${baseUrl}/api/v4/projects?membership=true&page=${page}&per_page=${perPage}`,
+			const response = await fetchWithPublicEgress(
+				new URL(
+					`api/v4/projects?membership=true&page=${page}&per_page=${perPage}`,
+					`${baseUrl}/`,
+				),
 				{
 					headers: {
 						Authorization: `Bearer ${gitlabProvider.accessToken}`,
 					},
 				},
+				{ fieldName: "GitLab provider URL" },
 			);
 
 			if (!response.ok) {
