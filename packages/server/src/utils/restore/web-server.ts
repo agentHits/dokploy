@@ -1,11 +1,74 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path, { join } from "node:path";
 import { IS_CLOUD, paths } from "@dokploy/server/constants";
 import type { Destination } from "@dokploy/server/services/destination";
 import { buildRcloneS3Command, getRcloneS3Destination } from "../backups/utils";
 import { execAsync } from "../process/execAsync";
 import { normalizeRestoreBackupFile, quoteRestoreShellArg } from "./safe-input";
+
+const WEB_SERVER_ARCHIVE_ROOT = "filesystem";
+const WEB_SERVER_DATABASE_FILES = new Set(["database.sql", "database.sql.gz"]);
+
+export const validateWebServerArchiveMemberPath = (memberPath: string) => {
+	if (typeof memberPath !== "string") {
+		throw new Error("Unsafe backup archive member");
+	}
+
+	if (
+		!memberPath ||
+		memberPath.includes("\0") ||
+		/[\r\n\t]/.test(memberPath) ||
+		memberPath.includes("\\") ||
+		memberPath.startsWith("/") ||
+		/^[A-Za-z]:[\\/]/.test(memberPath) ||
+		memberPath.startsWith("//")
+	) {
+		throw new Error(`Unsafe backup archive member: ${memberPath}`);
+	}
+
+	const withoutTrailingSlash = memberPath.replace(/\/+$/, "");
+	if (!withoutTrailingSlash) {
+		throw new Error(`Unsafe backup archive member: ${memberPath}`);
+	}
+
+	const normalized = path.posix.normalize(withoutTrailingSlash);
+	const segments = normalized.split("/");
+	if (
+		normalized !== withoutTrailingSlash ||
+		normalized === "." ||
+		normalized === ".." ||
+		normalized.startsWith("../") ||
+		segments.includes("..") ||
+		segments.includes(".git")
+	) {
+		throw new Error(`Unsafe backup archive member: ${memberPath}`);
+	}
+
+	if (WEB_SERVER_DATABASE_FILES.has(normalized)) {
+		return;
+	}
+
+	if (
+		normalized === WEB_SERVER_ARCHIVE_ROOT ||
+		normalized.startsWith(`${WEB_SERVER_ARCHIVE_ROOT}/`)
+	) {
+		return;
+	}
+
+	throw new Error(`Unexpected backup archive member: ${memberPath}`);
+};
+
+export const validateWebServerArchiveMembers = (members: string[]) => {
+	const archiveMembers = members.filter((member) => member.trim().length > 0);
+	if (!archiveMembers.length) {
+		throw new Error("Backup archive is empty");
+	}
+
+	for (const member of archiveMembers) {
+		validateWebServerArchiveMemberPath(member);
+	}
+};
 
 export const restoreWebServerBackup = async (
 	destination: Destination,
@@ -56,11 +119,27 @@ export const restoreWebServerBackup = async (
 			);
 			emit(`Files before extraction: ${beforeFiles}`);
 
+			// Validate archive member names before unzip can write any path.
+			emit("Validating backup archive...");
+			const { stdout: archiveListing } = await execAsync(
+				`unzip -Z1 ${quoteRestoreShellArg(localBackupPath)}`,
+			);
+			validateWebServerArchiveMembers(archiveListing.split(/\r?\n/));
+
 			// Extract backup
 			emit("Extracting backup...");
 			await execAsync(
 				`cd ${quoteRestoreShellArg(tempDir)} && unzip ${quoteRestoreShellArg(fileName)} > /dev/null 2>&1`,
 			);
+
+			const { stdout: unsupportedArchiveEntries } = await execAsync(
+				`find ${quoteRestoreShellArg(filesystemPath)} \\( -type l -o -type b -o -type c -o -type p -o -type s \\) -print -quit 2>/dev/null || true`,
+			);
+			if (unsupportedArchiveEntries.trim()) {
+				throw new Error(
+					"Backup archive contains unsupported filesystem entries",
+				);
+			}
 
 			// Restore filesystem first
 			emit("Restoring filesystem...");

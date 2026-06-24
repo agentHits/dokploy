@@ -23,6 +23,31 @@ const normalizeBackupObjectPath = (backupFileName: string) => {
 	return backupObjectPath;
 };
 
+export const buildTarArchivePolicyCommand = (localBackupPath: string) => {
+	const quotedLocalBackupPath = quoteShellArg(localBackupPath);
+	return `
+		echo "Validating backup archive..."
+		tar -tf ${quotedLocalBackupPath} | awk '
+			BEGIN { valid = 1 }
+			{
+				entry = $0
+				if (entry == "" || entry ~ /^\\// || entry ~ /(^|\\/)\\.\\.(\\/|$)/ || entry ~ /\\\\/) {
+					print "Unsafe archive member: " entry > "/dev/stderr"
+					valid = 0
+				}
+			}
+			END { exit valid ? 0 : 1 }
+		'
+		tar -tvf ${quotedLocalBackupPath} | awk '
+			/^[lh]/ {
+				print "Unsupported archive link member: " $0 > "/dev/stderr"
+				exit 1
+			}
+		'
+		echo "Backup archive validation completed ✅"
+	`;
+};
+
 export const restoreVolume = async (
 	id: string,
 	destinationId: string,
@@ -59,12 +84,13 @@ export const restoreVolume = async (
 	echo "Volume name: ${safeVolumeName}"
 	echo "Backup file name: ${backupObjectPath}"
 	echo "Volume backup path: ${volumeBackupPath}"
-	echo "Downloading backup from S3..."
-	mkdir -p ${quotedVolumeBackupPath}
-	${downloadCommand}
-	echo "Download completed ✅"
-	echo "Creating new volume and restoring data..."
-	docker run --rm \
+		echo "Downloading backup from S3..."
+		mkdir -p ${quotedVolumeBackupPath}
+		${downloadCommand}
+		echo "Download completed ✅"
+		${buildTarArchivePolicyCommand(localBackupPath)}
+		echo "Creating new volume and restoring data..."
+		docker run --rm \
 		-v ${quotedVolumeMount} \
 		-v ${quotedBackupMount} \
 		ubuntu \

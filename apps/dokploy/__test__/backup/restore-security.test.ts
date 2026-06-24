@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
 	findProjectById: vi.fn(),
 	findRedisById: vi.fn(),
 	findServerById: vi.fn(),
+	findRestoreBackups: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
 	getS3Credentials: vi.fn(),
 	keepLatestNBackups: vi.fn(),
@@ -135,6 +136,16 @@ vi.mock("@dokploy/server/lib/auth", () => ({
 	validateRequest: vi.fn(),
 }));
 
+vi.mock("@dokploy/server/db", () => ({
+	db: {
+		query: {
+			backups: {
+				findMany: mocks.findRestoreBackups,
+			},
+		},
+	},
+}));
+
 vi.mock("@dokploy/server/services/destination", () => ({
 	findDestinationById: mocks.findDestinationById,
 }));
@@ -205,9 +216,8 @@ const { backupRouter } = await import("../../server/api/routers/backup");
 const { restorePostgresBackup } = await import(
 	"@dokploy/server/utils/restore/postgres"
 );
-const { restoreWebServerBackup } = await import(
-	"@dokploy/server/utils/restore/web-server"
-);
+const { restoreWebServerBackup, validateWebServerArchiveMembers } =
+	await import("@dokploy/server/utils/restore/web-server");
 const { getRestoreCommand } = await import(
 	"@dokploy/server/utils/restore/utils"
 );
@@ -244,6 +254,19 @@ const safeCreateBackupInput = {
 	prefix: "daily",
 	schedule: "0 0 * * *",
 	serviceName: "postgres",
+	userId: "user-1",
+};
+
+const safeWebServerCreateBackupInput = {
+	backupType: "database" as const,
+	database: "dokploy",
+	databaseType: "web-server" as const,
+	destinationId: "destination-1",
+	enabled: false,
+	keepLatestCount: 3,
+	metadata: {},
+	prefix: "daily",
+	schedule: "0 0 * * *",
 	userId: "user-1",
 };
 
@@ -298,6 +321,7 @@ describe("backup destination ownership boundary", () => {
 		vi.clearAllMocks();
 
 		mocks.checkServicePermissionAndAccess.mockResolvedValue(undefined);
+		mocks.checkPermission.mockResolvedValue(undefined);
 		mocks.createBackup.mockResolvedValue({ backupId: "backup-1" });
 		mocks.findBackupById.mockResolvedValue({
 			backupId: "backup-1",
@@ -351,6 +375,44 @@ describe("backup destination ownership boundary", () => {
 		expect(mocks.createBackup).toHaveBeenCalledWith(safeCreateBackupInput);
 	});
 
+	it("requires owner or admin role for service-less web-server backup create", async () => {
+		mocks.findDestinationById.mockResolvedValue({
+			...safeDestination,
+			organizationId: "org-1",
+		});
+
+		await expect(
+			createCaller("member").create(safeWebServerCreateBackupInput),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.createBackup).not.toHaveBeenCalled();
+		expect(mocks.checkServicePermissionAndAccess).not.toHaveBeenCalled();
+	});
+
+	it("allows owner or admin to create same-organization web-server backups", async () => {
+		mocks.findDestinationById.mockResolvedValue({
+			...safeDestination,
+			organizationId: "org-1",
+		});
+		mocks.findBackupById.mockResolvedValue({
+			backupId: "backup-1",
+			backupType: "database",
+			databaseType: "web-server",
+			destinationId: "destination-1",
+			enabled: false,
+			schedule: "0 0 * * *",
+		});
+
+		await expect(
+			createCaller("admin").create(safeWebServerCreateBackupInput),
+		).resolves.toBe(undefined);
+
+		expect(mocks.createBackup).toHaveBeenCalledWith(
+			safeWebServerCreateBackupInput,
+		);
+		expect(mocks.checkServicePermissionAndAccess).not.toHaveBeenCalled();
+	});
+
 	it("allows same-organization destinations on backup update", async () => {
 		mocks.findDestinationById.mockResolvedValue({
 			...safeDestination,
@@ -365,6 +427,80 @@ describe("backup destination ownership boundary", () => {
 			"backup-1",
 			safeUpdateBackupInput,
 		);
+	});
+
+	it("rejects cross-organization service-less backup ids before reading", async () => {
+		mocks.findBackupById.mockResolvedValue({
+			backupId: "backup-1",
+			backupType: "database",
+			databaseType: "web-server",
+			destinationId: "destination-1",
+		});
+		mocks.findDestinationById.mockResolvedValue({
+			...safeDestination,
+			organizationId: "org-2",
+		});
+
+		await expect(
+			createCaller("admin").one({ backupId: "backup-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+	});
+
+	it("rejects non-admin manual web-server backup runs before side effects", async () => {
+		mocks.findBackupById.mockResolvedValue({
+			backupId: "backup-1",
+			backupType: "database",
+			databaseType: "web-server",
+			destinationId: "destination-1",
+		});
+		mocks.findDestinationById.mockResolvedValue({
+			...safeDestination,
+			organizationId: "org-1",
+		});
+
+		await expect(
+			createCaller("member").manualBackupWebServer({ backupId: "backup-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.runWebServerBackup).not.toHaveBeenCalled();
+		expect(mocks.keepLatestNBackups).not.toHaveBeenCalled();
+	});
+
+	it("rejects service-less backup ids on database manual routes before side effects", async () => {
+		mocks.findBackupById.mockResolvedValue({
+			backupId: "backup-1",
+			backupType: "database",
+			databaseType: "web-server",
+			destinationId: "destination-1",
+		});
+
+		await expect(
+			createCaller("admin").manualBackupPostgres({ backupId: "backup-1" }),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(mocks.checkServicePermissionAndAccess).not.toHaveBeenCalled();
+		expect(mocks.findPostgresByBackupId).not.toHaveBeenCalled();
+		expect(mocks.runPostgresBackup).not.toHaveBeenCalled();
+	});
+
+	it("rejects cross-organization manual web-server backup ids before side effects", async () => {
+		mocks.findBackupById.mockResolvedValue({
+			backupId: "backup-1",
+			backupType: "database",
+			databaseType: "web-server",
+			destinationId: "destination-1",
+		});
+		mocks.findDestinationById.mockResolvedValue({
+			...safeDestination,
+			organizationId: "org-2",
+		});
+
+		await expect(
+			createCaller("admin").manualBackupWebServer({ backupId: "backup-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.runWebServerBackup).not.toHaveBeenCalled();
+		expect(mocks.keepLatestNBackups).not.toHaveBeenCalled();
 	});
 });
 
@@ -381,6 +517,24 @@ describe("backup restore route boundary", () => {
 			databaseUser: "dokploy",
 			serverId: null,
 		});
+		mocks.normalizeS3Path.mockImplementation((prefix: string) =>
+			prefix.trim().replace(/^\/+|\/+$/g, "")
+				? `${prefix.trim().replace(/^\/+|\/+$/g, "")}/`
+				: "",
+		);
+		mocks.findRestoreBackups.mockResolvedValue([
+			{
+				appName: "backup-one",
+				backupType: "database",
+				databaseType: "postgres",
+				destinationId: "destination-1",
+				prefix: "prefix",
+				postgres: {
+					appName: "app-one",
+				},
+				postgresId: "postgres-1",
+			},
+		]);
 		mocks.getS3Credentials.mockReturnValue(["--s3-provider", "AWS"]);
 		mocks.restorePostgresBackup.mockResolvedValue(undefined);
 		mocks.restoreWebServerBackup.mockResolvedValue(undefined);
@@ -430,6 +584,31 @@ describe("backup restore route boundary", () => {
 		expect(mocks.restorePostgresBackup).not.toHaveBeenCalled();
 	});
 
+	it("rejects restore files outside the target backup schedule prefix", async () => {
+		await expect(
+			runRestoreSubscription({
+				...safePostgresInput,
+				backupFile: "other-app/prefix/appdb-2026-06-22.sql.gz",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.findPostgresById).not.toHaveBeenCalled();
+		expect(mocks.restorePostgresBackup).not.toHaveBeenCalled();
+	});
+
+	it("allows restore files bound to the target backup schedule prefix", async () => {
+		await expect(runRestoreSubscription(safePostgresInput)).resolves.toBe(
+			undefined,
+		);
+
+		expect(mocks.restorePostgresBackup).toHaveBeenCalledWith(
+			expect.objectContaining({ appName: "app-one" }),
+			safeDestination,
+			safePostgresInput,
+			expect.any(Function),
+		);
+	});
+
 	it("requires owner or admin role for web-server restore", async () => {
 		await expect(
 			runRestoreSubscription(
@@ -446,6 +625,51 @@ describe("backup restore route boundary", () => {
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
 		expect(mocks.restoreWebServerBackup).not.toHaveBeenCalled();
+	});
+
+	it("requires a matching web-server backup schedule before restore side effects", async () => {
+		mocks.findRestoreBackups.mockResolvedValue([]);
+
+		await expect(
+			runRestoreSubscription({
+				backupFile: "dokploy/prefix/webserver-backup-2026-06-22.zip",
+				backupType: "database",
+				databaseId: "",
+				databaseName: "dokploy",
+				databaseType: "web-server",
+				destinationId: "destination-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.restoreWebServerBackup).not.toHaveBeenCalled();
+	});
+
+	it("allows web-server restore files bound to a server backup schedule", async () => {
+		mocks.findRestoreBackups.mockResolvedValue([
+			{
+				appName: "dokploy",
+				backupType: "database",
+				databaseType: "web-server",
+				destinationId: "destination-1",
+				prefix: "prefix",
+			},
+		]);
+		const input = {
+			backupFile: "dokploy/prefix/webserver-backup-2026-06-22.zip",
+			backupType: "database" as const,
+			databaseId: "",
+			databaseName: "dokploy",
+			databaseType: "web-server" as const,
+			destinationId: "destination-1",
+		};
+
+		await expect(runRestoreSubscription(input)).resolves.toBe(undefined);
+
+		expect(mocks.restoreWebServerBackup).toHaveBeenCalledWith(
+			safeDestination,
+			input.backupFile,
+			expect.any(Function),
+		);
 	});
 
 	it("quotes destination fields when listing backup files", async () => {
@@ -506,6 +730,14 @@ describe("backup restore command safety", () => {
 			if (command.includes("ls -la")) {
 				return { stdout: "webserver-backup-2026-06-22.zip\n" };
 			}
+			if (command.startsWith("unzip -Z1")) {
+				return {
+					stdout: "database.sql\nfilesystem/\nfilesystem/config.json\n",
+				};
+			}
+			if (command.startsWith("find ")) {
+				return { stdout: "" };
+			}
 			if (command.includes("database.sql.gz")) {
 				return { stdout: "" };
 			}
@@ -547,6 +779,56 @@ describe("backup restore command safety", () => {
 		).rejects.toThrow("Invalid file path");
 
 		expect(mocks.execAsync).not.toHaveBeenCalled();
+	});
+
+	it("rejects unsafe web-server archive members before extraction", () => {
+		expect(() =>
+			validateWebServerArchiveMembers([
+				"database.sql",
+				"filesystem/",
+				"filesystem/../escape.txt",
+			]),
+		).toThrow("Unsafe backup archive member");
+	});
+
+	it("rejects unexpected web-server archive roots before extraction", () => {
+		expect(() =>
+			validateWebServerArchiveMembers([
+				"database.sql",
+				"filesystem/config.json",
+				"etc/passwd",
+			]),
+		).toThrow("Unexpected backup archive member");
+	});
+
+	it("validates web-server backup archives before unzip extraction", async () => {
+		mocks.execAsync.mockImplementation(async (command: string) => {
+			if (command.includes("ls -la")) {
+				return { stdout: "webserver-backup-2026-06-22.zip\n" };
+			}
+			if (command.startsWith("unzip -Z1")) {
+				return { stdout: "database.sql\n../escape.txt\n" };
+			}
+			return { stdout: "" };
+		});
+
+		await expect(
+			restoreWebServerBackup(
+				safeDestination as never,
+				"dokploy/prefix/webserver-backup-2026-06-22.zip",
+				emit,
+			),
+		).rejects.toThrow("Unsafe backup archive member");
+
+		const commands = mocks.execAsync.mock.calls.map(([command]) =>
+			String(command),
+		);
+		expect(commands.some((command) => command.includes("unzip -Z1"))).toBe(
+			true,
+		);
+		expect(commands.some((command) => command.includes("&& unzip "))).toBe(
+			false,
+		);
 	});
 
 	it("rejects unsafe database names before restore command generation", () => {

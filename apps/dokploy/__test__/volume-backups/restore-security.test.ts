@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 	findMemberByUserId: vi.fn(),
 	findServerById: vi.fn(),
 	findVolumeBackupById: vi.fn(),
+	findVolumeBackups: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
 	getS3Credentials: vi.fn(),
 	paths: vi.fn(),
@@ -102,7 +103,7 @@ vi.mock("@dokploy/server/db", () => ({
 	db: {
 		query: {
 			volumeBackups: {
-				findMany: vi.fn(),
+				findMany: mocks.findVolumeBackups,
 			},
 		},
 	},
@@ -148,6 +149,10 @@ vi.mock("@dokploy/server/utils/backups/utils", async () => {
 		getRcloneS3Destination: (destination: { bucket: string }, path?: string) =>
 			`:s3:${destination.bucket}${path ? `/${path}` : ""}`,
 		getS3Credentials: mocks.getS3Credentials,
+		normalizeS3Path: (prefix: string) =>
+			prefix.trim().replace(/^\/+|\/+$/g, "")
+				? `${prefix.trim().replace(/^\/+|\/+$/g, "")}/`
+				: "",
 	};
 });
 
@@ -187,6 +192,21 @@ const createCaller = () =>
 			role: "admin",
 		},
 	} as never);
+
+const runVolumeRestoreSubscription = async (
+	input: Parameters<
+		ReturnType<typeof createCaller>["restoreVolumeBackupWithLogs"]
+	>[0],
+) => {
+	const stream = await createCaller().restoreVolumeBackupWithLogs(input);
+	await new Promise<void>((resolve, reject) => {
+		stream.subscribe({
+			complete: resolve,
+			error: reject,
+			next: () => undefined,
+		});
+	});
+};
 
 const safeCreateVolumeBackupInput = {
 	applicationId: "app-1",
@@ -425,6 +445,12 @@ describe("volume backup restore command safety", () => {
 		expect(unescapedCommand).toContain(
 			":s3:dokploy-backups/app-one/prefix/data_volume-2026-06-22.tar",
 		);
+		expect(unescapedCommand.indexOf("tar -tf")).toBeGreaterThan(-1);
+		expect(unescapedCommand.indexOf("tar -tf")).toBeLessThan(
+			unescapedCommand.indexOf("tar xvf"),
+		);
+		expect(unescapedCommand).toContain("Unsafe archive member");
+		expect(unescapedCommand).toContain("Unsupported archive link member");
 		expect(unescapedCommand).toContain("/backup/data_volume-2026-06-22.tar");
 		expect(unescapedCommand).not.toContain("/backup/app-one/prefix");
 		expect(unescapedCommand).not.toContain("../");
@@ -446,6 +472,16 @@ describe("volume backup restore access boundary", () => {
 			serverId: "server-1",
 		});
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
+		mocks.findVolumeBackups.mockResolvedValue([
+			{
+				application: { appName: "app-one" },
+				applicationId: "app-1",
+				destinationId: "destination-1",
+				prefix: "prefix",
+				serviceType: "application",
+				volumeName: "data_volume",
+			},
+		]);
 		mocks.restoreVolume.mockResolvedValue("echo restore");
 		mocks.execAsyncStream.mockResolvedValue(undefined);
 		mocks.execAsyncRemote.mockResolvedValue(undefined);
@@ -491,5 +527,42 @@ describe("volume backup restore access boundary", () => {
 		expect(mocks.restoreVolume).not.toHaveBeenCalled();
 		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
 		expect(mocks.execAsyncStream).not.toHaveBeenCalled();
+	});
+
+	it("denies restore objects outside the matching volume-backup schedule", async () => {
+		await expect(
+			createCaller().restoreVolumeBackupWithLogs({
+				backupFileName: "other-app/prefix/data_volume-2026-06-22.tar",
+				destinationId: "destination-1",
+				volumeName: "data_volume",
+				id: "app-1",
+				serviceType: "application",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.restoreVolume).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+		expect(mocks.execAsyncStream).not.toHaveBeenCalled();
+	});
+
+	it("allows restore objects bound to the matching volume-backup schedule", async () => {
+		await expect(
+			runVolumeRestoreSubscription({
+				backupFileName: "app-one/prefix/data_volume-2026-06-22.tar",
+				destinationId: "destination-1",
+				volumeName: "data_volume",
+				id: "app-1",
+				serviceType: "application",
+			}),
+		).resolves.toBe(undefined);
+
+		expect(mocks.restoreVolume).toHaveBeenCalledWith(
+			"app-1",
+			"destination-1",
+			"data_volume",
+			"app-one/prefix/data_volume-2026-06-22.tar",
+			"",
+			"application",
+		);
 	});
 });

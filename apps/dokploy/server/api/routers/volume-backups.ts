@@ -16,13 +16,19 @@ import {
 	volumeBackups,
 } from "@dokploy/server/db/schema";
 import { checkServicePermissionAndAccess } from "@dokploy/server/services/permission";
+import { normalizeS3Path } from "@dokploy/server/utils/backups/utils";
+import { normalizeRelativeFilePath } from "@dokploy/server/utils/filesystem/safe-path";
 import {
 	execAsyncRemote,
 	execAsyncStream,
 } from "@dokploy/server/utils/process/execAsync";
+import {
+	normalizeDockerVolumeName,
+	normalizeVolumeBackupServiceName,
+} from "@dokploy/server/utils/volume-backups/safe-input";
 import { TRPCError } from "@trpc/server";
 import { observable } from "@trpc/server/observable";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
 import { assertDestinationAccess } from "@/server/api/utils/destination-access";
@@ -80,6 +86,86 @@ const hasVolumeBackupServiceBinding = (
 	bindings.some(
 		(existing) => existing.id === binding.id && existing.type === binding.type,
 	);
+
+const getVolumeRestoreServiceAppName = (volumeBackup: {
+	appName: string;
+	application?: { appName: string } | null;
+	compose?: { appName: string } | null;
+	serviceName?: string | null;
+}) => {
+	if (volumeBackup.compose?.appName) {
+		const safeComposeAppName = normalizeVolumeBackupServiceName(
+			volumeBackup.compose.appName,
+		);
+		return volumeBackup.serviceName
+			? `${safeComposeAppName}_${normalizeVolumeBackupServiceName(volumeBackup.serviceName)}`
+			: safeComposeAppName;
+	}
+
+	return normalizeVolumeBackupServiceName(
+		volumeBackup.application?.appName || volumeBackup.appName,
+	);
+};
+
+const assertVolumeRestoreObjectBound = async (input: {
+	backupFileName: string;
+	destinationId: string;
+	id: string;
+	serviceType: "application" | "compose";
+	volumeName: string;
+}) => {
+	const backupObjectPath = normalizeRelativeFilePath(input.backupFileName);
+	if (!backupObjectPath.endsWith(".tar")) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Invalid backup file path",
+		});
+	}
+
+	const safeVolumeName = normalizeDockerVolumeName(input.volumeName);
+	const serviceIdColumn =
+		input.serviceType === "application"
+			? volumeBackups.applicationId
+			: volumeBackups.composeId;
+	const candidateBackups = await db.query.volumeBackups.findMany({
+		where: and(
+			eq(volumeBackups.destinationId, input.destinationId),
+			eq(volumeBackups.serviceType, input.serviceType),
+			eq(volumeBackups.volumeName, safeVolumeName),
+			eq(serviceIdColumn, input.id),
+		),
+		with: {
+			application: true,
+			compose: true,
+			destination: {
+				columns: {
+					accessKey: false,
+					secretAccessKey: false,
+				},
+			},
+		},
+	});
+
+	if (
+		!candidateBackups.some((volumeBackup) => {
+			const expectedPrefix = `${getVolumeRestoreServiceAppName(
+				volumeBackup,
+			)}/${normalizeS3Path(volumeBackup.prefix || "")}`;
+			const suffix = backupObjectPath.slice(expectedPrefix.length);
+			return (
+				backupObjectPath.startsWith(expectedPrefix) &&
+				suffix.startsWith(`${safeVolumeName}-`) &&
+				suffix.endsWith(".tar") &&
+				!suffix.includes("/")
+			);
+		})
+	) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "Backup file is not linked to this volume backup schedule.",
+		});
+	}
+};
 
 export const volumeBackupsRouter = createTRPCRouter({
 	list: protectedProcedure
@@ -350,6 +436,7 @@ export const volumeBackupsRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.id, {
 				volumeBackup: ["restore"],
 			});
+			await assertVolumeRestoreObjectBound(input);
 			return observable<string>((emit) => {
 				const runRestore = async () => {
 					try {

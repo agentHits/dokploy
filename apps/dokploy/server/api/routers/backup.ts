@@ -27,6 +27,8 @@ import {
 	scheduleBackup,
 	updateBackupById,
 } from "@dokploy/server";
+import { db } from "@dokploy/server/db";
+import { backups } from "@dokploy/server/db/schema";
 import { checkServicePermissionAndAccess } from "@dokploy/server/services/permission";
 import { runComposeBackup } from "@dokploy/server/utils/backups/compose";
 import {
@@ -47,7 +49,9 @@ import {
 	restorePostgresBackup,
 	restoreWebServerBackup,
 } from "@dokploy/server/utils/restore";
+import { normalizeRestoreBackupFile } from "@dokploy/server/utils/restore/safe-input";
 import { TRPCError } from "@trpc/server";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
 	createTRPCRouter,
@@ -78,21 +82,222 @@ interface RcloneFile {
 	};
 }
 
+type BackupAction = "create" | "read" | "update" | "delete" | "restore";
+type BackupScheduleWithRelations = Awaited<ReturnType<typeof findBackupById>>;
+type RestoreBackupInput = z.infer<typeof apiRestoreBackup>;
+type BackupAccessCtx = {
+	session: { activeOrganizationId: string };
+	user: { id: string; role: string };
+};
+
+const backupServiceIdFields = [
+	"postgresId",
+	"mysqlId",
+	"mariadbId",
+	"mongoId",
+	"libsqlId",
+	"composeId",
+] as const;
+type BackupServiceIdShape = {
+	[K in (typeof backupServiceIdFields)[number]]?: string | null;
+};
+
+const getBackupServiceId = (backup: BackupServiceIdShape) => {
+	for (const field of backupServiceIdFields) {
+		if (backup[field]) {
+			return backup[field];
+		}
+	}
+};
+
+const assertOwnerOrAdmin = (
+	ctx: { user: { role: string } },
+	message: string,
+) => {
+	if (ctx.user.role !== "owner" && ctx.user.role !== "admin") {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message,
+		});
+	}
+};
+
+const assertWebServerBackupAccess = async (
+	ctx: BackupAccessCtx,
+	backup: Pick<BackupScheduleWithRelations, "destinationId" | "databaseType">,
+	action: BackupAction,
+) => {
+	if (backup.databaseType !== "web-server") {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "Backup is not linked to an accessible service.",
+		});
+	}
+
+	assertOwnerOrAdmin(ctx, `You don't have access to ${action} server backups.`);
+	await assertDestinationAccess(
+		backup.destinationId,
+		ctx.session.activeOrganizationId,
+	);
+};
+
+const assertBackupAccess = async (
+	ctx: BackupAccessCtx,
+	backup: BackupScheduleWithRelations,
+	action: BackupAction,
+) => {
+	const serviceId = getBackupServiceId(backup);
+	if (serviceId) {
+		await checkServicePermissionAndAccess(ctx, serviceId, {
+			backup: [action],
+		});
+		return;
+	}
+
+	await assertWebServerBackupAccess(ctx, backup, action);
+};
+
+const getRestoreObjectExtension = (input: RestoreBackupInput) => {
+	if (input.backupType === "compose") {
+		return input.databaseType === "mongo" ? [".bson.gz"] : [".sql.gz"];
+	}
+	if (input.databaseType === "web-server") {
+		return [".zip"];
+	}
+	return input.databaseType === "mongo" ? [".bson.gz"] : [".sql.gz"];
+};
+
+const getRestoreServiceAppName = (
+	backup: Pick<
+		BackupScheduleWithRelations,
+		| "appName"
+		| "serviceName"
+		| "compose"
+		| "postgres"
+		| "mysql"
+		| "mariadb"
+		| "mongo"
+		| "libsql"
+	>,
+) => {
+	if (backup.compose?.appName) {
+		return backup.serviceName
+			? `${backup.compose.appName}_${backup.serviceName}`
+			: backup.compose.appName;
+	}
+
+	return (
+		backup.postgres?.appName ||
+		backup.mysql?.appName ||
+		backup.mariadb?.appName ||
+		backup.mongo?.appName ||
+		backup.libsql?.appName ||
+		backup.appName
+	);
+};
+
+const isBackupObjectBoundToSchedule = (
+	backup: Pick<
+		BackupScheduleWithRelations,
+		| "appName"
+		| "prefix"
+		| "serviceName"
+		| "compose"
+		| "postgres"
+		| "mysql"
+		| "mariadb"
+		| "mongo"
+		| "libsql"
+	>,
+	objectPath: string,
+) => {
+	const expectedPrefix = `${getRestoreServiceAppName(backup)}/${normalizeS3Path(
+		backup.prefix,
+	)}`;
+	const suffix = objectPath.slice(expectedPrefix.length);
+	return objectPath.startsWith(expectedPrefix) && suffix.length > 0;
+};
+
+const restoreServiceFieldByDatabaseType = {
+	libsql: "libsqlId",
+	mariadb: "mariadbId",
+	mongo: "mongoId",
+	mysql: "mysqlId",
+	postgres: "postgresId",
+} as const;
+
+const assertRestoreBackupObjectBound = async (
+	input: RestoreBackupInput,
+	databaseId: string,
+) => {
+	const { objectPath } = normalizeRestoreBackupFile(
+		input.backupFile,
+		getRestoreObjectExtension(input),
+	);
+
+	const sharedWhere = [
+		eq(backups.destinationId, input.destinationId),
+		eq(backups.backupType, input.backupType),
+		eq(backups.databaseType, input.databaseType),
+	];
+
+	if (input.backupType === "compose") {
+		sharedWhere.push(eq(backups.composeId, databaseId));
+	} else if (input.databaseType !== "web-server") {
+		sharedWhere.push(
+			eq(
+				backups[restoreServiceFieldByDatabaseType[input.databaseType]],
+				databaseId,
+			),
+		);
+	}
+
+	const candidateBackups = await db.query.backups.findMany({
+		where: and(...sharedWhere),
+		with: {
+			compose: true,
+			libsql: true,
+			mariadb: true,
+			mongo: true,
+			mysql: true,
+			postgres: true,
+		},
+	});
+
+	if (
+		!candidateBackups.some((backup) =>
+			isBackupObjectBoundToSchedule(backup, objectPath),
+		)
+	) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "Backup file is not linked to this backup schedule.",
+		});
+	}
+};
+
 export const backupRouter = createTRPCRouter({
 	create: protectedProcedure
 		.input(apiCreateBackup)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				const serviceId =
-					input.postgresId ||
-					input.mysqlId ||
-					input.mariadbId ||
-					input.mongoId ||
-					input.libsqlId ||
-					input.composeId;
+				const serviceId = getBackupServiceId(input);
 				if (serviceId) {
 					await checkServicePermissionAndAccess(ctx, serviceId, {
 						backup: ["create"],
+					});
+				} else if (
+					input.backupType === "database" &&
+					input.databaseType === "web-server"
+				) {
+					assertOwnerOrAdmin(
+						ctx,
+						"You don't have access to create server backups.",
+					);
+				} else {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "Backup must be linked to a service.",
 					});
 				}
 				await assertDestinationAccess(
@@ -164,19 +369,7 @@ export const backupRouter = createTRPCRouter({
 		.input(apiFindOneBackup)
 		.query(async ({ input, ctx }) => {
 			const backup = await findBackupById(input.backupId);
-
-			const serviceId =
-				backup.postgresId ||
-				backup.mysqlId ||
-				backup.mariadbId ||
-				backup.mongoId ||
-				backup.libsqlId ||
-				backup.composeId;
-			if (serviceId) {
-				await checkServicePermissionAndAccess(ctx, serviceId, {
-					backup: ["read"],
-				});
-			}
+			await assertBackupAccess(ctx, backup, "read");
 
 			return backup;
 		}),
@@ -185,18 +378,7 @@ export const backupRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			try {
 				const existing = await findBackupById(input.backupId);
-				const serviceId =
-					existing.postgresId ||
-					existing.mysqlId ||
-					existing.mariadbId ||
-					existing.mongoId ||
-					existing.libsqlId ||
-					existing.composeId;
-				if (serviceId) {
-					await checkServicePermissionAndAccess(ctx, serviceId, {
-						backup: ["update"],
-					});
-				}
+				await assertBackupAccess(ctx, existing, "update");
 				await assertDestinationAccess(
 					input.destinationId,
 					ctx.session.activeOrganizationId,
@@ -249,18 +431,7 @@ export const backupRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			try {
 				const backup = await findBackupById(input.backupId);
-				const serviceId =
-					backup.postgresId ||
-					backup.mysqlId ||
-					backup.mariadbId ||
-					backup.mongoId ||
-					backup.libsqlId ||
-					backup.composeId;
-				if (serviceId) {
-					await checkServicePermissionAndAccess(ctx, serviceId, {
-						backup: ["delete"],
-					});
-				}
+				await assertBackupAccess(ctx, backup, "delete");
 
 				const value = await removeBackupById(input.backupId);
 				if (IS_CLOUD && value) {
@@ -292,11 +463,15 @@ export const backupRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			try {
 				const backup = await findBackupById(input.backupId);
-				if (backup.postgresId) {
-					await checkServicePermissionAndAccess(ctx, backup.postgresId, {
-						backup: ["create"],
+				if (!backup.postgresId) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "Backup is not linked to a Postgres service.",
 					});
 				}
+				await checkServicePermissionAndAccess(ctx, backup.postgresId, {
+					backup: ["create"],
+				});
 				const postgres = await findPostgresByBackupId(backup.backupId);
 				await runPostgresBackup(postgres, backup);
 				await keepLatestNBackups(backup, postgres?.serverId);
@@ -323,11 +498,15 @@ export const backupRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			try {
 				const backup = await findBackupById(input.backupId);
-				if (backup.mysqlId) {
-					await checkServicePermissionAndAccess(ctx, backup.mysqlId, {
-						backup: ["create"],
+				if (!backup.mysqlId) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "Backup is not linked to a MySQL service.",
 					});
 				}
+				await checkServicePermissionAndAccess(ctx, backup.mysqlId, {
+					backup: ["create"],
+				});
 				const mysql = await findMySqlByBackupId(backup.backupId);
 				await runMySqlBackup(mysql, backup);
 				await keepLatestNBackups(backup, mysql?.serverId);
@@ -350,11 +529,15 @@ export const backupRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			try {
 				const backup = await findBackupById(input.backupId);
-				if (backup.mariadbId) {
-					await checkServicePermissionAndAccess(ctx, backup.mariadbId, {
-						backup: ["create"],
+				if (!backup.mariadbId) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "Backup is not linked to a MariaDB service.",
 					});
 				}
+				await checkServicePermissionAndAccess(ctx, backup.mariadbId, {
+					backup: ["create"],
+				});
 				const mariadb = await findMariadbByBackupId(backup.backupId);
 				await runMariadbBackup(mariadb, backup);
 				await keepLatestNBackups(backup, mariadb?.serverId);
@@ -377,11 +560,15 @@ export const backupRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			try {
 				const backup = await findBackupById(input.backupId);
-				if (backup.composeId) {
-					await checkServicePermissionAndAccess(ctx, backup.composeId, {
-						backup: ["create"],
+				if (!backup.composeId) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "Backup is not linked to a Compose service.",
 					});
 				}
+				await checkServicePermissionAndAccess(ctx, backup.composeId, {
+					backup: ["create"],
+				});
 				const compose = await findComposeByBackupId(backup.backupId);
 				await runComposeBackup(compose, backup);
 				await keepLatestNBackups(backup, compose?.serverId);
@@ -404,11 +591,15 @@ export const backupRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			try {
 				const backup = await findBackupById(input.backupId);
-				if (backup.mongoId) {
-					await checkServicePermissionAndAccess(ctx, backup.mongoId, {
-						backup: ["create"],
+				if (!backup.mongoId) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "Backup is not linked to a Mongo service.",
 					});
 				}
+				await checkServicePermissionAndAccess(ctx, backup.mongoId, {
+					backup: ["create"],
+				});
 				const mongo = await findMongoByBackupId(backup.backupId);
 				await runMongoBackup(mongo, backup);
 				await keepLatestNBackups(backup, mongo?.serverId);
@@ -431,11 +622,15 @@ export const backupRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			try {
 				const backup = await findBackupById(input.backupId);
-				if (backup.libsqlId) {
-					await checkServicePermissionAndAccess(ctx, backup.libsqlId, {
-						backup: ["create"],
+				if (!backup.libsqlId) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "Backup is not linked to a LibSQL service.",
 					});
 				}
+				await checkServicePermissionAndAccess(ctx, backup.libsqlId, {
+					backup: ["create"],
+				});
 				const libsql = await findLibsqlByBackupId(backup.backupId);
 				await runLibsqlBackup(libsql, backup);
 				await keepLatestNBackups(backup, libsql?.serverId);
@@ -457,6 +652,7 @@ export const backupRouter = createTRPCRouter({
 		.input(apiFindOneBackup)
 		.mutation(async ({ input, ctx }) => {
 			const backup = await findBackupById(input.backupId);
+			await assertWebServerBackupAccess(ctx, backup, "create");
 			await runWebServerBackup(backup);
 			await keepLatestNBackups(backup);
 			await audit(ctx, {
@@ -568,12 +764,10 @@ export const backupRouter = createTRPCRouter({
 			const databaseId = input.databaseId.trim();
 
 			if (isWebServerRestore) {
-				if (ctx.user.role !== "owner" && ctx.user.role !== "admin") {
-					throw new TRPCError({
-						code: "UNAUTHORIZED",
-						message: "You don't have access to restore server backups.",
-					});
-				}
+				assertOwnerOrAdmin(
+					ctx,
+					"You don't have access to restore server backups.",
+				);
 			} else {
 				if (!databaseId) {
 					throw new TRPCError({
@@ -585,6 +779,7 @@ export const backupRouter = createTRPCRouter({
 					backup: ["restore"],
 				});
 			}
+			await assertRestoreBackupObjectBound(input, databaseId);
 			const queue: string[] = [];
 			let done = false;
 			const onLog = (log: string) => queue.push(log);
