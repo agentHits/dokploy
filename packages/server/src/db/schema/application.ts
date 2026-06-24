@@ -1,3 +1,4 @@
+import { normalizeRelativeFilePath } from "@dokploy/server/utils/filesystem/safe-path";
 import { VALID_BRANCH_REGEX } from "@dokploy/server/utils/git-branch-validation";
 import { relations } from "drizzle-orm";
 import {
@@ -52,6 +53,54 @@ import {
 } from "./shared";
 import { sshKeys } from "./ssh-key";
 import { APP_NAME_MESSAGE, APP_NAME_REGEX, generateAppName } from "./utils";
+
+const isSafeOptionalBuildDirectory = (value: string | null | undefined) => {
+	if (value === null || value === undefined) {
+		return true;
+	}
+
+	const trimmedPath = value.trim().replace(/\\/g, "/");
+	if (!trimmedPath || trimmedPath === "/" || trimmedPath === ".") {
+		return true;
+	}
+
+	try {
+		normalizeRelativeFilePath(value);
+		return true;
+	} catch {
+		return false;
+	}
+};
+
+const isSafeOptionalRelativeFilePath = (value: string | null | undefined) => {
+	if (value === null || value === undefined || value === "") {
+		return true;
+	}
+
+	try {
+		normalizeRelativeFilePath(value);
+		return true;
+	} catch {
+		return false;
+	}
+};
+
+const buildDirectorySchema = z
+	.string()
+	.optional()
+	.refine(isSafeOptionalBuildDirectory, "Invalid file path");
+
+const nullableBuildDirectorySchema = z
+	.string()
+	.nullable()
+	.optional()
+	.refine(isSafeOptionalBuildDirectory, "Invalid file path");
+
+const nullableRelativeFilePathSchema = z
+	.string()
+	.nullable()
+	.optional()
+	.refine(isSafeOptionalRelativeFilePath, "Invalid file path");
 export const sourceType = pgEnum("sourceType", [
 	"docker",
 	"git",
@@ -323,12 +372,17 @@ const createSchema = createInsertSchema(applications, {
 	registryUrl: z.string().nullable().optional(),
 	customGitSSHKeyId: z.string().nullable().optional(),
 	repository: z.string().optional(),
-	dockerfile: z.string().nullable().optional(),
+	dockerfile: nullableRelativeFilePathSchema,
+	dockerContextPath: nullableBuildDirectorySchema,
 	branch: z.string().optional(),
 	customGitBranch: z.string().optional(),
-	customGitBuildPath: z.string().optional(),
+	customGitBuildPath: buildDirectorySchema,
 	customGitUrl: z.string().optional(),
-	buildPath: z.string().optional(),
+	buildPath: buildDirectorySchema,
+	gitlabBuildPath: buildDirectorySchema,
+	bitbucketBuildPath: buildDirectorySchema,
+	giteaBuildPath: buildDirectorySchema,
+	dropBuildPath: buildDirectorySchema,
 	environmentId: z.string(),
 	sourceType: z
 		.enum(["github", "docker", "git", "gitlab", "bitbucket", "gitea", "drop"])
@@ -345,7 +399,7 @@ const createSchema = createInsertSchema(applications, {
 	]),
 	railpackVersion: z.string().nullable().optional(),
 	herokuVersion: z.string().nullable().optional(),
-	publishDirectory: z.string().nullable().optional(),
+	publishDirectory: nullableRelativeFilePathSchema,
 	isStaticSpa: z.boolean().nullable().optional(),
 	createEnvFile: z.boolean().optional(),
 	owner: z.string(),

@@ -57,17 +57,25 @@ describe("getBuildComposeCommand command boundary", () => {
 			...baseCompose,
 			sourceType: "github",
 			composeType: "docker-compose",
-			composePath: "deploy/docker compose.yml; touch /tmp/pwn",
+			composePath: "deploy/docker compose.yml",
 		});
 
 		expect(command).toContain(
-			"compose -p my-app -f 'deploy/docker compose.yml; touch /tmp/pwn' up -d --build --remove-orphans",
+			"compose -p my-app -f 'deploy/docker compose.yml' up -d --build --remove-orphans",
 		);
-		expect(command).toMatch(/base64 -d > '[^']*; touch \/tmp\/\.env';/);
-		expect(command).not.toContain(
-			"-f deploy/docker compose.yml; touch /tmp/pwn up",
-		);
-		expect(command).not.toContain("base64 -d > /Users");
+		expect(command).toMatch(/base64 -d > .*deploy\/\.env;/);
+		expect(command).not.toContain("-f deploy/docker compose.yml up");
+	});
+
+	it("rejects unsafe compose file paths before building compose commands", async () => {
+		await expect(
+			getBuildComposeCommand({
+				...baseCompose,
+				sourceType: "github",
+				composeType: "docker-compose",
+				composePath: "deploy/docker compose.yml; touch /tmp/pwn",
+			}),
+		).rejects.toThrow("Invalid file path");
 	});
 
 	it("preserves quoted custom compose command arguments as argv", async () => {

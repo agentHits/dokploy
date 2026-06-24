@@ -28,14 +28,14 @@ describe("getDockerCommand command boundary", () => {
 			appName: "my app; touch /tmp/pwn",
 			buildPath: "apps/api dir",
 			buildArgs: "SAFE=va lue; touch /tmp/pwn",
-			dockerfile: "Docker file; touch /tmp/pwn",
-			dockerContextPath: "apps/api dir; touch /tmp/pwn",
+			dockerfile: "Docker file",
+			dockerContextPath: "apps/api dir",
 			dockerBuildStage: "prod stage; touch /tmp/pwn",
 		});
 
-		expect(command).toMatch(/cd '[^']*apps\/api dir; touch \/tmp\/pwn'/);
+		expect(command).toMatch(/cd '[^']*apps\/api dir'/);
 		expect(command).toMatch(
-			/docker build -t 'my app; touch \/tmp\/pwn' -f '[^']*Docker file; touch \/tmp\/pwn' \. --target 'prod stage; touch \/tmp\/pwn'/,
+			/docker build -t 'my app; touch \/tmp\/pwn' -f '[^']*Docker file' \. --target 'prod stage; touch \/tmp\/pwn'/,
 		);
 		expect(command).toContain("--build-arg 'SAFE=va lue; touch /tmp/pwn'");
 		expect(command).not.toMatch(/\ncd [^']/);
@@ -44,17 +44,30 @@ describe("getDockerCommand command boundary", () => {
 		expect(command).not.toContain("--build-arg SAFE=va lue; touch /tmp/pwn");
 	});
 
+	it("rejects unsafe dockerfile and context paths", () => {
+		for (const pathField of [
+			{ buildPath: "apps/api; touch /tmp/pwn" },
+			{ dockerfile: "Dockerfile; touch /tmp/pwn" },
+			{ dockerContextPath: "apps/api; touch /tmp/pwn" },
+		]) {
+			expect(() =>
+				getDockerCommand({
+					...baseApplication,
+					...pathField,
+				}),
+			).toThrow("Invalid file path");
+		}
+	});
+
 	it("quotes generated env file redirection paths", () => {
 		const command = getDockerCommand({
 			...baseApplication,
-			buildPath: "apps/api dir; touch /tmp/pwn",
+			buildPath: "apps/api dir",
 			createEnvFile: true,
 			env: "SAFE=value",
 		});
 
-		expect(command).toMatch(
-			/base64 -d > '[^']*apps\/api dir; touch \/tmp\/pwn\/\.env';/,
-		);
+		expect(command).toMatch(/base64 -d > '[^']*apps\/api dir\/\.env';/);
 		expect(command).not.toContain("base64 -d > /Users");
 	});
 

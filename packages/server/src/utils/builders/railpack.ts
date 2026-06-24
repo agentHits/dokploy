@@ -1,12 +1,16 @@
 import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
-import { quote } from "shell-quote";
 import {
 	parseEnvironmentKeyValuePair,
 	prepareEnvironmentVariables,
-	prepareEnvironmentVariablesForShell,
 } from "../docker/utils";
 import { getBuildAppDirectory } from "../filesystem/directory";
+import {
+	assertEnvironmentVariableName,
+	quoteEnvironmentAssignment,
+	quoteShellArgs,
+	quoteShellArgument,
+} from "../shell";
 import type { ApplicationNested } from ".";
 
 const calculateSecretsHash = (envVariables: string[]): string => {
@@ -20,7 +24,7 @@ const calculateSecretsHash = (envVariables: string[]): string => {
 export const getRailpackCommand = (application: ApplicationNested) => {
 	const { env, appName, cleanCache } = application;
 	const buildAppDirectory = getBuildAppDirectory(application);
-	const envVariables = prepareEnvironmentVariablesForShell(
+	const envVariables = prepareEnvironmentVariables(
 		env,
 		application.environment.project.env,
 		application.environment.env,
@@ -80,8 +84,9 @@ export const getRailpackCommand = (application: ApplicationNested) => {
 	for (const pair of rawEnvVariables) {
 		const [key, value] = parseEnvironmentKeyValuePair(pair);
 		if (key && value) {
-			buildArgs.push("--secret", `id=${key},env=${key}`);
-			exportEnvs.push(`export ${key}=${quote([value])}`);
+			const safeKey = assertEnvironmentVariableName(key);
+			buildArgs.push("--secret", `id=${safeKey},env=${safeKey}`);
+			exportEnvs.push(`export ${quoteEnvironmentAssignment(safeKey, value)}`);
 		}
 	}
 
@@ -91,14 +96,14 @@ export const getRailpackCommand = (application: ApplicationNested) => {
 
 # Ensure we have a builder with containerd (isolated per build)
 
-export RAILPACK_VERSION=${application.railpackVersion}
+export RAILPACK_VERSION=${quoteShellArgument(application.railpackVersion || "")}
 bash -c "$(curl -fsSL https://railpack.com/install.sh)"
-docker buildx create --name ${builderName} --driver docker-container || true
+${quoteShellArgs(["docker", "buildx", "create", "--name", builderName, "--driver", "docker-container"])} || true
 
 echo "Preparing Railpack build plan..." ;
-railpack ${prepareArgs.join(" ")} || {
+${quoteShellArgs(["railpack", ...prepareArgs])} || {
 	echo "❌ Railpack prepare failed" ;
-	docker buildx rm ${builderName} || true
+	${quoteShellArgs(["docker", "buildx", "rm", builderName])} || true
 	exit 1;
 }
 echo "✅ Railpack prepare completed." ;
@@ -106,13 +111,13 @@ echo "✅ Railpack prepare completed." ;
 echo "Building with Railpack frontend..." ;
 # Export environment variables for secrets
 ${exportEnvs.join("\n")}
-docker ${buildArgs.join(" ")} || {
+${quoteShellArgs(["docker", ...buildArgs])} || {
 	echo "❌ Railpack build failed" ;
-	docker buildx rm ${builderName} || true
+	${quoteShellArgs(["docker", "buildx", "rm", builderName])} || true
 	exit 1;
 }
 echo "✅ Railpack build completed." ;
-docker buildx rm ${builderName} || true
+${quoteShellArgs(["docker", "buildx", "rm", builderName])} || true
 `;
 
 	return bashCommand;

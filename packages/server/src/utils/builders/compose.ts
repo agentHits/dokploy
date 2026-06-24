@@ -9,6 +9,7 @@ import {
 	getEnvironmentVariablesObject,
 	prepareEnvironmentVariables,
 } from "../docker/utils";
+import { normalizeRelativeFilePath } from "../filesystem/safe-path";
 import {
 	quoteEnvironmentAssignment,
 	quoteShellArgs,
@@ -113,7 +114,9 @@ export const createCommand = (compose: ComposeNested) => {
 	}
 
 	const path =
-		sourceType === "raw" ? "docker-compose.yml" : compose.composePath;
+		sourceType === "raw"
+			? "docker-compose.yml"
+			: normalizeRelativeFilePath(compose.composePath);
 
 	if (composeType === "docker-compose") {
 		return quoteShellArgs([
@@ -146,9 +149,10 @@ export const createCommand = (compose: ComposeNested) => {
 export const getCreateEnvFileCommand = (compose: ComposeNested) => {
 	const { COMPOSE_PATH } = paths(!!compose.serverId);
 	const { env, composePath, appName } = compose;
-	const composeFilePath =
-		join(COMPOSE_PATH, appName, "code", composePath) ||
-		join(COMPOSE_PATH, appName, "code", "docker-compose.yml");
+	const safeComposePath = normalizeRelativeFilePath(
+		composePath || "docker-compose.yml",
+	);
+	const composeFilePath = join(COMPOSE_PATH, appName, "code", safeComposePath);
 
 	const envFilePath = join(dirname(composeFilePath), ".env");
 
@@ -173,8 +177,8 @@ export const getCreateEnvFileCommand = (compose: ComposeNested) => {
 	const quotedEnvFilePath = quoteShellArgument(envFilePath);
 	return `
 touch ${quotedEnvFilePath};
-echo "${encodedContent}" | base64 -d > ${quotedEnvFilePath};
-	`;
+printf %s ${quoteShellArgument(encodedContent)} | base64 -d > ${quotedEnvFilePath};
+		`;
 };
 
 const getExportEnvCommand = (compose: ComposeNested) => {
