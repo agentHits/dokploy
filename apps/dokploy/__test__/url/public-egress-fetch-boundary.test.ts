@@ -1,9 +1,20 @@
-import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
+import {
+	fetchWithPublicEgress,
+	isBlockedCloudHost,
+} from "@dokploy/server/utils/url/network";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 describe("public egress fetch boundary", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
+	});
+
+	it("blocks the full IPv6 link-local range", () => {
+		for (const hostname of ["fe80::1", "fe90::1", "fea0::1", "febf::1"]) {
+			expect(isBlockedCloudHost(hostname)).toBe(true);
+		}
+
+		expect(isBlockedCloudHost("fec0::1")).toBe(false);
 	});
 
 	it("rejects public-looking hosts that resolve to private addresses before fetch", async () => {

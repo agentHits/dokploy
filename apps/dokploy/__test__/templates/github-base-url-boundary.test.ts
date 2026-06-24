@@ -58,6 +58,7 @@ describe("template GitHub base URL boundary", () => {
 		["IPv6 loopback IP", "https://[::1]"],
 		["IPv6 mapped loopback IP", "https://[::ffff:127.0.0.1]"],
 		["IPv6 link-local IP", "https://[fe80::1]"],
+		["IPv6 upper link-local IP", "https://[febf::1]"],
 		["link-local metadata IP", "https://169.254.169.254/latest"],
 		["URL credentials", "https://user:pass@templates.example.com"],
 		["path-prefixed source", "https://templates.example.com/custom"],

@@ -135,6 +135,7 @@ describe("notification secret and outbound target boundaries", () => {
 			"http://127.0.0.1:8080/webhook",
 			"https://169.254.169.254/latest/meta-data",
 			"https://[::1]/webhook",
+			"https://[fea0::1]/webhook",
 			"https://webhook.internal/path",
 			"https://hooks",
 			"https://user:pass@example.com/webhook",

@@ -79,12 +79,17 @@ const isBlockedIPv4 = (hostname: string) => {
 const isBlockedIPv6 = (hostname: string) => {
 	const lowerHostname = hostname.toLowerCase();
 	const firstHextet = lowerHostname.split(":")[0] ?? "";
+	const firstHextetValue = Number.parseInt(firstHextet, 16);
+	const isLinkLocal =
+		Number.isInteger(firstHextetValue) &&
+		(firstHextetValue & 0xffc0) === 0xfe80;
+
 	return (
 		lowerHostname === "::" ||
 		lowerHostname === "::1" ||
 		lowerHostname.startsWith("::ffff:") ||
 		lowerHostname.startsWith("2001:db8:") ||
-		lowerHostname.startsWith("fe80:") ||
+		isLinkLocal ||
 		firstHextet.startsWith("fc") ||
 		firstHextet.startsWith("fd") ||
 		firstHextet.startsWith("ff")

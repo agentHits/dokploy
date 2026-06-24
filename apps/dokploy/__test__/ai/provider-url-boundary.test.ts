@@ -12,6 +12,7 @@ describe("AI provider URL boundary", () => {
 			"https://127.0.0.1:11434",
 			"https://169.254.169.254/latest",
 			"https://[::1]:11434",
+			"https://[fe90::1]:11434",
 			"https://user:pass@api.openai.com/v1",
 			"https://api.openai.com/v1?debug=true",
 			"https://ollama",
