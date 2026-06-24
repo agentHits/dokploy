@@ -9,7 +9,7 @@ const dangerousDestination = {
 	secretAccessKey: "secret$(id)",
 	bucket: "bucket$(id);touch",
 	region: "us-east-1; touch /tmp/region",
-	endpoint: "https://s3.example.com/$(id)",
+	endpoint: "https://s3.example.com:9000",
 	additionalFlags: ["--s3-sign-accept-encoding=false"],
 	organizationId: "org-1",
 	createdAt: new Date("2026-06-23T00:00:00.000Z"),
