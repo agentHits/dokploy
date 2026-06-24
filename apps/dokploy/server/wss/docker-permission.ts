@@ -1,4 +1,7 @@
-import { checkPermission } from "@dokploy/server/services/permission";
+import {
+	checkPermission,
+	findMemberByUserId,
+} from "@dokploy/server/services/permission";
 import { getAccessibleServerIds } from "@dokploy/server/services/server";
 
 type DockerWebSocketAuthContext = {
@@ -27,6 +30,13 @@ const canAccessDockerByPermission = async ({
 			},
 			{ docker: [permission] },
 		);
+		const member = await findMemberByUserId(
+			user.id,
+			session.activeOrganizationId,
+		);
+		if (member.role !== "owner" && member.role !== "admin") {
+			return false;
+		}
 		if (serverId) {
 			const accessibleIds = await getAccessibleServerIds({
 				userId: user.id,

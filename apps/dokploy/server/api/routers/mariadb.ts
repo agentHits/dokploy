@@ -30,6 +30,7 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
+import { redactDatabaseServiceSecrets } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { observable } from "@trpc/server/observable";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
@@ -112,7 +113,7 @@ export const mariadbRouter = createTRPCRouter({
 					resourceId: newMariadb.mariadbId,
 					resourceName: newMariadb.appName,
 				});
-				return newMariadb;
+				return redactDatabaseServiceSecrets(newMariadb);
 			} catch (error) {
 				if (error instanceof TRPCError) {
 					throw error;
@@ -134,7 +135,7 @@ export const mariadbRouter = createTRPCRouter({
 					message: "You are not authorized to access this Mariadb",
 				});
 			}
-			return mariadb;
+			return redactDatabaseServiceSecrets(mariadb);
 		}),
 
 	start: protectedProcedure
@@ -159,7 +160,7 @@ export const mariadbRouter = createTRPCRouter({
 				resourceId: service.mariadbId,
 				resourceName: service.appName,
 			});
-			return service;
+			return redactDatabaseServiceSecrets(service);
 		}),
 	stop: protectedProcedure
 		.input(apiFindOneMariaDB)
@@ -184,7 +185,7 @@ export const mariadbRouter = createTRPCRouter({
 				resourceId: mariadb.mariadbId,
 				resourceName: mariadb.appName,
 			});
-			return mariadb;
+			return redactDatabaseServiceSecrets(mariadb);
 		}),
 	saveExternalPort: protectedProcedure
 		.input(apiSaveExternalPortMariaDB)
@@ -217,7 +218,7 @@ export const mariadbRouter = createTRPCRouter({
 				resourceId: mariadb.mariadbId,
 				resourceName: mariadb.appName,
 			});
-			return mariadb;
+			return redactDatabaseServiceSecrets(mariadb);
 		}),
 	deploy: protectedProcedure
 		.input(apiDeployMariaDB)
@@ -233,7 +234,8 @@ export const mariadbRouter = createTRPCRouter({
 				resourceId: mariadb.mariadbId,
 				resourceName: mariadb.appName,
 			});
-			return deployMariadb(input.mariadbId);
+			const deployedMariadb = await deployMariadb(input.mariadbId);
+			return redactDatabaseServiceSecrets(deployedMariadb);
 		}),
 	deployWithLogs: protectedProcedure
 		.meta({
@@ -272,7 +274,7 @@ export const mariadbRouter = createTRPCRouter({
 				resourceId: mongo.mariadbId,
 				resourceName: mongo.appName,
 			});
-			return mongo;
+			return redactDatabaseServiceSecrets(mongo);
 		}),
 	remove: protectedProcedure
 		.input(apiFindOneMariaDB)
@@ -309,7 +311,7 @@ export const mariadbRouter = createTRPCRouter({
 				} catch (_) {}
 			}
 
-			return mongo;
+			return redactDatabaseServiceSecrets(mongo);
 		}),
 	saveEnvironment: protectedProcedure
 		.input(apiSaveEnvironmentVariablesMariaDB)
@@ -491,7 +493,7 @@ export const mariadbRouter = createTRPCRouter({
 				resourceId: updatedMariadb.mariadbId,
 				resourceName: updatedMariadb.appName,
 			});
-			return updatedMariadb;
+			return redactDatabaseServiceSecrets(updatedMariadb);
 		}),
 	rebuild: protectedProcedure
 		.input(apiRebuildMariadb)

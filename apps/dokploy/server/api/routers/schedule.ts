@@ -26,10 +26,74 @@ import { assertTargetServerAccess } from "@/server/api/utils/placement-access";
 import { removeJob, schedule } from "@/server/utils/backup";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 
+const scheduleBindingError = () =>
+	new TRPCError({
+		code: "FORBIDDEN",
+		message: "Changing schedule service or server binding is not allowed.",
+	});
+
+const resolveCreateScheduleType = (input: {
+	applicationId?: string | null;
+	composeId?: string | null;
+	scheduleType?: "application" | "compose" | "server" | "dokploy-server";
+}) => {
+	if (input.applicationId && input.composeId) {
+		throw scheduleBindingError();
+	}
+
+	if (input.applicationId) {
+		if (input.scheduleType && input.scheduleType !== "application") {
+			throw scheduleBindingError();
+		}
+		return "application" as const;
+	}
+
+	if (input.composeId) {
+		if (input.scheduleType && input.scheduleType !== "compose") {
+			throw scheduleBindingError();
+		}
+		return "compose" as const;
+	}
+
+	if (!input.scheduleType || input.scheduleType === "application") {
+		throw scheduleBindingError();
+	}
+
+	if (input.scheduleType === "compose") {
+		throw scheduleBindingError();
+	}
+
+	return input.scheduleType;
+};
+
+const assertScheduleBindingUnchanged = (
+	existingSchedule: Awaited<ReturnType<typeof findScheduleById>>,
+	input: z.infer<typeof updateScheduleSchema>,
+) => {
+	const fields = [
+		"scheduleType",
+		"applicationId",
+		"composeId",
+		"serverId",
+		"organizationId",
+	] as const;
+
+	for (const field of fields) {
+		const inputValue = input[field];
+		if (
+			inputValue !== undefined &&
+			inputValue !== (existingSchedule[field] ?? null)
+		) {
+			throw scheduleBindingError();
+		}
+	}
+};
+
 export const scheduleRouter = createTRPCRouter({
 	create: protectedProcedure
 		.input(createScheduleSchema)
 		.mutation(async ({ input, ctx }) => {
+			const scheduleType = resolveCreateScheduleType(input);
 			const serviceId = input.applicationId || input.composeId;
 			if (serviceId) {
 				await checkServicePermissionAndAccess(ctx, serviceId, {
@@ -69,7 +133,8 @@ export const scheduleRouter = createTRPCRouter({
 			}
 			const newSchedule = await createSchedule({
 				...input,
-				...(input.scheduleType === "dokploy-server" && {
+				scheduleType,
+				...(scheduleType === "dokploy-server" && {
 					organizationId: ctx.session.activeOrganizationId,
 				}),
 			});
@@ -99,6 +164,7 @@ export const scheduleRouter = createTRPCRouter({
 		.input(updateScheduleSchema)
 		.mutation(async ({ input, ctx }) => {
 			const existingSchedule = await findScheduleById(input.scheduleId);
+			assertScheduleBindingUnchanged(existingSchedule, input);
 
 			if (
 				IS_CLOUD &&

@@ -40,6 +40,8 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
+import { assertCustomGitUrlAllowed } from "@dokploy/server/utils/providers/git";
+import { redactDeployableServiceSecrets } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -128,7 +130,7 @@ export const applicationRouter = createTRPCRouter({
 					resourceId: newApplication.applicationId,
 					resourceName: newApplication.appName,
 				});
-				return newApplication;
+				return redactDeployableServiceSecrets(newApplication);
 			} catch (error: unknown) {
 				console.log("error", error);
 				if (error instanceof TRPCError) {
@@ -188,7 +190,9 @@ export const applicationRouter = createTRPCRouter({
 			}
 
 			return {
-				...redactGitProviderSecrets(application),
+				...redactDeployableServiceSecrets(
+					redactGitProviderSecrets(application),
+				),
 				hasGitProviderAccess,
 				unauthorizedProvider,
 			};
@@ -276,7 +280,7 @@ export const applicationRouter = createTRPCRouter({
 				resourceId: application.applicationId,
 				resourceName: application.appName,
 			});
-			return application;
+			return redactDeployableServiceSecrets(application);
 		}),
 
 	stop: protectedProcedure
@@ -298,7 +302,7 @@ export const applicationRouter = createTRPCRouter({
 				resourceId: service.applicationId,
 				resourceName: service.appName,
 			});
-			return service;
+			return redactDeployableServiceSecrets(service);
 		}),
 
 	start: protectedProcedure
@@ -320,7 +324,7 @@ export const applicationRouter = createTRPCRouter({
 				resourceId: service.applicationId,
 				resourceName: service.appName,
 			});
-			return service;
+			return redactDeployableServiceSecrets(service);
 		}),
 
 	redeploy: protectedProcedure
@@ -570,6 +574,7 @@ export const applicationRouter = createTRPCRouter({
 				{ customGitSSHKeyId: input.customGitSSHKeyId },
 				ctx.session,
 			);
+			await assertCustomGitUrlAllowed(input.customGitUrl);
 			await updateApplication(input.applicationId, {
 				customGitBranch: input.customGitBranch,
 				customGitBuildPath: input.customGitBuildPath,
@@ -942,7 +947,7 @@ export const applicationRouter = createTRPCRouter({
 				resourceId: updatedApplication.applicationId,
 				resourceName: updatedApplication.appName,
 			});
-			return updatedApplication;
+			return redactDeployableServiceSecrets(updatedApplication);
 		}),
 
 	cancelDeployment: protectedProcedure

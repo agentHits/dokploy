@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	extractCommitMessage,
 	extractImageName,
 	extractImageTag,
 	extractImageTagFromRequest,
+	rejectNonPostDeployWebhook,
 } from "@/pages/api/deploy/[refreshToken]";
 
 describe("GitHub Webhook Skip CI", () => {
@@ -110,6 +111,43 @@ describe("GitHub Webhook Skip CI", () => {
 		expect(extractCommitMessage({ "x-softserve-event": "push" }, {})).toBe(
 			"NEW COMMIT",
 		);
+	});
+});
+
+describe("generic refresh-token deploy method boundary", () => {
+	const createResponse = () => {
+		const response = {
+			json: vi.fn(),
+			setHeader: vi.fn(),
+			status: vi.fn(),
+		};
+		response.status.mockReturnValue(response);
+		return response;
+	};
+
+	it("rejects non-POST deploy webhook requests before state-changing work", () => {
+		const response = createResponse();
+
+		expect(
+			rejectNonPostDeployWebhook({ method: "GET" } as never, response as never),
+		).toBe(true);
+		expect(response.setHeader).toHaveBeenCalledWith("Allow", "POST");
+		expect(response.status).toHaveBeenCalledWith(405);
+		expect(response.json).toHaveBeenCalledWith({
+			message: "Method Not Allowed",
+		});
+	});
+
+	it("allows POST deploy webhook requests through the shared gate", () => {
+		const response = createResponse();
+
+		expect(
+			rejectNonPostDeployWebhook(
+				{ method: "POST" } as never,
+				response as never,
+			),
+		).toBe(false);
+		expect(response.status).not.toHaveBeenCalled();
 	});
 });
 

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 	containerRestart: vi.fn(),
 	containerStart: vi.fn(),
 	containerStop: vi.fn(),
+	findMemberByUserId: vi.fn(),
 	findServerById: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
 	getConfig: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("@dokploy/server", () => ({
 
 vi.mock("@dokploy/server/services/permission", () => ({
 	checkPermission: mocks.checkPermission,
+	findMemberByUserId: mocks.findMemberByUserId,
 }));
 
 vi.mock("@/server/api/utils/audit", () => ({
@@ -65,6 +67,7 @@ describe("docker router assigned-server boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.findMemberByUserId.mockResolvedValue({ role: "admin" });
 		mocks.findServerById.mockResolvedValue({
 			serverId: "server-1",
 			organizationId: "org-1",
@@ -108,6 +111,17 @@ describe("docker router assigned-server boundary", () => {
 			activeOrganizationId: "org-1",
 		});
 		expect(mocks.getContainers).toHaveBeenCalledWith("server-1");
+	});
+
+	it("denies non-admin docker host operations before Docker service access", async () => {
+		mocks.findMemberByUserId.mockResolvedValue({ role: "member" });
+
+		await expect(
+			createCaller().getContainers({ serverId: "server-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
+		expect(mocks.getContainers).not.toHaveBeenCalled();
 	});
 
 	it("keeps local container mutations available without remote server checks", async () => {

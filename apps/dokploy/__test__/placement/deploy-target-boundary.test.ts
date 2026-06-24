@@ -1,3 +1,4 @@
+import { REDACTED_SECRET_VALUE } from "@dokploy/server/utils/security/redaction";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const serverMocks = vi.hoisted(() => ({
@@ -56,6 +57,14 @@ const templateMocks = vi.hoisted(() => ({
 
 const auditMocks = vi.hoisted(() => ({
 	audit: vi.fn(),
+}));
+
+const aiServiceMocks = vi.hoisted(() => ({
+	deleteAiSettings: vi.fn(),
+	getAiSettingById: vi.fn(),
+	getAiSettingsByOrganizationId: vi.fn(),
+	saveAiSettings: vi.fn(),
+	suggestVariants: vi.fn(),
 }));
 
 vi.mock("@dokploy/server", () => ({
@@ -149,11 +158,11 @@ vi.mock("@dokploy/server/index", () => ({
 }));
 
 vi.mock("@dokploy/server/services/ai", () => ({
-	deleteAiSettings: vi.fn(),
-	getAiSettingById: vi.fn(),
-	getAiSettingsByOrganizationId: vi.fn(),
-	saveAiSettings: vi.fn(),
-	suggestVariants: vi.fn(),
+	deleteAiSettings: aiServiceMocks.deleteAiSettings,
+	getAiSettingById: aiServiceMocks.getAiSettingById,
+	getAiSettingsByOrganizationId: aiServiceMocks.getAiSettingsByOrganizationId,
+	saveAiSettings: aiServiceMocks.saveAiSettings,
+	suggestVariants: aiServiceMocks.suggestVariants,
 }));
 
 vi.mock("@dokploy/server/services/compose", () => ({
@@ -305,6 +314,13 @@ describe("deploy target placement ownership boundary", () => {
 			composeId: "compose-1",
 			name: "compose",
 		});
+		aiServiceMocks.suggestVariants.mockResolvedValue([
+			{
+				id: "suggestion-1",
+				name: "Suggestion",
+				dockerCompose: "services: {}",
+			},
+		]);
 		templateMocks.fetchTemplateFiles.mockResolvedValue({
 			config: {
 				config: {},
@@ -344,6 +360,40 @@ describe("deploy target placement ownership boundary", () => {
 		);
 	});
 
+	it("denies AI suggestions for inaccessible servers before server metadata reaches AI service", async () => {
+		await expect(
+			aiRouter.createCaller(createContext()).suggest({
+				aiId: "ai-1",
+				input: "deploy postgres",
+				serverId: "server-denied",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(aiServiceMocks.suggestVariants).not.toHaveBeenCalled();
+		expect(serverMocks.findServerById).not.toHaveBeenCalled();
+	});
+
+	it("keeps AI suggestions available for accessible target servers", async () => {
+		await expect(
+			aiRouter.createCaller(createContext()).suggest({
+				aiId: "ai-1",
+				input: "deploy postgres",
+				serverId: "server-1",
+			}),
+		).resolves.toEqual([
+			expect.objectContaining({
+				id: "suggestion-1",
+			}),
+		]);
+
+		expect(aiServiceMocks.suggestVariants).toHaveBeenCalledWith(
+			expect.objectContaining({
+				organizationId: "org-1",
+				serverId: "server-1",
+			}),
+		);
+	});
+
 	it("denies compose template deploy to environments outside the active organization before template fetch", async () => {
 		await expect(
 			composeRouter.createCaller(createContext()).deployTemplate({
@@ -371,5 +421,27 @@ describe("deploy target placement ownership boundary", () => {
 				serverId: "server-1",
 			}),
 		);
+	});
+
+	it("redacts compose template deployment secrets in the mutation response", async () => {
+		serverMocks.createComposeByTemplate.mockResolvedValueOnce({
+			composeId: "compose-1",
+			name: "compose",
+			appName: "compose-one",
+			env: "TOKEN=secret",
+			refreshToken: "refresh-token",
+		});
+
+		await expect(
+			composeRouter.createCaller(createContext()).deployTemplate({
+				environmentId: "env-1",
+				id: "postgres",
+				serverId: "server-1",
+			}),
+		).resolves.toMatchObject({
+			composeId: "compose-1",
+			env: REDACTED_SECRET_VALUE,
+			refreshToken: REDACTED_SECRET_VALUE,
+		});
 	});
 });

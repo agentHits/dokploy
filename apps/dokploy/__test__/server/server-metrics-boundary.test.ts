@@ -111,6 +111,10 @@ vi.mock("@/server/api/utils/audit", () => ({
 	audit: mocks.audit,
 }));
 
+vi.mock("@dokploy/server/utils/url/network", () => ({
+	fetchWithPublicEgress: mocks.fetch,
+}));
+
 vi.mock("@/server/queues/concurrency", () => ({
 	assertBuildsConcurrencyAllowed: mocks.assertBuildsConcurrencyAllowed,
 }));
@@ -143,7 +147,6 @@ const createCaller = () =>
 describe("server.getServerMetrics target boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.stubGlobal("fetch", mocks.fetch);
 		mocks.checkPermission.mockResolvedValue(undefined);
 		mocks.fetch.mockResolvedValue({
 			ok: true,

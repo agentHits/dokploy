@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
 	findRedisById: vi.fn(),
 	findServerById: vi.fn(),
 	findRestoreBackups: vi.fn(),
+	findVolumeBackupSchedules: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
 	getS3Credentials: vi.fn(),
 	keepLatestNBackups: vi.fn(),
@@ -142,6 +143,9 @@ vi.mock("@dokploy/server/db", () => ({
 			backups: {
 				findMany: mocks.findRestoreBackups,
 			},
+			volumeBackups: {
+				findMany: mocks.findVolumeBackupSchedules,
+			},
 		},
 	},
 }));
@@ -216,6 +220,9 @@ vi.mock("@/server/utils/backup", () => ({
 const { backupRouter } = await import("../../server/api/routers/backup");
 const { restorePostgresBackup } = await import(
 	"@dokploy/server/utils/restore/postgres"
+);
+const { buildGzipTarArchivePolicyCommand, restoreLibsqlBackup } = await import(
+	"@dokploy/server/utils/restore/libsql"
 );
 const { restoreWebServerBackup, validateWebServerArchiveMembers } =
 	await import("@dokploy/server/utils/restore/web-server");
@@ -679,25 +686,54 @@ describe("backup restore route boundary", () => {
 			bucket: "bucket$(id);touch",
 		});
 		mocks.getS3Credentials.mockReturnValue(["--s3-provider", "AWS"]);
-		mocks.normalizeS3Path.mockReturnValue("prefix$(id);touch/");
+		mocks.normalizeS3Path.mockReturnValue("prefix/");
+		mocks.findRestoreBackups.mockResolvedValue([
+			{
+				appName: "app-one",
+				backupType: "database",
+				databaseType: "postgres",
+				destinationId: "destination-1",
+				postgresId: "postgres-1",
+				prefix: "prefix",
+				postgres: { appName: "app-one" },
+			},
+		]);
+		mocks.findVolumeBackupSchedules.mockResolvedValue([]);
 		mocks.execAsync.mockResolvedValue({ stdout: "[]" });
 
 		await expect(
 			createCaller().listBackupFiles({
 				destinationId: "destination-1",
-				search: "prefix$(id);touch/app",
+				search: "app-one/prefix/app",
 			}),
 		).resolves.toEqual([]);
 
 		const command = mocks.execAsync.mock.calls[0]?.[0] as string;
-		expect(command).not.toContain('":s3:bucket$(id);touch/prefix$(id);touch/"');
+		expect(command).not.toContain('":s3:bucket$(id);touch/app-one/prefix/"');
 		const rcloneCommand = command.replace(/\s+2>\/dev\/null$/, "");
 		const args = parseShellArgs(rcloneCommand);
 
 		expect(args.slice(0, 2)).toEqual(["rclone", "lsjson"]);
-		expect(args).toContain(":s3:bucket$(id);touch/prefix$(id);touch/");
+		expect(args).toContain(":s3:bucket$(id);touch/app-one/prefix/");
 		expect(args).toContain("--no-mimetype");
 		expect(args).toContain("--no-modtime");
+	});
+
+	it("denies backup file listing when no accessible schedule prefix exists", async () => {
+		mocks.findDestinationById.mockResolvedValue(safeDestination);
+		mocks.getS3Credentials.mockReturnValue(["--s3-provider", "AWS"]);
+		mocks.findRestoreBackups.mockResolvedValue([]);
+		mocks.findVolumeBackupSchedules.mockResolvedValue([]);
+
+		await expect(
+			createCaller().listBackupFiles({
+				destinationId: "destination-1",
+				search: "",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.execAsync).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
 	});
 
 	it("denies inaccessible backup listing servers before remote rclone execution", async () => {
@@ -705,6 +741,18 @@ describe("backup restore route boundary", () => {
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
 		mocks.getS3Credentials.mockReturnValue(["--s3-provider", "AWS"]);
 		mocks.normalizeS3Path.mockReturnValue("prefix/");
+		mocks.findRestoreBackups.mockResolvedValue([
+			{
+				appName: "app-one",
+				backupType: "database",
+				databaseType: "postgres",
+				destinationId: "destination-1",
+				postgresId: "postgres-1",
+				prefix: "prefix",
+				postgres: { appName: "app-one" },
+			},
+		]);
+		mocks.findVolumeBackupSchedules.mockResolvedValue([]);
 		mocks.execAsyncRemote.mockResolvedValue({ stdout: "[]" });
 
 		await expect(
@@ -830,6 +878,46 @@ describe("backup restore command safety", () => {
 		expect(commands.some((command) => command.includes("&& unzip "))).toBe(
 			false,
 		);
+	});
+
+	it("builds libsql archive validation for unsafe paths and special members", () => {
+		const command = buildGzipTarArchivePolicyCommand(
+			"/tmp/dokploy-libsql-restore/backup.sql.gz",
+		);
+
+		expect(command).toContain("gzip -dc");
+		expect(command).toContain("tar -tf -");
+		expect(command).toContain("tar -tvf -");
+		expect(command).toContain("Unsafe archive member");
+		expect(command).toContain("Unsupported archive member");
+	});
+
+	it("validates libsql backup archives before container extraction", async () => {
+		await restoreLibsqlBackup(
+			{
+				appName: "libsql-one",
+				serverId: null,
+			} as never,
+			safeDestination as never,
+			{
+				backupFile: "libsql-one/prefix/iku-2026-06-22.sql.gz",
+				backupType: "database",
+				databaseId: "libsql-1",
+				databaseName: "iku.db",
+				databaseType: "libsql",
+				destinationId: "destination-1",
+			} as never,
+			emit,
+		);
+
+		const command = mocks.execAsync.mock.calls.at(-1)?.[0] ?? "";
+		expect(command).toContain("rclone copyto");
+		expect(command).toContain("Validating libsql backup archive");
+		expect(command.indexOf("gzip -dc")).toBeGreaterThan(-1);
+		expect(command.indexOf("gzip -dc")).toBeLessThan(
+			command.indexOf("tar xzf - -C /var/lib/sqld"),
+		);
+		expect(command).not.toContain("rclone cat");
 	});
 
 	it("rejects unsafe database names before restore command generation", () => {

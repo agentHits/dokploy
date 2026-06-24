@@ -524,13 +524,21 @@ export const notificationRouter = createTRPCRouter({
 		)
 		.mutation(async ({ input }) => {
 			try {
+				const token = input.Token.trim();
+				if (!token) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "Token not found",
+					});
+				}
+
 				let organizationId = "";
 				let ServerName = "";
 				if (input.ServerType === "Dokploy") {
 					const settings = await getWebServerSettings();
 					if (
 						!settings?.metricsConfig?.server?.token ||
-						settings.metricsConfig.server.token !== input.Token
+						settings.metricsConfig.server.token !== token
 					) {
 						throw new TRPCError({
 							code: "BAD_REQUEST",
@@ -545,7 +553,7 @@ export const notificationRouter = createTRPCRouter({
 						.select()
 						.from(server)
 						.where(
-							sql`${server.metricsConfig}::jsonb -> 'server' ->> 'token' = ${input.Token}`,
+							sql`${server.metricsConfig}::jsonb -> 'server' ->> 'token' = ${token}`,
 						);
 
 					if (!result?.[0]?.organizationId) {

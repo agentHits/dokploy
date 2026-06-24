@@ -68,7 +68,7 @@ vi.mock("@dokploy/server/services/ssh-key", () => ({
 const { cloneBitbucketRepository } = await import(
 	"@dokploy/server/utils/providers/bitbucket"
 );
-const { cloneGitRepository } = await import(
+const { assertCustomGitUrlAllowed, cloneGitRepository } = await import(
 	"@dokploy/server/utils/providers/git"
 );
 const { cloneGiteaRepository } = await import(
@@ -196,6 +196,33 @@ describe("Git provider clone command boundary", () => {
 			'echo "private-key$(id); touch /tmp/private-key"',
 		);
 		expect(command).not.toContain("ssh-keyscan -p 22 git.example.com;touch");
+	});
+
+	it("rejects custom HTTPS Git URLs that resolve to private cloud addresses", async () => {
+		await expect(
+			assertCustomGitUrlAllowed("https://git.example.com/org/repo.git", {
+				enforcePublicHost: true,
+				lookup: async () => [{ address: "192.168.1.10", family: 4 }],
+			}),
+		).rejects.toThrow("Custom Git URL");
+	});
+
+	it("rejects custom SSH Git URLs that resolve to private cloud addresses", async () => {
+		await expect(
+			assertCustomGitUrlAllowed("git@git.example.com:org/repo.git", {
+				enforcePublicHost: true,
+				lookup: async () => [{ address: "10.0.0.10", family: 4 }],
+			}),
+		).rejects.toThrow("Custom Git URL");
+	});
+
+	it("allows custom Git URLs that resolve to public cloud addresses", async () => {
+		await expect(
+			assertCustomGitUrlAllowed("https://git.example.com/org/repo.git", {
+				enforcePublicHost: true,
+				lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+			}),
+		).resolves.toBeUndefined();
 	});
 
 	it("quotes GitHub clone metadata", async () => {

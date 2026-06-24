@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
 	checkPermission: vi.fn(),
 	createApiKey: vi.fn(),
 	createOrganizationUserWithCredentials: vi.fn(),
+	deleteApiKeyWhere: vi.fn(),
 	findNotificationById: vi.fn(),
 	findOrganizationById: vi.fn(),
 	findUserById: vi.fn(),
@@ -49,7 +50,19 @@ vi.mock("@dokploy/server/db", () => ({
 			invitation: {
 				findFirst: mocks.invitationFindFirst,
 			},
+			apikey: {
+				findFirst: vi.fn(() =>
+					Promise.resolve({
+						id: "api-key-1",
+						name: "CI key",
+						referenceId: "actor-1",
+					}),
+				),
+			},
 		},
+		delete: vi.fn(() => ({
+			where: mocks.deleteApiKeyWhere,
+		})),
 	},
 }));
 
@@ -127,6 +140,8 @@ describe("user.remove membership boundary", () => {
 		mocks.removeUserById.mockResolvedValue(true);
 		mocks.renderInvitationEmail.mockResolvedValue("<p>invite</p>");
 		mocks.sendEmailNotification.mockResolvedValue(undefined);
+		mocks.createApiKey.mockResolvedValue({ id: "api-key-1" });
+		mocks.deleteApiKeyWhere.mockResolvedValue(undefined);
 	});
 
 	it("rejects deleting a global user that still belongs to another organization", async () => {
@@ -214,5 +229,89 @@ describe("user.remove membership boundary", () => {
 			expect.stringContaining("Org One"),
 			"<p>invite</p>",
 		);
+	});
+
+	it("requires api.read before creating API keys", async () => {
+		await expect(
+			createCaller().createApiKey({
+				name: "CI key",
+				metadata: {
+					organizationId: "org-1",
+				},
+			}),
+		).resolves.toEqual({ id: "api-key-1" });
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(
+			expect.objectContaining({
+				session: expect.objectContaining({
+					activeOrganizationId: "org-1",
+				}),
+			}),
+			{ api: ["read"] },
+		);
+		expect(mocks.createApiKey).toHaveBeenCalled();
+	});
+
+	it("checks api.read against the API key target organization", async () => {
+		mocks.memberFindFirst.mockResolvedValueOnce({
+			id: "member-other",
+			userId: "actor-1",
+			organizationId: "org-2",
+			role: "member",
+		});
+		mocks.checkPermission.mockImplementationOnce(async (permissionCtx) => {
+			expect(permissionCtx.session.activeOrganizationId).toBe("org-2");
+			throw new Error("Permission denied");
+		});
+
+		await expect(
+			createCaller().createApiKey({
+				name: "CI key",
+				metadata: {
+					organizationId: "org-2",
+				},
+			}),
+		).rejects.toThrow("Permission denied");
+
+		expect(mocks.createApiKey).not.toHaveBeenCalled();
+		expect(mocks.audit).not.toHaveBeenCalled();
+	});
+
+	it("does not create API keys when api.read is missing", async () => {
+		mocks.checkPermission.mockRejectedValueOnce(new Error("Permission denied"));
+
+		await expect(
+			createCaller().createApiKey({
+				name: "CI key",
+				metadata: {
+					organizationId: "org-1",
+				},
+			}),
+		).rejects.toThrow("Permission denied");
+
+		expect(mocks.createApiKey).not.toHaveBeenCalled();
+	});
+
+	it("requires api.read before deleting API keys", async () => {
+		await expect(
+			createCaller().deleteApiKey({ apiKeyId: "api-key-1" }),
+		).resolves.toBe(true);
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			api: ["read"],
+		});
+		expect(mocks.deleteApiKeyWhere).toHaveBeenCalled();
+	});
+
+	it("rejects self-host credential creation for static admin role", async () => {
+		await expect(
+			createCaller("owner").createUserWithCredentials({
+				email: "new-admin@example.com",
+				password: "password-123",
+				role: "admin",
+			}),
+		).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+		expect(mocks.createOrganizationUserWithCredentials).not.toHaveBeenCalled();
 	});
 });

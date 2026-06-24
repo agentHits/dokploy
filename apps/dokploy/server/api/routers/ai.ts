@@ -198,6 +198,9 @@ export const aiRouter = createTRPCRouter({
 					owned_by: "provider",
 				})) as Model[];
 			} catch (error) {
+				if (error instanceof TRPCError) {
+					throw error;
+				}
 				throw new TRPCError({
 					code: "BAD_REQUEST",
 					message: error instanceof Error ? error?.message : `Error: ${error}`,
@@ -345,11 +348,17 @@ ${input.logs}`,
 		)
 		.mutation(async ({ ctx, input }) => {
 			try {
+				if (input.serverId) {
+					await assertTargetServerAccess(ctx, input.serverId);
+				}
 				return await suggestVariants({
 					...input,
 					organizationId: ctx.session.activeOrganizationId,
 				});
 			} catch (error) {
+				if (error instanceof TRPCError) {
+					throw error;
+				}
 				throw new TRPCError({
 					code: "BAD_REQUEST",
 					message: error instanceof Error ? error?.message : `Error: ${error}`,

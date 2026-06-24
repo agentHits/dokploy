@@ -40,9 +40,12 @@ export const buildTarArchivePolicyCommand = (localBackupPath: string) => {
 			END { exit valid ? 0 : 1 }
 		'
 		tar -tvf ${quotedLocalBackupPath} | awk '
-			/^[lh]/ {
-				print "Unsupported archive link member: " $0 > "/dev/stderr"
-				exit 1
+			{
+				mode = substr($1, 1, 1)
+				if (mode != "-" && mode != "d") {
+					print "Unsupported archive member: " $0 > "/dev/stderr"
+					exit 1
+				}
 			}
 		'
 		echo "Backup archive validation completed ✅"

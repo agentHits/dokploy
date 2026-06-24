@@ -31,6 +31,7 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
+import { redactDatabaseServiceSecrets } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -115,7 +116,7 @@ export const postgresRouter = createTRPCRouter({
 					resourceId: newPostgres.postgresId,
 					resourceName: newPostgres.appName,
 				});
-				return newPostgres;
+				return redactDatabaseServiceSecrets(newPostgres);
 			} catch (error) {
 				if (error instanceof TRPCError) {
 					throw error;
@@ -142,7 +143,7 @@ export const postgresRouter = createTRPCRouter({
 					message: "You are not authorized to access this Postgres",
 				});
 			}
-			return postgres;
+			return redactDatabaseServiceSecrets(postgres);
 		}),
 
 	start: protectedProcedure
@@ -168,7 +169,7 @@ export const postgresRouter = createTRPCRouter({
 				resourceId: service.postgresId,
 				resourceName: service.appName,
 			});
-			return service;
+			return redactDatabaseServiceSecrets(service);
 		}),
 	stop: protectedProcedure
 		.input(apiFindOnePostgres)
@@ -192,7 +193,7 @@ export const postgresRouter = createTRPCRouter({
 				resourceId: postgres.postgresId,
 				resourceName: postgres.appName,
 			});
-			return postgres;
+			return redactDatabaseServiceSecrets(postgres);
 		}),
 	saveExternalPort: protectedProcedure
 		.input(apiSaveExternalPortPostgres)
@@ -225,7 +226,7 @@ export const postgresRouter = createTRPCRouter({
 				resourceId: postgres.postgresId,
 				resourceName: postgres.appName,
 			});
-			return postgres;
+			return redactDatabaseServiceSecrets(postgres);
 		}),
 	deploy: protectedProcedure
 		.input(apiDeployPostgres)
@@ -240,7 +241,8 @@ export const postgresRouter = createTRPCRouter({
 				resourceId: postgres.postgresId,
 				resourceName: postgres.appName,
 			});
-			return deployPostgres(input.postgresId);
+			const deployedPostgres = await deployPostgres(input.postgresId);
+			return redactDatabaseServiceSecrets(deployedPostgres);
 		}),
 
 	deployWithLogs: protectedProcedure
@@ -298,7 +300,7 @@ export const postgresRouter = createTRPCRouter({
 				resourceId: postgres.postgresId,
 				resourceName: postgres.appName,
 			});
-			return postgres;
+			return redactDatabaseServiceSecrets(postgres);
 		}),
 	remove: protectedProcedure
 		.input(apiFindOnePostgres)
@@ -336,7 +338,7 @@ export const postgresRouter = createTRPCRouter({
 				} catch (_) {}
 			}
 
-			return postgres;
+			return redactDatabaseServiceSecrets(postgres);
 		}),
 	saveEnvironment: protectedProcedure
 		.input(apiSaveEnvironmentVariablesPostgres)
@@ -510,7 +512,7 @@ export const postgresRouter = createTRPCRouter({
 				resourceId: updatedPostgres.postgresId,
 				resourceName: updatedPostgres.appName,
 			});
-			return updatedPostgres;
+			return redactDatabaseServiceSecrets(updatedPostgres);
 		}),
 	rebuild: protectedProcedure
 		.input(apiRebuildPostgres)

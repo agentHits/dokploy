@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 	handler: vi.fn(),
 	memberFindFirst: vi.fn(),
 	apiKeyFindFirst: vi.fn(),
+	checkPermission: vi.fn(),
 	registerSSOProvider: vi.fn(),
 	updateSSOProvider: vi.fn(),
 	verifyApiKey: vi.fn(),
@@ -61,6 +62,10 @@ vi.mock("@dokploy/server/db", () => ({
 	},
 }));
 
+vi.mock("@dokploy/server/services/permission", () => ({
+	checkPermission: mocks.checkPermission,
+}));
+
 const { validateRequest } = await import(
 	"../../../../packages/server/src/lib/auth"
 );
@@ -88,6 +93,7 @@ const userRecord = {
 describe("validateRequest API key sessions", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mocks.checkPermission.mockResolvedValue(undefined);
 		mocks.verifyApiKey.mockResolvedValue({
 			valid: true,
 			key: { id: "api-key-1" },
@@ -97,6 +103,21 @@ describe("validateRequest API key sessions", () => {
 			id: "api-key-1",
 			metadata: JSON.stringify({ organizationId: "org-1" }),
 			user: userRecord,
+		});
+	});
+
+	it("rejects API key sessions when the key owner lacks api.read", async () => {
+		mocks.memberFindFirst.mockResolvedValue({
+			role: "member",
+			organization: {
+				ownerId: "user-1",
+			},
+		});
+		mocks.checkPermission.mockRejectedValue(new Error("Permission denied"));
+
+		await expect(validateRequest(apiKeyRequest)).resolves.toEqual({
+			session: null,
+			user: null,
 		});
 	});
 
@@ -128,6 +149,13 @@ describe("validateRequest API key sessions", () => {
 				ownerId: "user-1",
 			},
 		});
+		expect(mocks.checkPermission).toHaveBeenCalledWith(
+			{
+				user: { id: "user-1" },
+				session: { activeOrganizationId: "org-1" },
+			},
+			{ api: ["read"] },
+		);
 	});
 });
 

@@ -37,6 +37,32 @@ export const redactSecretFieldsList = <T extends SecretRecord>(
 	fields: string[],
 ) => records.map((record) => redactSecretFields(record, fields));
 
+export const redactDeployableServiceSecrets = <
+	T extends SecretRecord | null | undefined,
+>(
+	record: T,
+) =>
+	redactSecretFields(record, [
+		"env",
+		"previewEnv",
+		"buildArgs",
+		"buildSecrets",
+		"previewBuildArgs",
+		"previewBuildSecrets",
+		"refreshToken",
+	]);
+
+export const redactDatabaseServiceSecrets = <
+	T extends SecretRecord | null | undefined,
+>(
+	record: T,
+) =>
+	redactSecretFields(record, [
+		"env",
+		"databasePassword",
+		"databaseRootPassword",
+	]);
+
 export const secretUpdateValue = (value: unknown) => {
 	if (
 		typeof value !== "string" ||

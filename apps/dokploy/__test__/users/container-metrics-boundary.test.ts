@@ -31,6 +31,7 @@ const containerMetric = {
 const mocks = vi.hoisted(() => ({
 	audit: vi.fn(),
 	checkPermission: vi.fn(),
+	assertContainerMetricsServiceAccess: vi.fn(),
 	createApiKey: vi.fn(),
 	createOrganizationUserWithCredentials: vi.fn(),
 	fetch: vi.fn(),
@@ -100,6 +101,15 @@ vi.mock("@/server/api/utils/audit", () => ({
 	audit: mocks.audit,
 }));
 
+vi.mock("@/server/api/utils/monitoring-access", () => ({
+	assertContainerMetricsServiceAccess:
+		mocks.assertContainerMetricsServiceAccess,
+}));
+
+vi.mock("@dokploy/server/utils/url/network", () => ({
+	fetchWithPublicEgress: mocks.fetch,
+}));
+
 const { userRouter } = await import("../../server/api/routers/user");
 
 const createCaller = () =>
@@ -124,8 +134,8 @@ const createCaller = () =>
 describe("user.getContainerMetrics target boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.stubGlobal("fetch", mocks.fetch);
 		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.assertContainerMetricsServiceAccess.mockResolvedValue(undefined);
 		mocks.fetch.mockResolvedValue({
 			ok: true,
 			json: async () => [containerMetric],
@@ -189,6 +199,27 @@ describe("user.getContainerMetrics target boundary", () => {
 				},
 			},
 		);
+		expect(mocks.assertContainerMetricsServiceAccess).toHaveBeenCalledWith(
+			expect.anything(),
+			"app",
+			"server-1",
+		);
+	});
+
+	it("rejects unauthorized appName metrics before fetch", async () => {
+		mocks.assertContainerMetricsServiceAccess.mockRejectedValue(
+			new Error("denied"),
+		);
+
+		await expect(
+			createCaller().getContainerMetrics({
+				serverId: "server-1",
+				appName: "foreign-app",
+				dataPoints: "50",
+			} as never),
+		).rejects.toThrow("denied");
+
+		expect(mocks.fetch).not.toHaveBeenCalled();
 	});
 
 	it("rejects inaccessible remote container metrics before fetch", async () => {

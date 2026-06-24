@@ -30,6 +30,7 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
+import { redactDatabaseServiceSecrets } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -112,7 +113,7 @@ export const mysqlRouter = createTRPCRouter({
 					resourceId: newMysql.mysqlId,
 					resourceName: newMysql.appName,
 				});
-				return newMysql;
+				return redactDatabaseServiceSecrets(newMysql);
 			} catch (error) {
 				if (error instanceof TRPCError) {
 					throw error;
@@ -138,7 +139,7 @@ export const mysqlRouter = createTRPCRouter({
 					message: "You are not authorized to access this MySQL",
 				});
 			}
-			return mysql;
+			return redactDatabaseServiceSecrets(mysql);
 		}),
 
 	start: protectedProcedure
@@ -164,7 +165,7 @@ export const mysqlRouter = createTRPCRouter({
 				resourceId: service.mysqlId,
 				resourceName: service.appName,
 			});
-			return service;
+			return redactDatabaseServiceSecrets(service);
 		}),
 	stop: protectedProcedure
 		.input(apiFindOneMySql)
@@ -188,7 +189,7 @@ export const mysqlRouter = createTRPCRouter({
 				resourceId: mongo.mysqlId,
 				resourceName: mongo.appName,
 			});
-			return mongo;
+			return redactDatabaseServiceSecrets(mongo);
 		}),
 	saveExternalPort: protectedProcedure
 		.input(apiSaveExternalPortMySql)
@@ -221,7 +222,7 @@ export const mysqlRouter = createTRPCRouter({
 				resourceId: mysql.mysqlId,
 				resourceName: mysql.appName,
 			});
-			return mysql;
+			return redactDatabaseServiceSecrets(mysql);
 		}),
 	deploy: protectedProcedure
 		.input(apiDeployMySql)
@@ -236,7 +237,8 @@ export const mysqlRouter = createTRPCRouter({
 				resourceId: mysql.mysqlId,
 				resourceName: mysql.appName,
 			});
-			return deployMySql(input.mysqlId);
+			const deployedMysql = await deployMySql(input.mysqlId);
+			return redactDatabaseServiceSecrets(deployedMysql);
 		}),
 	deployWithLogs: protectedProcedure
 		.meta({
@@ -292,7 +294,7 @@ export const mysqlRouter = createTRPCRouter({
 				resourceId: mongo.mysqlId,
 				resourceName: mongo.appName,
 			});
-			return mongo;
+			return redactDatabaseServiceSecrets(mongo);
 		}),
 	reload: protectedProcedure
 		.input(apiResetMysql)
@@ -359,7 +361,7 @@ export const mysqlRouter = createTRPCRouter({
 				} catch (_) {}
 			}
 
-			return mongo;
+			return redactDatabaseServiceSecrets(mongo);
 		}),
 	saveEnvironment: protectedProcedure
 		.input(apiSaveEnvironmentVariablesMySql)
@@ -509,7 +511,7 @@ export const mysqlRouter = createTRPCRouter({
 				resourceId: updatedMysql.mysqlId,
 				resourceName: updatedMysql.appName,
 			});
-			return updatedMysql;
+			return redactDatabaseServiceSecrets(updatedMysql);
 		}),
 	rebuild: protectedProcedure
 		.input(apiRebuildMysql)

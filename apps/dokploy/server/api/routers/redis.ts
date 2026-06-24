@@ -29,6 +29,7 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
+import { redactDatabaseServiceSecrets } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -109,7 +110,7 @@ export const redisRouter = createTRPCRouter({
 					resourceId: newRedis.redisId,
 					resourceName: newRedis.appName,
 				});
-				return newRedis;
+				return redactDatabaseServiceSecrets(newRedis);
 			} catch (error) {
 				throw error;
 			}
@@ -129,7 +130,7 @@ export const redisRouter = createTRPCRouter({
 					message: "You are not authorized to access this Redis",
 				});
 			}
-			return redis;
+			return redactDatabaseServiceSecrets(redis);
 		}),
 
 	start: protectedProcedure
@@ -155,7 +156,7 @@ export const redisRouter = createTRPCRouter({
 				resourceId: redis.redisId,
 				resourceName: redis.appName,
 			});
-			return redis;
+			return redactDatabaseServiceSecrets(redis);
 		}),
 	reload: protectedProcedure
 		.input(apiResetRedis)
@@ -212,7 +213,7 @@ export const redisRouter = createTRPCRouter({
 				resourceId: redis.redisId,
 				resourceName: redis.appName,
 			});
-			return redis;
+			return redactDatabaseServiceSecrets(redis);
 		}),
 	saveExternalPort: protectedProcedure
 		.input(apiSaveExternalPortRedis)
@@ -245,7 +246,7 @@ export const redisRouter = createTRPCRouter({
 				resourceId: redis.redisId,
 				resourceName: redis.appName,
 			});
-			return redis;
+			return redactDatabaseServiceSecrets(redis);
 		}),
 	deploy: protectedProcedure
 		.input(apiDeployRedis)
@@ -260,7 +261,8 @@ export const redisRouter = createTRPCRouter({
 				resourceId: redis.redisId,
 				resourceName: redis.appName,
 			});
-			return deployRedis(input.redisId);
+			const deployedRedis = await deployRedis(input.redisId);
+			return redactDatabaseServiceSecrets(deployedRedis);
 		}),
 	deployWithLogs: protectedProcedure
 		.meta({
@@ -315,7 +317,7 @@ export const redisRouter = createTRPCRouter({
 				resourceId: mongo.redisId,
 				resourceName: mongo.appName,
 			});
-			return mongo;
+			return redactDatabaseServiceSecrets(mongo);
 		}),
 	remove: protectedProcedure
 		.input(apiFindOneRedis)
@@ -350,7 +352,7 @@ export const redisRouter = createTRPCRouter({
 				} catch (_) {}
 			}
 
-			return redis;
+			return redactDatabaseServiceSecrets(redis);
 		}),
 	saveEnvironment: protectedProcedure
 		.input(apiSaveEnvironmentVariablesRedis)
@@ -491,7 +493,7 @@ export const redisRouter = createTRPCRouter({
 				resourceId: updatedRedis.redisId,
 				resourceName: updatedRedis.appName,
 			});
-			return updatedRedis;
+			return redactDatabaseServiceSecrets(updatedRedis);
 		}),
 	rebuild: protectedProcedure
 		.input(apiRebuildRedis)

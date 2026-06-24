@@ -11,6 +11,7 @@ import { IS_CLOUD } from "../constants";
 import { db } from "../db";
 import * as schema from "../db/schema";
 import { getTrustedOrigins, getUserByToken } from "../services/admin";
+import { checkPermission } from "../services/permission";
 import { createAuditLog } from "../services/proprietary/audit-log";
 import {
 	getWebServerSettings,
@@ -488,6 +489,14 @@ export const validateRequest = async (request: IncomingMessage) => {
 					user: null,
 				};
 			}
+
+			await checkPermission(
+				{
+					user: { id: apiKeyRecord.user.id },
+					session: { activeOrganizationId: organizationId },
+				},
+				{ api: ["read"] },
+			);
 
 			// When accessing from DB, use actual column names
 			const userFromDb = apiKeyRecord.user as typeof apiKeyRecord.user & {

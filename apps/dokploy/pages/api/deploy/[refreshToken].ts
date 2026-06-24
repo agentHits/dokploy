@@ -21,6 +21,19 @@ export const logWebhookError = (context: string, error: unknown) => {
 	console.error(context, error);
 };
 
+export const rejectNonPostDeployWebhook = (
+	req: NextApiRequest,
+	res: NextApiResponse,
+) => {
+	if (req.method === "POST") {
+		return false;
+	}
+
+	res.setHeader("Allow", "POST");
+	res.status(405).json({ message: "Method Not Allowed" });
+	return true;
+};
+
 /**
  * Helper function to get package_version from registry_package events
  */
@@ -38,6 +51,10 @@ export default async function handler(
 ) {
 	const { refreshToken } = req.query;
 	try {
+		if (rejectNonPostDeployWebhook(req, res)) {
+			return;
+		}
+
 		if (req.headers["x-github-event"] === "ping") {
 			res.status(200).json({ message: "Ping received, webhook is active" });
 			return;

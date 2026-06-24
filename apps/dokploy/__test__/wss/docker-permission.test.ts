@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	checkPermission: vi.fn(),
+	findMemberByUserId: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
 }));
 
 vi.mock("@dokploy/server/services/permission", () => ({
 	checkPermission: mocks.checkPermission,
+	findMemberByUserId: mocks.findMemberByUserId,
 }));
 
 vi.mock("@dokploy/server/services/server", () => ({
@@ -20,6 +22,7 @@ describe("Docker WebSocket split permission helpers", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mocks.getAccessibleServerIds.mockReset();
+		mocks.findMemberByUserId.mockResolvedValue({ role: "admin" });
 	});
 
 	it("rejects unauthenticated websocket requests", async () => {
@@ -49,6 +52,20 @@ describe("Docker WebSocket split permission helpers", () => {
 			},
 			{ docker: ["read"] },
 		);
+		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
+	});
+
+	it("rejects non-admin websocket callers even with docker permission", async () => {
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.findMemberByUserId.mockResolvedValue({ role: "member" });
+
+		await expect(
+			canAccessDockerLogsWebSocket({
+				user: { id: "user-1" },
+				session: { activeOrganizationId: "org-1" },
+			}),
+		).resolves.toBe(false);
+
 		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
 	});
 

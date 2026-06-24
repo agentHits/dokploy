@@ -28,7 +28,7 @@ import {
 	updateBackupById,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
-import { backups } from "@dokploy/server/db/schema";
+import { backups, volumeBackups } from "@dokploy/server/db/schema";
 import { checkServicePermissionAndAccess } from "@dokploy/server/services/permission";
 import { runComposeBackup } from "@dokploy/server/utils/backups/compose";
 import {
@@ -37,6 +37,7 @@ import {
 	getRcloneS3Destination,
 	normalizeS3Path,
 } from "@dokploy/server/utils/backups/utils";
+import { normalizeRelativeFilePath } from "@dokploy/server/utils/filesystem/safe-path";
 import {
 	execAsync,
 	execAsyncRemote,
@@ -158,6 +159,24 @@ const assertBackupAccess = async (
 	await assertWebServerBackupAccess(ctx, backup, action);
 };
 
+const assertBackupListingAccess = async (
+	ctx: BackupAccessCtx,
+	backup: BackupServiceIdShape & {
+		destinationId: string;
+		databaseType: BackupScheduleWithRelations["databaseType"];
+	},
+) => {
+	const serviceId = getBackupServiceId(backup);
+	if (serviceId) {
+		await checkServicePermissionAndAccess(ctx, serviceId, {
+			backup: ["read"],
+		});
+		return;
+	}
+
+	await assertWebServerBackupAccess(ctx, backup, "read");
+};
+
 const getRestoreObjectExtension = (input: RestoreBackupInput) => {
 	if (input.backupType === "compose") {
 		return input.databaseType === "mongo" ? [".bson.gz"] : [".sql.gz"];
@@ -257,6 +276,12 @@ const assertRestoreBackupObjectBound = async (
 		where: and(...sharedWhere),
 		with: {
 			compose: true,
+			destination: {
+				columns: {
+					accessKey: false,
+					secretAccessKey: false,
+				},
+			},
 			libsql: true,
 			mariadb: true,
 			mongo: true,
@@ -275,6 +300,161 @@ const assertRestoreBackupObjectBound = async (
 			message: "Backup file is not linked to this backup schedule.",
 		});
 	}
+};
+
+const volumeBackupServiceIdFields = [
+	"applicationId",
+	"postgresId",
+	"mysqlId",
+	"mariadbId",
+	"mongoId",
+	"redisId",
+	"libsqlId",
+	"composeId",
+] as const;
+type VolumeBackupServiceIdShape = {
+	[K in (typeof volumeBackupServiceIdFields)[number]]?: string | null;
+};
+
+const getVolumeBackupServiceId = (backup: VolumeBackupServiceIdShape) => {
+	for (const field of volumeBackupServiceIdFields) {
+		if (backup[field]) {
+			return backup[field];
+		}
+	}
+};
+
+const getVolumeRestoreServiceAppName = (backup: {
+	appName: string;
+	serviceName?: string | null;
+	application?: { appName: string } | null;
+	compose?: { appName: string } | null;
+}) => {
+	if (backup.compose?.appName) {
+		return backup.serviceName
+			? `${backup.compose.appName}_${backup.serviceName}`
+			: backup.compose.appName;
+	}
+
+	return backup.application?.appName || backup.appName;
+};
+
+const skipInaccessibleSchedule = (error: unknown) => {
+	if (
+		error instanceof TRPCError &&
+		(error.code === "UNAUTHORIZED" || error.code === "NOT_FOUND")
+	) {
+		return true;
+	}
+	return false;
+};
+
+const getAccessibleBackupListingPrefixes = async (
+	ctx: BackupAccessCtx,
+	destinationId: string,
+) => {
+	const prefixes = new Set<string>();
+	const backupSchedules = await db.query.backups.findMany({
+		where: eq(backups.destinationId, destinationId),
+		with: {
+			compose: true,
+			libsql: true,
+			mariadb: true,
+			mongo: true,
+			mysql: true,
+			postgres: true,
+		},
+	});
+
+	for (const backup of backupSchedules) {
+		try {
+			await assertBackupListingAccess(ctx, backup);
+			prefixes.add(
+				`${getRestoreServiceAppName(backup)}/${normalizeS3Path(backup.prefix)}`,
+			);
+		} catch (error) {
+			if (!skipInaccessibleSchedule(error)) {
+				throw error;
+			}
+		}
+	}
+
+	const volumeBackupSchedules = await db.query.volumeBackups.findMany({
+		where: eq(volumeBackups.destinationId, destinationId),
+		with: {
+			application: true,
+			compose: true,
+		},
+	});
+
+	for (const backup of volumeBackupSchedules) {
+		const serviceId = getVolumeBackupServiceId(backup);
+		if (!serviceId) {
+			continue;
+		}
+		try {
+			await checkServicePermissionAndAccess(ctx, serviceId, {
+				volumeBackup: ["read"],
+			});
+			prefixes.add(
+				`${getVolumeRestoreServiceAppName(backup)}/${normalizeS3Path(
+					backup.prefix,
+				)}`,
+			);
+		} catch (error) {
+			if (!skipInaccessibleSchedule(error)) {
+				throw error;
+			}
+		}
+	}
+
+	return [...prefixes];
+};
+
+const getBackupListingScopes = (allowedPrefixes: string[], search: string) => {
+	const normalizedSearch = search.trim()
+		? normalizeRelativeFilePath(search.trim())
+		: "";
+	const lastSlashIndex = normalizedSearch.lastIndexOf("/");
+	const requestedBaseDir =
+		lastSlashIndex !== -1 ? normalizedSearch.slice(0, lastSlashIndex + 1) : "";
+	const searchTerm =
+		lastSlashIndex !== -1
+			? normalizedSearch.slice(lastSlashIndex + 1)
+			: normalizedSearch;
+
+	const scopes = allowedPrefixes
+		.map((prefix) => {
+			if (!normalizedSearch?.includes("/")) {
+				return { baseDir: prefix, searchTerm: normalizedSearch };
+			}
+			if (normalizedSearch.startsWith(prefix)) {
+				return {
+					baseDir:
+						requestedBaseDir.length >= prefix.length
+							? requestedBaseDir
+							: prefix,
+					searchTerm,
+				};
+			}
+			if (prefix.startsWith(normalizedSearch)) {
+				return { baseDir: prefix, searchTerm: "" };
+			}
+			return null;
+		})
+		.filter((scope): scope is { baseDir: string; searchTerm: string } =>
+			Boolean(scope),
+		);
+
+	if (scopes.length === 0) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message:
+				"Backup file path is not linked to an accessible backup schedule.",
+		});
+	}
+
+	return scopes;
 };
 
 export const backupRouter = createTRPCRouter({
@@ -680,61 +860,74 @@ export const backupRouter = createTRPCRouter({
 			);
 			await assertTargetServerAccess(ctx, input.serverId);
 			try {
-				const lastSlashIndex = input.search.lastIndexOf("/");
-				const baseDir =
-					lastSlashIndex !== -1
-						? normalizeS3Path(input.search.slice(0, lastSlashIndex + 1))
-						: "";
-				const searchTerm =
-					lastSlashIndex !== -1
-						? input.search.slice(lastSlashIndex + 1)
-						: input.search;
-
-				const listCommand = `${buildRcloneS3Command("lsjson", destination, [
-					getRcloneS3Destination(destination, baseDir || undefined),
-					"--no-mimetype",
-					"--no-modtime",
-				])} 2>/dev/null`;
-
-				let stdout = "";
-
-				if (input.serverId) {
-					const result = await execAsyncRemote(input.serverId, listCommand);
-					stdout = result.stdout;
-				} else {
-					const result = await execAsync(listCommand);
-					stdout = result.stdout;
+				const allowedPrefixes = await getAccessibleBackupListingPrefixes(
+					ctx,
+					input.destinationId,
+				);
+				if (allowedPrefixes.length === 0) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message:
+							"No accessible backup schedules were found for this destination.",
+					});
 				}
 
-				let files: RcloneFile[] = [];
-				try {
-					files = JSON.parse(stdout) as RcloneFile[];
-				} catch (error) {
-					console.error("Error parsing JSON response:", error);
-					console.error("Raw stdout:", stdout);
-					throw new Error("Failed to parse backup files list");
-				}
+				const scopes = getBackupListingScopes(allowedPrefixes, input.search);
+				const results: RcloneFile[] = [];
 
-				// Limit to first 100 files
+				for (const scope of scopes) {
+					const listCommand = `${buildRcloneS3Command("lsjson", destination, [
+						getRcloneS3Destination(destination, scope.baseDir),
+						"--no-mimetype",
+						"--no-modtime",
+					])} 2>/dev/null`;
 
-				const results = baseDir
-					? files.map((file) => ({
+					let stdout = "";
+
+					if (input.serverId) {
+						const result = await execAsyncRemote(input.serverId, listCommand);
+						stdout = result.stdout;
+					} else {
+						const result = await execAsync(listCommand);
+						stdout = result.stdout;
+					}
+
+					let files: RcloneFile[] = [];
+					try {
+						files = JSON.parse(stdout) as RcloneFile[];
+					} catch (error) {
+						console.error("Error parsing JSON response:", error);
+						console.error("Raw stdout:", stdout);
+						throw new Error("Failed to parse backup files list");
+					}
+
+					results.push(
+						...files.map((file) => ({
 							...file,
-							Path: `${baseDir}${file.Path}`,
-						}))
-					: files;
+							Path: `${scope.baseDir}${file.Path}`,
+						})),
+					);
 
-				if (searchTerm) {
-					return results
-						.filter((file) =>
-							file.Path.toLowerCase().includes(searchTerm.toLowerCase()),
-						)
-						.slice(0, 100);
+					if (results.length >= 100) {
+						break;
+					}
 				}
 
-				return results.slice(0, 100);
+				const searchTerm = scopes[0]?.searchTerm;
+				if (!searchTerm) {
+					return results.slice(0, 100);
+				}
+
+				return results
+					.filter((file) =>
+						file.Path.toLowerCase().includes(searchTerm.toLowerCase()),
+					)
+					.slice(0, 100);
 			} catch (error) {
 				console.error("Error in listBackupFiles:", error);
+				if (error instanceof TRPCError) {
+					throw error;
+				}
 				throw new TRPCError({
 					code: "BAD_REQUEST",
 					message:

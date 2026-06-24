@@ -13,6 +13,7 @@ import {
 	getStackContainersByAppName,
 	uploadFileToContainer,
 } from "@dokploy/server";
+import { findMemberByUserId } from "@dokploy/server/services/permission";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
@@ -27,9 +28,23 @@ const assertDockerServerAccess = async (
 			userId: string;
 			activeOrganizationId: string;
 		};
+		user: {
+			id: string;
+		};
 	},
 	serverId?: string,
 ) => {
+	const member = await findMemberByUserId(
+		ctx.user.id,
+		ctx.session.activeOrganizationId,
+	);
+	if (member.role !== "owner" && member.role !== "admin") {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "Docker host operations require owner or admin access",
+		});
+	}
+
 	if (!serverId) {
 		return;
 	}

@@ -30,6 +30,7 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
+import { redactDatabaseServiceSecrets } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -111,7 +112,7 @@ export const mongoRouter = createTRPCRouter({
 					resourceId: newMongo.mongoId,
 					resourceName: newMongo.appName,
 				});
-				return newMongo;
+				return redactDatabaseServiceSecrets(newMongo);
 			} catch (error) {
 				if (error instanceof TRPCError) {
 					throw error;
@@ -138,7 +139,7 @@ export const mongoRouter = createTRPCRouter({
 					message: "You are not authorized to access this mongo",
 				});
 			}
-			return mongo;
+			return redactDatabaseServiceSecrets(mongo);
 		}),
 
 	start: protectedProcedure
@@ -164,7 +165,7 @@ export const mongoRouter = createTRPCRouter({
 				resourceId: service.mongoId,
 				resourceName: service.appName,
 			});
-			return service;
+			return redactDatabaseServiceSecrets(service);
 		}),
 	stop: protectedProcedure
 		.input(apiFindOneMongo)
@@ -189,7 +190,7 @@ export const mongoRouter = createTRPCRouter({
 				resourceId: mongo.mongoId,
 				resourceName: mongo.appName,
 			});
-			return mongo;
+			return redactDatabaseServiceSecrets(mongo);
 		}),
 	saveExternalPort: protectedProcedure
 		.input(apiSaveExternalPortMongo)
@@ -222,7 +223,7 @@ export const mongoRouter = createTRPCRouter({
 				resourceId: mongo.mongoId,
 				resourceName: mongo.appName,
 			});
-			return mongo;
+			return redactDatabaseServiceSecrets(mongo);
 		}),
 	deploy: protectedProcedure
 		.input(apiDeployMongo)
@@ -237,7 +238,8 @@ export const mongoRouter = createTRPCRouter({
 				resourceId: mongo.mongoId,
 				resourceName: mongo.appName,
 			});
-			return deployMongo(input.mongoId);
+			const deployedMongo = await deployMongo(input.mongoId);
+			return redactDatabaseServiceSecrets(deployedMongo);
 		}),
 	deployWithLogs: protectedProcedure
 		.meta({
@@ -293,7 +295,7 @@ export const mongoRouter = createTRPCRouter({
 				resourceId: mongo.mongoId,
 				resourceName: mongo.appName,
 			});
-			return mongo;
+			return redactDatabaseServiceSecrets(mongo);
 		}),
 	reload: protectedProcedure
 		.input(apiResetMongo)
@@ -363,7 +365,7 @@ export const mongoRouter = createTRPCRouter({
 				} catch (_) {}
 			}
 
-			return mongo;
+			return redactDatabaseServiceSecrets(mongo);
 		}),
 	saveEnvironment: protectedProcedure
 		.input(apiSaveEnvironmentVariablesMongo)
@@ -505,7 +507,7 @@ export const mongoRouter = createTRPCRouter({
 				resourceId: updatedMongo.mongoId,
 				resourceName: updatedMongo.appName,
 			});
-			return updatedMongo;
+			return redactDatabaseServiceSecrets(updatedMongo);
 		}),
 	rebuild: protectedProcedure
 		.input(apiRebuildMongo)

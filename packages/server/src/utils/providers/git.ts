@@ -1,11 +1,15 @@
 import path, { join } from "node:path";
-import { paths } from "@dokploy/server/constants";
+import { IS_CLOUD, paths } from "@dokploy/server/constants";
 import {
 	findSSHKeyById,
 	updateSSHKeyById,
 } from "@dokploy/server/services/ssh-key";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
 import { quoteShellArgs } from "../shell";
+import {
+	assertCloudHostResolvesPublic,
+	type HostnameLookup,
+} from "../url/network";
 import {
 	buildCreateDirectoryCommand,
 	buildGitCloneCommand,
@@ -27,6 +31,41 @@ interface CloneGitRepository {
 	outputPathOverride?: string;
 }
 
+const customGitUrlHostname = (customGitUrl: string) => {
+	if (isHttpOrHttps(customGitUrl) || customGitUrl.startsWith("ssh://")) {
+		try {
+			return new URL(customGitUrl).hostname;
+		} catch {
+			throw new Error(`Malformatted Git URL: ${customGitUrl}`);
+		}
+	}
+
+	return sanitizeRepoPathSSH(customGitUrl).domain;
+};
+
+export const assertCustomGitUrlAllowed = async (
+	customGitUrl: string,
+	options: {
+		enforcePublicHost?: boolean;
+		lookup?: HostnameLookup;
+	} = {},
+) => {
+	const enforcePublicHost = options.enforcePublicHost ?? IS_CLOUD;
+	if (!enforcePublicHost) {
+		return;
+	}
+
+	const hostname = customGitUrlHostname(customGitUrl);
+	if (!hostname) {
+		throw new Error(`Malformatted Git URL: ${customGitUrl}`);
+	}
+
+	await assertCloudHostResolvesPublic(hostname, {
+		fieldName: "Custom Git URL",
+		lookup: options.lookup,
+	});
+};
+
 export const cloneGitRepository = async ({
 	type = "application",
 	...entity
@@ -47,6 +86,8 @@ export const cloneGitRepository = async ({
 		command += `${buildProviderEchoCommand("Error: ❌ Repository not found")} exit 1;`;
 		return command;
 	}
+
+	await assertCustomGitUrlAllowed(customGitUrl);
 
 	const temporalKeyPath = path.join("/tmp", "id_rsa");
 

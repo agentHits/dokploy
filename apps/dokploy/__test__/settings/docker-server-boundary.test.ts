@@ -154,7 +154,12 @@ const { settingsRouter } = await import("../../server/api/routers/settings");
 const createCaller = () =>
 	settingsRouter.createCaller({
 		db: {},
-		req: {},
+		req: {
+			headers: {
+				host: "dokploy.example.com",
+				"x-forwarded-proto": "https",
+			},
+		},
 		res: {},
 		session: {
 			userId: "user-1",
@@ -169,6 +174,12 @@ const createCaller = () =>
 describe("settings Docker server boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.generateOpenApiDocument.mockReturnValue({
+			components: {},
+			info: {},
+			security: [],
+		});
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
 		mocks.cleanupBuilders.mockResolvedValue(undefined);
 		mocks.cleanupContainers.mockResolvedValue(undefined);
@@ -359,5 +370,30 @@ describe("settings Docker server boundary", () => {
 		});
 
 		expect(mocks.cleanupAllBackground).toHaveBeenCalledWith("server-1");
+	});
+
+	it("requires api.read before generating the OpenAPI document", async () => {
+		const result = await createCaller().getOpenApiDocument();
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			api: ["read"],
+		});
+		expect(mocks.generateOpenApiDocument).toHaveBeenCalled();
+		expect(result).toMatchObject({
+			info: {
+				title: "Dokploy API",
+			},
+			security: [{ apiKey: [] }],
+		});
+	});
+
+	it("does not generate the OpenAPI document without api.read", async () => {
+		mocks.checkPermission.mockRejectedValueOnce(new Error("Permission denied"));
+
+		await expect(createCaller().getOpenApiDocument()).rejects.toThrow(
+			"Permission denied",
+		);
+
+		expect(mocks.generateOpenApiDocument).not.toHaveBeenCalled();
 	});
 });

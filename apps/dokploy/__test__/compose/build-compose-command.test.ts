@@ -81,11 +81,15 @@ describe("getBuildComposeCommand command boundary", () => {
 	it("preserves quoted custom compose command arguments as argv", async () => {
 		const command = await getBuildComposeCommand({
 			...baseCompose,
-			command: 'compose -f "docker compose.yml" up -d',
+			command: 'compose -p my-app -f "docker compose.yml" up -d',
 		});
 
-		expect(command).toContain("docker compose -f 'docker compose.yml' up -d");
-		expect(command).not.toContain("docker compose -f docker compose.yml up -d");
+		expect(command).toContain(
+			"docker compose -p my-app -f 'docker compose.yml' up -d",
+		);
+		expect(command).not.toContain(
+			"docker compose -p my-app -f docker compose.yml up -d",
+		);
 	});
 
 	it.each([
@@ -99,6 +103,13 @@ describe("getBuildComposeCommand command boundary", () => {
 		["newline", "compose -f docker-compose.yml up\ntouch /tmp/pwn"],
 		["docker prefix", "docker compose up"],
 		["unsupported docker subcommand", "build -t image ."],
+		["missing compose project", "compose -f docker-compose.yml up -d"],
+		["foreign compose project", "compose -p other up -d"],
+		["foreign long compose project", "compose --project-name other up -d"],
+		["foreign inline compose project", "compose --project-name=other up -d"],
+		["missing stack name", "stack deploy -c docker-compose.yml"],
+		["foreign stack name", "stack deploy -c docker-compose.yml other"],
+		["unsupported stack subcommand", "stack rm my-app"],
 	])("rejects custom compose commands containing %s", async (_, customCommand) => {
 		await expect(
 			getBuildComposeCommand({
@@ -106,5 +117,35 @@ describe("getBuildComposeCommand command boundary", () => {
 				command: customCommand,
 			}),
 		).rejects.toThrow("Invalid docker compose command");
+	});
+
+	it.each([
+		[
+			"compose short project",
+			"compose -p my-app up -d",
+			"compose -p my-app up -d",
+		],
+		[
+			"compose long project",
+			"compose --project-name my-app up -d",
+			"compose --project-name my-app up -d",
+		],
+		[
+			"compose inline project",
+			"compose --project-name=my-app up -d",
+			"compose --project-name\\=my-app up -d",
+		],
+		[
+			"stack deploy",
+			"stack deploy -c docker-compose.yml my-app",
+			"stack deploy -c docker-compose.yml my-app",
+		],
+	])("allows custom docker commands bound to %s", async (_, customCommand, expectedCommand) => {
+		const command = await getBuildComposeCommand({
+			...baseCompose,
+			command: customCommand,
+		});
+
+		expect(command).toContain(`docker ${expectedCommand}`);
 	});
 });

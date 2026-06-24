@@ -49,6 +49,8 @@ import {
 	fetchTemplatesList,
 } from "@dokploy/server/templates/github";
 import { processTemplate } from "@dokploy/server/templates/processors";
+import { assertCustomGitUrlAllowed } from "@dokploy/server/utils/providers/git";
+import { redactDeployableServiceSecrets } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import _ from "lodash";
@@ -133,7 +135,7 @@ export const composeRouter = createTRPCRouter({
 					resourceId: newService.composeId,
 					resourceName: newService.appName,
 				});
-				return newService;
+				return redactDeployableServiceSecrets(newService);
 			} catch (error) {
 				throw error;
 			}
@@ -187,7 +189,7 @@ export const composeRouter = createTRPCRouter({
 			}
 
 			return {
-				...redactGitProviderSecrets(compose),
+				...redactDeployableServiceSecrets(redactGitProviderSecrets(compose)),
 				hasGitProviderAccess,
 				unauthorizedProvider,
 			};
@@ -200,6 +202,9 @@ export const composeRouter = createTRPCRouter({
 				service: ["create"],
 			});
 			await assertDeploySourceCredentialAccess(input, ctx.session);
+			if (input.customGitUrl) {
+				await assertCustomGitUrlAllowed(input.customGitUrl);
+			}
 			const updated = await updateCompose(input.composeId, input);
 			await audit(ctx, {
 				action: "update",
@@ -207,7 +212,7 @@ export const composeRouter = createTRPCRouter({
 				resourceId: input.composeId,
 				resourceName: updated?.name,
 			});
-			return updated;
+			return redactDeployableServiceSecrets(updated);
 		}),
 	saveEnvironment: protectedProcedure
 		.input(apiSaveEnvironmentVariablesCompose)
@@ -277,7 +282,9 @@ export const composeRouter = createTRPCRouter({
 				resourceId: composeResult.composeId,
 				resourceName: composeResult.appName,
 			});
-			return composeResult;
+			return redactDeployableServiceSecrets(
+				redactGitProviderSecrets(composeResult),
+			);
 		}),
 	cleanQueues: protectedProcedure
 		.input(apiFindCompose)
@@ -684,7 +691,7 @@ export const composeRouter = createTRPCRouter({
 				resourceId: compose.composeId,
 				resourceName: compose.name,
 			});
-			return compose;
+			return redactDeployableServiceSecrets(compose);
 		}),
 
 	templates: protectedProcedure
@@ -804,7 +811,7 @@ export const composeRouter = createTRPCRouter({
 				resourceId: input.composeId,
 				resourceName: updatedCompose.name,
 			});
-			return updatedCompose;
+			return redactDeployableServiceSecrets(updatedCompose);
 		}),
 
 	processTemplate: protectedProcedure

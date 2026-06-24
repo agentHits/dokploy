@@ -13,6 +13,7 @@ import {
 	extractHash,
 	getProviderByHeader,
 	logWebhookError,
+	rejectNonPostDeployWebhook,
 } from "../[refreshToken]";
 
 export default async function handler(
@@ -21,6 +22,10 @@ export default async function handler(
 ) {
 	const { refreshToken } = req.query;
 	try {
+		if (rejectNonPostDeployWebhook(req, res)) {
+			return;
+		}
+
 		if (req.headers["x-github-event"] === "ping") {
 			res.status(200).json({ message: "Ping received, webhook is active" });
 			return;

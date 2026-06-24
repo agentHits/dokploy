@@ -29,15 +29,18 @@ import {
 	user,
 } from "@dokploy/server/db/schema";
 import {
+	checkPermission,
 	hasPermission,
 	resolvePermissions,
 } from "@dokploy/server/services/permission";
 import { hasValidLicense } from "@dokploy/server/services/proprietary/license-key";
+import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
 import { TRPCError } from "@trpc/server";
 import * as bcrypt from "bcrypt";
 import { and, asc, eq, gt, ne } from "drizzle-orm";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
+import { assertContainerMetricsServiceAccess } from "@/server/api/utils/monitoring-access";
 import {
 	adminProcedure,
 	createTRPCRouter,
@@ -199,7 +202,7 @@ export const userRouter = createTRPCRouter({
 			return memberResult;
 		}),
 	session: publicProcedure.query(async ({ ctx }) => {
-		if (!ctx.user || !ctx.session || !ctx.session.activeOrganizationId) {
+		if (!ctx.user || !ctx.session?.activeOrganizationId) {
 			return null;
 		}
 		return {
@@ -536,13 +539,18 @@ export const userRouter = createTRPCRouter({
 						].join("\n"),
 					);
 				}
+				await assertContainerMetricsServiceAccess(
+					ctx,
+					input.appName,
+					input.serverId,
+				);
 				const target = await getContainerMetricsTarget(input, ctx);
 				const request = buildContainerMetricsRequest({
 					...target,
 					dataPoints: input.dataPoints,
 					appName: input.appName,
 				});
-				const response = await fetch(request.url.toString(), {
+				const response = await fetchWithPublicEgress(request.url.toString(), {
 					headers: {
 						Authorization: `Bearer ${request.token}`,
 					},
@@ -590,6 +598,7 @@ export const userRouter = createTRPCRouter({
 		)
 		.mutation(async ({ input, ctx }) => {
 			try {
+				await checkPermission(ctx, { api: ["read"] });
 				const apiKeyToDelete = await db.query.apikey.findFirst({
 					where: eq(apikey.id, input.apiKeyId),
 				});
@@ -624,6 +633,9 @@ export const userRouter = createTRPCRouter({
 	createApiKey: protectedProcedure
 		.input(apiCreateApiKey)
 		.mutation(async ({ input, ctx }) => {
+			const targetOrganizationId =
+				input.metadata?.organizationId ?? ctx.session.activeOrganizationId;
+
 			// Verify user is a member of the organization specified in metadata
 			if (input.metadata?.organizationId) {
 				const userMember = await db.query.member.findFirst({
@@ -641,8 +653,17 @@ export const userRouter = createTRPCRouter({
 				}
 			}
 
+			const targetOrganizationCtx = {
+				...ctx,
+				session: {
+					...ctx.session,
+					activeOrganizationId: targetOrganizationId,
+				},
+			};
+			await checkPermission(targetOrganizationCtx, { api: ["read"] });
+
 			const apiKey = await createApiKey(ctx.user.id, input);
-			await audit(ctx, {
+			await audit(targetOrganizationCtx, {
 				action: "create",
 				resourceType: "user",
 				resourceId: apiKey.id,
@@ -716,10 +737,10 @@ export const userRouter = createTRPCRouter({
 				});
 			}
 
-			if (input.role === "owner") {
+			if (input.role === "owner" || input.role === "admin") {
 				throw new TRPCError({
 					code: "FORBIDDEN",
-					message: "Cannot create a user with the owner role",
+					message: "Cannot create a user with a privileged static role",
 				});
 			}
 

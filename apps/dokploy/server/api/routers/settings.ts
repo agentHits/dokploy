@@ -735,6 +735,7 @@ export const settingsRouter = createTRPCRouter({
 
 	getOpenApiDocument: protectedProcedure.query(
 		async ({ ctx }): Promise<unknown> => {
+			await checkPermission(ctx, { api: ["read"] });
 			const protocol = ctx.req.headers["x-forwarded-proto"];
 			const url = `${protocol}://${ctx.req.headers.host}/api`;
 			const openApiDocument = generateOpenApiDocument(appRouter, {

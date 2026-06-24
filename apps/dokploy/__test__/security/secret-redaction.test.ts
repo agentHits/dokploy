@@ -1,5 +1,7 @@
 import {
 	REDACTED_SECRET_VALUE,
+	redactDatabaseServiceSecrets,
+	redactDeployableServiceSecrets,
 	redactSecretFields,
 	secretUpdateValue,
 } from "@dokploy/server/utils/security/redaction";
@@ -28,5 +30,37 @@ describe("shared secret redaction helpers", () => {
 		expect(secretUpdateValue("")).toBeUndefined();
 		expect(secretUpdateValue("   ")).toBeUndefined();
 		expect(secretUpdateValue("new-secret")).toBe("new-secret");
+	});
+
+	it("redacts deployable service read secrets", () => {
+		const redacted = redactDeployableServiceSecrets({
+			env: "TOKEN=secret",
+			refreshToken: "refresh-token",
+			buildSecrets: "NPM_TOKEN=secret",
+			name: "app-one",
+		});
+
+		expect(redacted).toMatchObject({
+			env: REDACTED_SECRET_VALUE,
+			refreshToken: REDACTED_SECRET_VALUE,
+			buildSecrets: REDACTED_SECRET_VALUE,
+			name: "app-one",
+		});
+	});
+
+	it("redacts database service read credentials", () => {
+		const redacted = redactDatabaseServiceSecrets({
+			env: "PGSSLMODE=require",
+			databaseUser: "dokploy",
+			databasePassword: "secret",
+			databaseRootPassword: "root-secret",
+		});
+
+		expect(redacted).toMatchObject({
+			env: REDACTED_SECRET_VALUE,
+			databaseUser: "dokploy",
+			databasePassword: REDACTED_SECRET_VALUE,
+			databaseRootPassword: REDACTED_SECRET_VALUE,
+		});
 	});
 });

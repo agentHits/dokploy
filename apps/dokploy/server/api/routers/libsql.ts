@@ -24,6 +24,7 @@ import {
 	checkServiceAccess,
 	checkServicePermissionAndAccess,
 } from "@dokploy/server/services/permission";
+import { redactDatabaseServiceSecrets } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -120,7 +121,7 @@ export const libsqlRouter = createTRPCRouter({
 					message: "You are not authorized to access this Libsql",
 				});
 			}
-			return libsql;
+			return redactDatabaseServiceSecrets(libsql);
 		}),
 
 	start: protectedProcedure
@@ -146,7 +147,7 @@ export const libsqlRouter = createTRPCRouter({
 				resourceId: libsql.libsqlId,
 				resourceName: libsql.appName,
 			});
-			return libsql;
+			return redactDatabaseServiceSecrets(libsql);
 		}),
 	stop: protectedProcedure
 		.input(apiFindOneLibsql)
@@ -171,7 +172,7 @@ export const libsqlRouter = createTRPCRouter({
 				resourceId: libsql.libsqlId,
 				resourceName: libsql.appName,
 			});
-			return libsql;
+			return redactDatabaseServiceSecrets(libsql);
 		}),
 	saveExternalPorts: protectedProcedure
 		.input(apiSaveExternalPortsLibsql)
@@ -233,7 +234,7 @@ export const libsqlRouter = createTRPCRouter({
 				resourceId: libsql.libsqlId,
 				resourceName: libsql.appName,
 			});
-			return libsql;
+			return redactDatabaseServiceSecrets(libsql);
 		}),
 	deploy: protectedProcedure
 		.input(apiDeployLibsql)
@@ -248,7 +249,8 @@ export const libsqlRouter = createTRPCRouter({
 				resourceId: libsql.libsqlId,
 				resourceName: libsql.appName,
 			});
-			return deployLibsql(input.libsqlId);
+			const deployedLibsql = await deployLibsql(input.libsqlId);
+			return redactDatabaseServiceSecrets(deployedLibsql);
 		}),
 	deployWithLogs: protectedProcedure
 		.meta({
@@ -303,7 +305,7 @@ export const libsqlRouter = createTRPCRouter({
 				resourceId: libsql.libsqlId,
 				resourceName: libsql.appName,
 			});
-			return libsql;
+			return redactDatabaseServiceSecrets(libsql);
 		}),
 	remove: protectedProcedure
 		.input(apiFindOneLibsql)
@@ -338,7 +340,7 @@ export const libsqlRouter = createTRPCRouter({
 				} catch (_) {}
 			}
 
-			return libsql;
+			return redactDatabaseServiceSecrets(libsql);
 		}),
 	saveEnvironment: protectedProcedure
 		.input(apiSaveEnvironmentVariablesLibsql)
@@ -457,7 +459,7 @@ export const libsqlRouter = createTRPCRouter({
 				resourceId: updatedLibsql.libsqlId,
 				resourceName: updatedLibsql.appName,
 			});
-			return updatedLibsql;
+			return redactDatabaseServiceSecrets(updatedLibsql);
 		}),
 	rebuild: protectedProcedure
 		.input(apiRebuildLibsql)

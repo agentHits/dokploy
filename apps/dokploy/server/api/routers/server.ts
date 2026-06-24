@@ -19,6 +19,7 @@ import {
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
 import { hasValidLicense } from "@dokploy/server/services/proprietary/license-key";
+import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
 import { TRPCError } from "@trpc/server";
 import { observable } from "@trpc/server/observable";
 import { and, desc, eq, getTableColumns, isNotNull, sql } from "drizzle-orm";
@@ -625,7 +626,7 @@ export const serverRouter = createTRPCRouter({
 			});
 
 			try {
-				const response = await fetch(request.url.toString(), {
+				const response = await fetchWithPublicEgress(request.url.toString(), {
 					headers: {
 						Authorization: `Bearer ${request.token}`,
 					},

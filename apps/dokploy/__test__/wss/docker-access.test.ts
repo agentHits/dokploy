@@ -5,6 +5,7 @@ import { WebSocket } from "ws";
 
 const mocks = vi.hoisted(() => ({
 	checkPermission: vi.fn(),
+	findMemberByUserId: vi.fn(),
 	findServerById: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
 	spawn: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("@dokploy/server", () => ({
 
 vi.mock("@dokploy/server/services/permission", () => ({
 	checkPermission: mocks.checkPermission,
+	findMemberByUserId: mocks.findMemberByUserId,
 }));
 
 vi.mock("@dokploy/server/services/server", () => ({
@@ -88,6 +90,7 @@ describe("Docker WebSocket permission gate", () => {
 			session: { activeOrganizationId: "org-1" },
 		});
 		mocks.checkPermission.mockRejectedValue(new Error("Permission denied"));
+		mocks.findMemberByUserId.mockResolvedValue({ role: "admin" });
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
 	});
 

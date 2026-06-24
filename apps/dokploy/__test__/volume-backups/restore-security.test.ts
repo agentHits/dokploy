@@ -566,7 +566,7 @@ describe("volume backup restore command safety", () => {
 			unescapedCommand.indexOf("tar xvf"),
 		);
 		expect(unescapedCommand).toContain("Unsafe archive member");
-		expect(unescapedCommand).toContain("Unsupported archive link member");
+		expect(unescapedCommand).toContain("Unsupported archive member");
 		expect(unescapedCommand).toContain("/backup/data_volume-2026-06-22.tar");
 		expect(unescapedCommand).not.toContain("/backup/app-one/prefix");
 		expect(unescapedCommand).not.toContain("../");

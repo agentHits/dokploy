@@ -279,4 +279,21 @@ describe("notification router secret and organization boundaries", () => {
 			}),
 		);
 	});
+
+	it("rejects blank remote metrics tokens before server lookup", async () => {
+		await expect(
+			createCaller().receiveNotification({
+				ServerType: "Remote",
+				Type: "CPU",
+				Value: 95,
+				Threshold: 90,
+				Message: "cpu high",
+				Timestamp: "2026-06-24T00:00:00.000Z",
+				Token: "   ",
+			}),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(mocks.select).not.toHaveBeenCalled();
+		expect(mocks.sendServerThresholdNotifications).not.toHaveBeenCalled();
+	});
 });
