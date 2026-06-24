@@ -12,6 +12,7 @@ import { findDestinationById } from "@dokploy/server/services/destination";
 import { sendDokployBackupNotifications } from "../notifications/dokploy-backup";
 import { execAsync } from "../process/execAsync";
 import {
+	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
 	getBackupTimestamp,
 	getRcloneS3Destination,
@@ -105,7 +106,9 @@ export const runWebServerBackup = async (backup: BackupSchedule) => {
 				// If stat fails, keep undefined
 			}
 
-			const uploadCommand = buildRcloneS3Command("copyto", destination, [
+			const safeDestination =
+				await assertRcloneS3DestinationAllowed(destination);
+			const uploadCommand = buildRcloneS3Command("copyto", safeDestination, [
 				zipPath,
 				s3Path,
 			]);

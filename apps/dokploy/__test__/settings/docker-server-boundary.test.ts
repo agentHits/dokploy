@@ -269,6 +269,88 @@ describe("settings Docker server boundary", () => {
 		expect(mocks.writeTraefikConfigInPath).not.toHaveBeenCalled();
 	});
 
+	it("denies inaccessible dashboard toggles before Traefik reads", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().toggleDashboard({
+				enableDashboard: true,
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.readPorts).not.toHaveBeenCalled();
+		expect(mocks.readEnvironmentVariables).not.toHaveBeenCalled();
+		expect(mocks.checkPortInUse).not.toHaveBeenCalled();
+		expect(mocks.writeTraefikSetup).not.toHaveBeenCalled();
+	});
+
+	it("denies inaccessible Traefik env writes before Traefik reads", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().writeTraefikEnv({
+				env: "FOO=bar",
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.prepareEnvironmentVariables).not.toHaveBeenCalled();
+		expect(mocks.readPorts).not.toHaveBeenCalled();
+		expect(mocks.writeTraefikSetup).not.toHaveBeenCalled();
+	});
+
+	it("denies inaccessible GPU setup before remote setup helpers", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().setupGPU({ serverId: "server-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.setupGPUSupport).not.toHaveBeenCalled();
+	});
+
+	it("denies inaccessible GPU status reads before remote status helpers", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().checkGPUStatus({ serverId: "server-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.checkGPUStatus).not.toHaveBeenCalled();
+	});
+
+	it("denies inaccessible Traefik port writes before Traefik reads", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().updateTraefikPorts({
+				additionalPorts: [
+					{
+						protocol: "tcp",
+						publishedPort: 8443,
+						targetPort: 8443,
+					},
+				],
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.readEnvironmentVariables).not.toHaveBeenCalled();
+		expect(mocks.checkPortInUse).not.toHaveBeenCalled();
+		expect(mocks.writeTraefikSetup).not.toHaveBeenCalled();
+	});
+
+	it("denies inaccessible Traefik port reads before Traefik reads", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().getTraefikPorts({ serverId: "server-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.readPorts).not.toHaveBeenCalled();
+	});
+
 	it("allows accessible server cleanup", async () => {
 		await expect(
 			createCaller().cleanAll({ serverId: "server-1" }),

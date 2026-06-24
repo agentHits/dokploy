@@ -13,6 +13,16 @@ import {
 	user,
 } from "@/server/db/schema";
 import { createTRPCRouter, protectedProcedure, withPermission } from "../trpc";
+
+const assertAdminRoleAssignmentAllowed = (callerRole: string) => {
+	if (callerRole !== "owner") {
+		throw new TRPCError({
+			code: "FORBIDDEN",
+			message: "Only organization owners can assign or modify admin roles",
+		});
+	}
+};
+
 export const organizationRouter = createTRPCRouter({
 	create: protectedProcedure
 		.input(
@@ -302,6 +312,9 @@ export const organizationRouter = createTRPCRouter({
 					message: "Cannot invite a user with the owner role",
 				});
 			}
+			if (input.role === "admin") {
+				assertAdminRoleAssignmentAllowed(ctx.user.role);
+			}
 
 			// If assigning a custom role, verify it exists
 			if (!["owner", "admin", "member"].includes(input.role)) {
@@ -443,14 +456,10 @@ export const organizationRouter = createTRPCRouter({
 				});
 			}
 
-			// Only owners can change admin roles
-			// Admins can only change member roles
-			if (ctx.user.role === "admin" && target.role === "admin") {
-				throw new TRPCError({
-					code: "FORBIDDEN",
-					message:
-						"Only the organization owner can change admin roles. Admins can only modify member roles.",
-				});
+			// Admin role changes are non-delegable; only owners can grant, revoke,
+			// or modify static admin memberships.
+			if (target.role === "admin" || input.role === "admin") {
+				assertAdminRoleAssignmentAllowed(ctx.user.role);
 			}
 
 			// If assigning a custom role (not admin/member), verify it exists

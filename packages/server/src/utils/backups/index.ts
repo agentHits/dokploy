@@ -12,6 +12,7 @@ import { cleanupAll } from "../docker/utils";
 import { sendDockerCleanupNotifications } from "../notifications/docker-cleanup";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
 import {
+	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
 	getRcloneS3Destination,
 	normalizeS3Path,
@@ -137,7 +138,9 @@ export const keepLatestNBackups = async (
 	if (!backup.keepLatestCount) return;
 
 	try {
-		const destination = await findDestinationById(backup.destinationId);
+		const destination = await assertRcloneS3DestinationAllowed(
+			await findDestinationById(backup.destinationId),
+		);
 		const appName = getServiceAppName(backup);
 		const backupFilesPath = getRcloneS3Destination(
 			destination,

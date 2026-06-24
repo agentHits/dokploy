@@ -40,7 +40,8 @@ vi.mock("@dokploy/server/utils/process/execAsync", () => ({
 	execAsyncRemote: mocks.execAsyncRemote,
 }));
 
-const { generateApplyPatchesCommand } = await import(
+const { apiCreatePatch } = await import("@dokploy/server/db/schema");
+const { createPatch, generateApplyPatchesCommand } = await import(
 	"@dokploy/server/services/patch"
 );
 const { readPatchRepoFile } = await import(
@@ -119,6 +120,23 @@ describe("generateApplyPatchesCommand path safety", () => {
 		expect(command).toContain("id");
 		expect(command).not.toContain("$(id)");
 		expect(command).not.toContain("../");
+	});
+});
+
+describe("patch service ownership boundary", () => {
+	it("rejects create payloads that bind both application and compose ids", async () => {
+		const payload = {
+			applicationId: "app-1",
+			composeId: "compose-1",
+			filePath: "src/index.ts",
+			content: "export const value = true;",
+			type: "update" as const,
+		};
+
+		expect(apiCreatePatch.safeParse(payload).success).toBe(false);
+		await expect(createPatch(payload)).rejects.toMatchObject({
+			code: "BAD_REQUEST",
+		});
 	});
 });
 

@@ -4,6 +4,7 @@ import { findComposeById } from "@dokploy/server/services/compose";
 import { findDestinationById } from "@dokploy/server/services/destination";
 import type { findVolumeBackupById } from "@dokploy/server/services/volume-backups";
 import {
+	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
 	getBackupTimestamp,
 	getRcloneS3Destination,
@@ -71,9 +72,10 @@ export const backupVolume = async (
 		path.join(volumeBackupPath, backupFileName),
 	);
 
-	const rcloneCommand = buildRcloneS3Command("copyto", destination, [
+	const safeDestination = await assertRcloneS3DestinationAllowed(destination);
+	const rcloneCommand = buildRcloneS3Command("copyto", safeDestination, [
 		`${volumeBackupPath}/${backupFileName}`,
-		getRcloneS3Destination(destination, bucketDestination),
+		getRcloneS3Destination(safeDestination, bucketDestination),
 	]);
 
 	const backupCommand = `

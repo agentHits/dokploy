@@ -84,7 +84,36 @@ export const findDeploymentById = async (deploymentId: string) => {
 		where: eq(deployments.deploymentId, deploymentId),
 		with: {
 			application: true,
-			schedule: true,
+			backup: {
+				with: {
+					compose: true,
+					libsql: true,
+					mariadb: true,
+					mongo: true,
+					mysql: true,
+					postgres: true,
+				},
+			},
+			compose: true,
+			previewDeployment: true,
+			schedule: {
+				with: {
+					application: true,
+					compose: true,
+				},
+			},
+			volumeBackup: {
+				with: {
+					application: true,
+					compose: true,
+					libsql: true,
+					mariadb: true,
+					mongo: true,
+					mysql: true,
+					postgres: true,
+					redis: true,
+				},
+			},
 		},
 	});
 	if (!deployment) {
@@ -364,7 +393,8 @@ export const createDeploymentBackup = async (
 			backup.postgres?.serverId ||
 			backup.mariadb?.serverId ||
 			backup.mysql?.serverId ||
-			backup.mongo?.serverId;
+			backup.mongo?.serverId ||
+			backup.libsql?.serverId;
 	} else if (backup.backupType === "compose") {
 		serverId = backup.compose?.serverId;
 	}

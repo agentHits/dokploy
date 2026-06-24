@@ -1,6 +1,11 @@
+import { assertRcloneAdditionalFlagsAllowed } from "@dokploy/server/db/validations/destination";
 import { logger } from "@dokploy/server/lib/logger";
 import type { BackupSchedule } from "@dokploy/server/services/backup";
 import type { Destination } from "@dokploy/server/services/destination";
+import {
+	assertDestinationEndpointAllowed,
+	normalizeDestinationEndpointUrl,
+} from "@dokploy/server/utils/destination/endpoint";
 import {
 	normalizeRestoreDatabaseName,
 	normalizeRestoreServiceName,
@@ -89,6 +94,9 @@ export type RcloneS3Destination = Pick<
 export const getS3CredentialArgs = (destination: RcloneS3Destination) => {
 	const { accessKey, secretAccessKey, region, endpoint, provider } =
 		destination;
+	const normalizedEndpoint = normalizeDestinationEndpointUrl(endpoint, {
+		fieldName: "S3 endpoint",
+	});
 	const rcloneArgs = [
 		"--s3-access-key-id",
 		accessKey,
@@ -97,7 +105,7 @@ export const getS3CredentialArgs = (destination: RcloneS3Destination) => {
 		"--s3-region",
 		region,
 		"--s3-endpoint",
-		endpoint,
+		normalizedEndpoint,
 		"--s3-no-check-bucket",
 		"--s3-force-path-style",
 	];
@@ -107,6 +115,7 @@ export const getS3CredentialArgs = (destination: RcloneS3Destination) => {
 	}
 
 	if (destination.additionalFlags?.length) {
+		assertRcloneAdditionalFlagsAllowed(destination.additionalFlags);
 		rcloneArgs.push(...destination.additionalFlags);
 	}
 
@@ -130,6 +139,23 @@ export const buildRcloneS3Command = (
 	args: readonly string[],
 ) =>
 	buildRcloneCommand([command, ...getS3CredentialArgs(destination), ...args]);
+
+export const assertRcloneS3DestinationAllowed = async (
+	destination: RcloneS3Destination,
+) => {
+	assertRcloneAdditionalFlagsAllowed(destination.additionalFlags);
+	const endpoint = await assertDestinationEndpointAllowed(
+		destination.endpoint,
+		{
+			fieldName: "S3 endpoint",
+		},
+	);
+
+	return {
+		...destination,
+		endpoint,
+	};
+};
 
 export const getPostgresBackupCommand = (
 	database: string,

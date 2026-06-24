@@ -10,6 +10,7 @@ import { findProjectById } from "@dokploy/server/services/project";
 import { sendDatabaseBackupNotifications } from "../notifications/database-backup";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
 import {
+	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
 	getBackupCommand,
 	getBackupTimestamp,
@@ -34,8 +35,9 @@ export const runMariadbBackup = async (
 		description: "MariaDB Backup",
 	});
 	try {
-		const rcloneCommand = buildRcloneS3Command("rcat", destination, [
-			getRcloneS3Destination(destination, bucketDestination),
+		const safeDestination = await assertRcloneS3DestinationAllowed(destination);
+		const rcloneCommand = buildRcloneS3Command("rcat", safeDestination, [
+			getRcloneS3Destination(safeDestination, bucketDestination),
 		]);
 
 		const backupCommand = getBackupCommand(

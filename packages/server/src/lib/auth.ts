@@ -10,11 +10,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { IS_CLOUD } from "../constants";
 import { db } from "../db";
 import * as schema from "../db/schema";
-import {
-	getTrustedOrigins,
-	getTrustedProviders,
-	getUserByToken,
-} from "../services/admin";
+import { getTrustedOrigins, getUserByToken } from "../services/admin";
 import { createAuditLog } from "../services/proprietary/audit-log";
 import {
 	getWebServerSettings,
@@ -59,11 +55,8 @@ const { handler, api } = betterAuth({
 	account: {
 		accountLinking: {
 			enabled: true,
-			async trustedProviders() {
-				const fromDb = await getTrustedProviders();
-				return ["github", "google", ...fromDb];
-			},
-			allowDifferentEmails: true,
+			trustedProviders: ["github", "google"],
+			allowDifferentEmails: false,
 		},
 	},
 	appName: "Dokploy",

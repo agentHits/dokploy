@@ -53,11 +53,17 @@ export const patchRouter = createTRPCRouter({
 	create: protectedProcedure
 		.input(apiCreatePatch)
 		.mutation(async ({ input, ctx }) => {
+			if (input.applicationId && input.composeId) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Exactly one of applicationId or composeId must be provided",
+				});
+			}
 			const serviceId = input.applicationId ?? input.composeId;
 			if (!serviceId) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
-					message: "Either applicationId or composeId must be provided",
+					message: "Exactly one of applicationId or composeId must be provided",
 				});
 			}
 			await checkServicePermissionAndAccess(ctx, serviceId, {

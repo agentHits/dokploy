@@ -224,4 +224,100 @@ describe("deployment router assigned-server boundary", () => {
 
 		expect(mocks.removeDeployment).not.toHaveBeenCalled();
 	});
+
+	it("denies backup deployment logs through the owning backup service before log reads", async () => {
+		mocks.findDeploymentById.mockResolvedValue({
+			backupId: "backup-1",
+			backup: {
+				postgresId: "postgres-1",
+			},
+			deploymentId: "deployment-1",
+			logPath: "/tmp/deployment.log",
+		});
+		mocks.checkServicePermissionAndAccess.mockRejectedValue(
+			new Error("service denied"),
+		);
+
+		await expect(
+			createCaller().readLogs({
+				deploymentId: "deployment-1",
+				tail: 100,
+			}),
+		).rejects.toThrow("service denied");
+
+		expect(mocks.checkServicePermissionAndAccess).toHaveBeenCalledWith(
+			expect.anything(),
+			"postgres-1",
+			{ deployment: ["read"] },
+		);
+		expect(mocks.execAsync).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+	});
+
+	it("denies volume-backup deployment cancellation through the owning service before process side effects", async () => {
+		mocks.findDeploymentById.mockResolvedValue({
+			deploymentId: "deployment-1",
+			pid: "1234",
+			volumeBackupId: "volume-backup-1",
+			volumeBackup: {
+				applicationId: "app-1",
+			},
+		});
+		mocks.checkServicePermissionAndAccess.mockRejectedValue(
+			new Error("service denied"),
+		);
+
+		await expect(
+			createCaller().killProcess({ deploymentId: "deployment-1" }),
+		).rejects.toThrow("service denied");
+
+		expect(mocks.checkServicePermissionAndAccess).toHaveBeenCalledWith(
+			expect.anything(),
+			"app-1",
+			{ deployment: ["cancel"] },
+		);
+		expect(mocks.execAsync).not.toHaveBeenCalled();
+		expect(mocks.updateDeploymentStatus).not.toHaveBeenCalled();
+	});
+
+	it("denies preview deployment removal through the preview application before persistence", async () => {
+		mocks.findDeploymentById.mockResolvedValue({
+			deploymentId: "deployment-1",
+			previewDeploymentId: "preview-1",
+			previewDeployment: {
+				applicationId: "app-1",
+			},
+		});
+		mocks.checkServicePermissionAndAccess.mockRejectedValue(
+			new Error("service denied"),
+		);
+
+		await expect(
+			createCaller().removeDeployment({ deploymentId: "deployment-1" }),
+		).rejects.toThrow("service denied");
+
+		expect(mocks.checkServicePermissionAndAccess).toHaveBeenCalledWith(
+			expect.anything(),
+			"app-1",
+			{ deployment: ["cancel"] },
+		);
+		expect(mocks.removeDeployment).not.toHaveBeenCalled();
+	});
+
+	it("fails closed for deployment rows with no supported owner relation", async () => {
+		mocks.findDeploymentById.mockResolvedValue({
+			deploymentId: "deployment-1",
+			logPath: "/tmp/deployment.log",
+		});
+
+		await expect(
+			createCaller().readLogs({
+				deploymentId: "deployment-1",
+				tail: 100,
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.execAsync).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+	});
 });

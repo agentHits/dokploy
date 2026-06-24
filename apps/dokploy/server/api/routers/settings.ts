@@ -196,6 +196,7 @@ export const settingsRouter = createTRPCRouter({
 	toggleDashboard: adminProcedure
 		.input(apiEnableDashboard)
 		.mutation(async ({ input, ctx }) => {
+			await assertSettingsServerAccess(ctx, input.serverId);
 			const ports = await readPorts("dokploy-traefik", input.serverId);
 			const env = await readEnvironmentVariables(
 				"dokploy-traefik",
@@ -818,7 +819,8 @@ export const settingsRouter = createTRPCRouter({
 	),
 	readTraefikEnv: adminProcedure
 		.input(apiServerSchema)
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
+			await assertSettingsServerAccess(ctx, input?.serverId);
 			const envVars = await readEnvironmentVariables(
 				"dokploy-traefik",
 				input?.serverId,
@@ -829,6 +831,7 @@ export const settingsRouter = createTRPCRouter({
 	writeTraefikEnv: adminProcedure
 		.input(z.object({ env: z.string(), serverId: z.string().optional() }))
 		.mutation(async ({ input, ctx }) => {
+			await assertSettingsServerAccess(ctx, input?.serverId);
 			const envs = prepareEnvironmentVariables(input.env);
 			const ports = await readPorts("dokploy-traefik", input?.serverId);
 
@@ -849,7 +852,8 @@ export const settingsRouter = createTRPCRouter({
 		}),
 	haveTraefikDashboardPortEnabled: adminProcedure
 		.input(apiServerSchema)
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
+			await assertSettingsServerAccess(ctx, input?.serverId);
 			const ports = await readPorts("dokploy-traefik", input?.serverId);
 			return ports.some((port) => port.targetPort === 8080);
 		}),
@@ -1023,6 +1027,7 @@ export const settingsRouter = createTRPCRouter({
 			if (IS_CLOUD && !input.serverId) {
 				throw new Error("Select a server to enable the GPU Setup");
 			}
+			await assertSettingsServerAccess(ctx, input.serverId);
 
 			try {
 				await setupGPUSupport(input.serverId);
@@ -1043,7 +1048,7 @@ export const settingsRouter = createTRPCRouter({
 				serverId: z.string().optional(),
 			}),
 		)
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
 			if (IS_CLOUD && !input.serverId) {
 				return {
 					driverInstalled: false,
@@ -1059,6 +1064,7 @@ export const settingsRouter = createTRPCRouter({
 					gpuResources: 0,
 				};
 			}
+			await assertSettingsServerAccess(ctx, input.serverId);
 
 			try {
 				return await checkGPUStatus(input.serverId || "");
@@ -1085,13 +1091,15 @@ export const settingsRouter = createTRPCRouter({
 			}),
 		)
 		.mutation(async ({ input, ctx }) => {
+			if (IS_CLOUD && !input.serverId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "Please set a serverId to update Traefik ports",
+				});
+			}
+			await assertSettingsServerAccess(ctx, input.serverId);
+
 			try {
-				if (IS_CLOUD && !input.serverId) {
-					throw new TRPCError({
-						code: "UNAUTHORIZED",
-						message: "Please set a serverId to update Traefik ports",
-					});
-				}
 				const env = await readEnvironmentVariables(
 					"dokploy-traefik",
 					input?.serverId,
@@ -1129,6 +1137,9 @@ export const settingsRouter = createTRPCRouter({
 				});
 				return true;
 			} catch (error) {
+				if (error instanceof TRPCError) {
+					throw error;
+				}
 				throw new TRPCError({
 					code: "BAD_REQUEST",
 					message:
@@ -1141,7 +1152,8 @@ export const settingsRouter = createTRPCRouter({
 		}),
 	getTraefikPorts: adminProcedure
 		.input(apiServerSchema)
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
+			await assertSettingsServerAccess(ctx, input?.serverId);
 			const ports = await readPorts("dokploy-traefik", input?.serverId);
 			return ports;
 		}),

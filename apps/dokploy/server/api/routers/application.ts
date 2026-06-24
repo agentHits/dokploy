@@ -51,6 +51,7 @@ import {
 	withPermission,
 } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
+import { assertDeploySourceCredentialAccess } from "@/server/api/utils/deploy-source-access";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
 import {
 	apiCreateApplication,
@@ -418,6 +419,10 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertDeploySourceCredentialAccess(
+				{ githubId: input.githubId },
+				ctx.session,
+			);
 			await updateApplication(input.applicationId, {
 				repository: input.repository,
 				branch: input.branch,
@@ -445,6 +450,10 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertDeploySourceCredentialAccess(
+				{ gitlabId: input.gitlabId },
+				ctx.session,
+			);
 			await updateApplication(input.applicationId, {
 				gitlabRepository: input.gitlabRepository,
 				gitlabOwner: input.gitlabOwner,
@@ -473,6 +482,10 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertDeploySourceCredentialAccess(
+				{ bitbucketId: input.bitbucketId },
+				ctx.session,
+			);
 			await updateApplication(input.applicationId, {
 				bitbucketRepository: input.bitbucketRepository,
 				bitbucketRepositorySlug: input.bitbucketRepositorySlug,
@@ -500,6 +513,10 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertDeploySourceCredentialAccess(
+				{ giteaId: input.giteaId },
+				ctx.session,
+			);
 			await updateApplication(input.applicationId, {
 				giteaRepository: input.giteaRepository,
 				giteaOwner: input.giteaOwner,
@@ -549,6 +566,10 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertDeploySourceCredentialAccess(
+				{ customGitSSHKeyId: input.customGitSSHKeyId },
+				ctx.session,
+			);
 			await updateApplication(input.applicationId, {
 				customGitBranch: input.customGitBranch,
 				customGitBuildPath: input.customGitBuildPath,
@@ -652,6 +673,8 @@ export const applicationRouter = createTRPCRouter({
 					});
 				}
 			}
+
+			await assertDeploySourceCredentialAccess(input, ctx.session);
 
 			const { applicationId, ...rest } = input;
 			const updateApp = await updateApplication(applicationId, {

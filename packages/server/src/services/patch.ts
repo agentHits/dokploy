@@ -28,10 +28,11 @@ const normalizePatchFilePath = (filePath: string) => {
 };
 
 export const createPatch = async (input: z.infer<typeof apiCreatePatch>) => {
-	if (!input.applicationId && !input.composeId) {
+	const selectedIds = [input.applicationId, input.composeId].filter(Boolean);
+	if (selectedIds.length !== 1) {
 		throw new TRPCError({
 			code: "BAD_REQUEST",
-			message: "Either applicationId or composeId must be provided",
+			message: "Exactly one of applicationId or composeId must be provided",
 		});
 	}
 

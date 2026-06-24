@@ -75,6 +75,8 @@ export const registryRouter = createTRPCRouter({
 	create: withPermission("registry", "create")
 		.input(apiCreateRegistry)
 		.mutation(async ({ ctx, input }) => {
+			assertCloudRegistryTestServer(input.serverId);
+			await assertRegistryServerAccess(ctx, input.serverId);
 			const reg = await createRegistry(input, ctx.session.activeOrganizationId);
 			await audit(ctx, {
 				action: "create",
@@ -113,6 +115,8 @@ export const registryRouter = createTRPCRouter({
 					message: "You are not allowed to update this registry",
 				});
 			}
+			assertCloudRegistryTestServer(rest.serverId);
+			await assertRegistryServerAccess(ctx, rest.serverId);
 			const updateData = { ...rest };
 			if (isRedactedSecretValue(updateData.password)) {
 				delete updateData.password;

@@ -12,6 +12,7 @@ import {
 } from "@dokploy/server/utils/process/execAsync";
 import { scheduledJobs, scheduleJob } from "node-schedule";
 import {
+	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
 	getRcloneS3Destination,
 	normalizeS3Path,
@@ -88,18 +89,19 @@ const cleanupOldVolumeBackups = async (
 	if (!keepLatestCount) return;
 
 	try {
+		const safeDestination = await assertRcloneS3DestinationAllowed(destination);
 		const s3AppName = getVolumeServiceAppName(volumeBackup);
 		const backupFilesPath = getRcloneS3Destination(
-			destination,
+			safeDestination,
 			`${s3AppName}/${normalizeS3Path(prefix || "")}`,
 		);
-		const listCommand = buildRcloneS3Command("lsf", destination, [
+		const listCommand = buildRcloneS3Command("lsf", safeDestination, [
 			"--include",
 			`${volumeName}-*.tar`,
 			backupFilesPath,
 		]);
 		const sortAndPick = `sort -r | tail -n +$((${keepLatestCount}+1)) | xargs -I{}`;
-		const deleteCommand = buildRcloneS3Command("delete", destination, [
+		const deleteCommand = buildRcloneS3Command("delete", safeDestination, [
 			`${backupFilesPath}{}`,
 		]);
 		const fullCommand = `${listCommand} | ${sortAndPick} ${deleteCommand}`;

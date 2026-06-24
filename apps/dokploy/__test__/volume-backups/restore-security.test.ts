@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
 	findServerById: vi.fn(),
 	findVolumeBackupById: vi.fn(),
 	findVolumeBackups: vi.fn(),
+	mountFindMany: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
 	getS3Credentials: vi.fn(),
 	paths: vi.fn(),
@@ -105,6 +106,9 @@ vi.mock("@dokploy/server/db", () => ({
 			volumeBackups: {
 				findMany: mocks.findVolumeBackups,
 			},
+			mounts: {
+				findMany: mocks.mountFindMany,
+			},
 		},
 	},
 }));
@@ -135,6 +139,7 @@ vi.mock("@dokploy/server/utils/backups/utils", async () => {
 	const { quote } = await import("shell-quote");
 
 	return {
+		assertRcloneS3DestinationAllowed: async <T>(destination: T) => destination,
 		buildRcloneS3Command: (
 			command: string,
 			destination: { bucket: string },
@@ -275,6 +280,9 @@ describe("volume backup destination ownership boundary", () => {
 			bucket: "dokploy-backups",
 			organizationId: "org-2",
 		});
+		mocks.mountFindMany.mockResolvedValue([
+			{ volumeName: safeCreateVolumeBackupInput.volumeName },
+		]);
 		mocks.findVolumeBackupById.mockResolvedValue({
 			...safeUpdateVolumeBackupInput,
 		});
@@ -334,6 +342,43 @@ describe("volume backup destination ownership boundary", () => {
 		);
 	});
 
+	it("rejects volume-backup creates for Docker volumes not declared by the selected service", async () => {
+		mocks.findDestinationById.mockResolvedValue({
+			bucket: "dokploy-backups",
+			organizationId: "org-1",
+		});
+		mocks.mountFindMany.mockResolvedValue([{ volumeName: "data_volume" }]);
+
+		await expect(
+			createCaller().create({
+				...safeCreateVolumeBackupInput,
+				volumeName: "foreign_volume",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.createVolumeBackup).not.toHaveBeenCalled();
+		expect(mocks.scheduleVolumeBackup).not.toHaveBeenCalled();
+	});
+
+	it("rejects volume-backup updates for Docker volumes not declared by the selected service", async () => {
+		mocks.findDestinationById.mockResolvedValue({
+			bucket: "dokploy-backups",
+			organizationId: "org-1",
+		});
+		mocks.mountFindMany.mockResolvedValue([{ volumeName: "data_volume" }]);
+
+		await expect(
+			createCaller().update({
+				...safeUpdateVolumeBackupInput,
+				volumeName: "foreign_volume",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.updateVolumeBackup).not.toHaveBeenCalled();
+		expect(mocks.updateJob).not.toHaveBeenCalled();
+		expect(mocks.scheduleVolumeBackup).not.toHaveBeenCalled();
+	});
+
 	it("rejects volume-backup updates that reassign to a service outside the active organization", async () => {
 		mocks.findDestinationById.mockResolvedValue({
 			bucket: "dokploy-backups",
@@ -379,6 +424,77 @@ describe("volume backup destination ownership boundary", () => {
 		expect(mocks.updateVolumeBackup).not.toHaveBeenCalled();
 		expect(mocks.updateJob).not.toHaveBeenCalled();
 		expect(mocks.scheduleVolumeBackup).not.toHaveBeenCalled();
+	});
+
+	it("rejects cross-organization volume-backup reads for owner and admin roles", async () => {
+		mocks.findVolumeBackupById.mockResolvedValue({
+			...safeUpdateVolumeBackupInput,
+			applicationId: "app-2",
+		});
+		mocks.findApplicationById.mockResolvedValue(
+			applicationService("app-2", "org-2"),
+		);
+
+		await expect(
+			createCaller().one({ volumeBackupId: "volume-backup-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+	});
+
+	it("rejects cross-organization volume-backup lists for owner and admin roles", async () => {
+		mocks.findApplicationById.mockResolvedValue(
+			applicationService("app-2", "org-2"),
+		);
+
+		await expect(
+			createCaller().list({
+				id: "app-2",
+				volumeBackupType: "application",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.findVolumeBackups).not.toHaveBeenCalled();
+	});
+
+	it("rejects cross-organization volume-backup deletes before persistence", async () => {
+		mocks.findVolumeBackupById.mockResolvedValue({
+			...safeUpdateVolumeBackupInput,
+			applicationId: "app-2",
+		});
+		mocks.findApplicationById.mockResolvedValue(
+			applicationService("app-2", "org-2"),
+		);
+
+		await expect(
+			createCaller().delete({ volumeBackupId: "volume-backup-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.removeVolumeBackup).not.toHaveBeenCalled();
+	});
+
+	it("rejects cross-organization manual volume-backup runs before execution", async () => {
+		mocks.findVolumeBackupById.mockResolvedValue({
+			...safeUpdateVolumeBackupInput,
+			applicationId: "app-2",
+		});
+		mocks.findApplicationById.mockResolvedValue(
+			applicationService("app-2", "org-2"),
+		);
+
+		await expect(
+			createCaller().runManually({ volumeBackupId: "volume-backup-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.runVolumeBackup).not.toHaveBeenCalled();
+	});
+
+	it("fails closed for volume backups with no owning service binding", async () => {
+		mocks.findVolumeBackupById.mockResolvedValue({
+			volumeBackupId: "volume-backup-1",
+		});
+
+		await expect(
+			createCaller().one({ volumeBackupId: "volume-backup-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 	});
 });
 

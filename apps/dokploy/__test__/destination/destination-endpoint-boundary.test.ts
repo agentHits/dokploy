@@ -1,8 +1,25 @@
 import {
+	assertRcloneS3DestinationAllowed,
+	buildRcloneS3Command,
+} from "@dokploy/server/utils/backups/utils";
+import {
 	assertDestinationEndpointAllowed,
 	normalizeDestinationEndpointUrl,
 } from "@dokploy/server/utils/destination/endpoint";
 import { describe, expect, it } from "vitest";
+
+const { apiCreateDestination } = await import("@dokploy/server/db/schema");
+
+const safeDestinationInput = {
+	accessKey: "access",
+	additionalFlags: [],
+	bucket: "bucket",
+	endpoint: "https://s3.example.com",
+	name: "S3",
+	provider: "AWS",
+	region: "auto",
+	secretAccessKey: "secret",
+};
 
 describe("destination S3 endpoint boundary", () => {
 	it("rejects unsafe cloud S3 endpoints before rclone can use them", () => {
@@ -54,5 +71,84 @@ describe("destination S3 endpoint boundary", () => {
 				},
 			}),
 		).resolves.toBe("http://127.0.0.1:9000");
+	});
+
+	it("revalidates stored S3 endpoints before building rclone commands in cloud mode", async () => {
+		const previousCloud = process.env.IS_CLOUD;
+		process.env.IS_CLOUD = "true";
+		try {
+			const destination = {
+				accessKey: "access",
+				secretAccessKey: "secret",
+				region: "auto",
+				endpoint: "https://127.0.0.1:9000",
+				provider: "AWS",
+				additionalFlags: [],
+				bucket: "bucket",
+			};
+
+			expect(() =>
+				buildRcloneS3Command("ls", destination, [":s3:bucket"]),
+			).toThrow(/S3 endpoint/i);
+			await expect(
+				assertRcloneS3DestinationAllowed(destination),
+			).rejects.toThrow(/S3 endpoint/i);
+		} finally {
+			if (previousCloud === undefined) {
+				delete process.env.IS_CLOUD;
+			} else {
+				process.env.IS_CLOUD = previousCloud;
+			}
+		}
+	});
+
+	it("rejects additional rclone flags that override protected S3 connection settings", async () => {
+		const destination = {
+			accessKey: "access",
+			secretAccessKey: "secret",
+			region: "auto",
+			endpoint: "https://s3.example.com",
+			provider: "AWS",
+			additionalFlags: ["--s3-endpoint=https://127.0.0.1:9000"],
+			bucket: "bucket",
+		};
+
+		expect(() =>
+			buildRcloneS3Command("ls", destination, [":s3:bucket"]),
+		).toThrow(/Additional flags cannot override/i);
+		await expect(assertRcloneS3DestinationAllowed(destination)).rejects.toThrow(
+			/Additional flags cannot override/i,
+		);
+
+		expect(
+			apiCreateDestination.safeParse({
+				...safeDestinationInput,
+				additionalFlags: ["--s3-endpoint=https://127.0.0.1:9000"],
+			}).success,
+		).toBe(false);
+		expect(
+			apiCreateDestination.safeParse({
+				...safeDestinationInput,
+				additionalFlags: ["--config=/tmp/rclone.conf"],
+			}).success,
+		).toBe(false);
+		expect(
+			apiCreateDestination.safeParse({
+				...safeDestinationInput,
+				additionalFlags: ["--s3-provider=Minio"],
+			}).success,
+		).toBe(false);
+		expect(
+			apiCreateDestination.safeParse({
+				...safeDestinationInput,
+				additionalFlags: ["--s3-new-endpoint-like-flag=value"],
+			}).success,
+		).toBe(false);
+		expect(
+			apiCreateDestination.safeParse({
+				...safeDestinationInput,
+				additionalFlags: ["--s3-sign-accept-encoding=false"],
+			}).success,
+		).toBe(true);
 	});
 });

@@ -18,7 +18,7 @@ import { fetchWithPublicEgress } from "../url/network";
 import {
 	assertNotificationBaseUrlAllowed,
 	assertNotificationHttpUrlAllowed,
-	assertNotificationSmtpHostAllowed,
+	resolveNotificationSmtpTarget,
 } from "./security";
 
 export const sendEmailNotification = async (
@@ -36,10 +36,14 @@ export const sendEmailNotification = async (
 			fromAddress,
 			toAddresses,
 		} = connection;
+		const smtpTarget = await resolveNotificationSmtpTarget(smtpServer);
 		const transporter = nodemailer.createTransport({
-			host: await assertNotificationSmtpHostAllowed(smtpServer),
+			host: smtpTarget.host,
 			port: smtpPort,
 			auth: { user: username, pass: password },
+			tls: {
+				servername: smtpTarget.servername,
+			},
 		});
 
 		await transporter.sendMail({

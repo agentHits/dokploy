@@ -2,7 +2,11 @@ import type { apiRestoreBackup } from "@dokploy/server/db/schema";
 import type { Compose } from "@dokploy/server/services/compose";
 import type { Destination } from "@dokploy/server/services/destination";
 import type { z } from "zod";
-import { buildRcloneS3Command, getRcloneS3Destination } from "../backups/utils";
+import {
+	assertRcloneS3DestinationAllowed,
+	buildRcloneS3Command,
+	getRcloneS3Destination,
+} from "../backups/utils";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
 import { normalizeRestoreBackupFile } from "./safe-input";
 import { getRestoreCommand } from "./utils";
@@ -28,13 +32,16 @@ export const restoreComposeBackup = async (
 			backupInput.backupFile,
 			backupInput.databaseType === "mongo" ? [".bson.gz"] : [".sql.gz"],
 		);
-		const backupPath = getRcloneS3Destination(destination, objectPath);
-		let rcloneCommand = `${buildRcloneS3Command("cat", destination, [
+		const safeDestination = await assertRcloneS3DestinationAllowed(destination);
+		const backupPath = getRcloneS3Destination(safeDestination, objectPath);
+		let rcloneCommand = `${buildRcloneS3Command("cat", safeDestination, [
 			backupPath,
 		])} | gunzip`;
 
 		if (backupInput.metadata?.mongo) {
-			rcloneCommand = buildRcloneS3Command("copy", destination, [backupPath]);
+			rcloneCommand = buildRcloneS3Command("copy", safeDestination, [
+				backupPath,
+			]);
 		}
 
 		let credentials: DatabaseCredentials = {};

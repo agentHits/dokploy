@@ -42,6 +42,7 @@ vi.mock("@dokploy/server/services/permission", () => ({
 
 vi.mock("@dokploy/server/utils/destination/endpoint", () => ({
 	assertDestinationEndpointAllowed: mocks.assertDestinationEndpointAllowed,
+	normalizeDestinationEndpointUrl: (endpoint: string) => endpoint,
 }));
 
 vi.mock("@/server/api/utils/audit", () => ({

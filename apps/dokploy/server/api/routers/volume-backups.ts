@@ -12,6 +12,7 @@ import {
 import { db } from "@dokploy/server/db";
 import {
 	createVolumeBackupSchema,
+	mounts,
 	updateVolumeBackupSchema,
 	volumeBackups,
 } from "@dokploy/server/db/schema";
@@ -52,6 +53,8 @@ type VolumeBackupServiceFields = {
 	libsqlId?: string | null;
 };
 
+type VolumeBackupPermissionAction = "create" | "delete" | "read" | "update";
+
 const volumeBackupServiceFields = [
 	{ idField: "applicationId", type: "application" },
 	{ idField: "postgresId", type: "postgres" },
@@ -77,6 +80,88 @@ const getVolumeBackupServiceBindings = (
 		}
 	}
 	return bindings;
+};
+
+const getMountServiceColumn = (type: PlacementServiceType) => {
+	switch (type) {
+		case "application":
+			return mounts.applicationId;
+		case "postgres":
+			return mounts.postgresId;
+		case "mysql":
+			return mounts.mysqlId;
+		case "mariadb":
+			return mounts.mariadbId;
+		case "mongo":
+			return mounts.mongoId;
+		case "redis":
+			return mounts.redisId;
+		case "compose":
+			return mounts.composeId;
+		case "libsql":
+			return mounts.libsqlId;
+	}
+};
+
+const throwUnboundVolumeBackup = (): never => {
+	throw new TRPCError({
+		code: "UNAUTHORIZED",
+		message: "Volume backup is not linked to an accessible service.",
+	});
+};
+
+const assertVolumeBackupServiceAccess = async (
+	ctx: Parameters<typeof assertServicePlacementAccess>[0],
+	volumeBackup: VolumeBackupServiceFields,
+	action: VolumeBackupPermissionAction,
+) => {
+	const serviceBindings = getVolumeBackupServiceBindings(volumeBackup);
+	if (serviceBindings.length === 0) {
+		throwUnboundVolumeBackup();
+	}
+
+	for (const serviceBinding of serviceBindings) {
+		await checkServicePermissionAndAccess(ctx, serviceBinding.id, {
+			volumeBackup: [action],
+		});
+		await assertServicePlacementAccess(
+			ctx,
+			serviceBinding.id,
+			serviceBinding.type,
+		);
+	}
+};
+
+const assertVolumeNameDeclaredByService = async (
+	volumeBackup: VolumeBackupServiceFields & { volumeName: string },
+) => {
+	const safeVolumeName = normalizeDockerVolumeName(volumeBackup.volumeName);
+	const serviceBindings = getVolumeBackupServiceBindings(volumeBackup);
+	if (serviceBindings.length !== 1) {
+		throwUnboundVolumeBackup();
+	}
+
+	const serviceBinding = serviceBindings[0] ?? throwUnboundVolumeBackup();
+	const serviceColumn = getMountServiceColumn(serviceBinding.type);
+	const matchingMounts = await db.query.mounts.findMany({
+		where: and(
+			eq(mounts.serviceType, serviceBinding.type),
+			eq(serviceColumn, serviceBinding.id),
+			eq(mounts.type, "volume"),
+			eq(mounts.volumeName, safeVolumeName),
+		),
+		columns: {
+			mountId: true,
+			volumeName: true,
+		},
+	});
+
+	if (!matchingMounts.some((mount) => mount.volumeName === safeVolumeName)) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "Volume name is not declared by the selected service.",
+		});
+	}
 };
 
 const hasVolumeBackupServiceBinding = (
@@ -188,6 +273,7 @@ export const volumeBackupsRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.id, {
 				volumeBackup: ["read"],
 			});
+			await assertServicePlacementAccess(ctx, input.id, input.volumeBackupType);
 			return await db.query.volumeBackups.findMany({
 				where: eq(volumeBackups[`${input.volumeBackupType}Id`], input.id),
 				with: {
@@ -206,21 +292,12 @@ export const volumeBackupsRouter = createTRPCRouter({
 	create: protectedProcedure
 		.input(createVolumeBackupSchema)
 		.mutation(async ({ input, ctx }) => {
-			const serviceBindings = getVolumeBackupServiceBindings(input);
-			for (const serviceBinding of serviceBindings) {
-				await checkServicePermissionAndAccess(ctx, serviceBinding.id, {
-					volumeBackup: ["create"],
-				});
-				await assertServicePlacementAccess(
-					ctx,
-					serviceBinding.id,
-					serviceBinding.type,
-				);
-			}
+			await assertVolumeBackupServiceAccess(ctx, input, "create");
 			await assertDestinationAccess(
 				input.destinationId,
 				ctx.session.activeOrganizationId,
 			);
+			await assertVolumeNameDeclaredByService(input);
 			const newVolumeBackup = await createVolumeBackup(input);
 
 			if (newVolumeBackup?.enabled) {
@@ -249,20 +326,7 @@ export const volumeBackupsRouter = createTRPCRouter({
 		)
 		.query(async ({ input, ctx }) => {
 			const vb = await findVolumeBackupById(input.volumeBackupId);
-			const serviceId =
-				vb.applicationId ||
-				vb.postgresId ||
-				vb.mysqlId ||
-				vb.mariadbId ||
-				vb.mongoId ||
-				vb.redisId ||
-				vb.libsqlId ||
-				vb.composeId;
-			if (serviceId) {
-				await checkServicePermissionAndAccess(ctx, serviceId, {
-					volumeBackup: ["read"],
-				});
-			}
+			await assertVolumeBackupServiceAccess(ctx, vb, "read");
 			return vb;
 		}),
 	delete: protectedProcedure
@@ -273,20 +337,7 @@ export const volumeBackupsRouter = createTRPCRouter({
 		)
 		.mutation(async ({ input, ctx }) => {
 			const vb = await findVolumeBackupById(input.volumeBackupId);
-			const serviceId =
-				vb.applicationId ||
-				vb.postgresId ||
-				vb.mysqlId ||
-				vb.mariadbId ||
-				vb.mongoId ||
-				vb.redisId ||
-				vb.libsqlId ||
-				vb.composeId;
-			if (serviceId) {
-				await checkServicePermissionAndAccess(ctx, serviceId, {
-					volumeBackup: ["delete"],
-				});
-			}
+			await assertVolumeBackupServiceAccess(ctx, vb, "delete");
 			const result = await removeVolumeBackup(input.volumeBackupId);
 			await audit(ctx, {
 				action: "delete",
@@ -301,6 +352,9 @@ export const volumeBackupsRouter = createTRPCRouter({
 			const existingVb = await findVolumeBackupById(input.volumeBackupId);
 			const existingServiceBindings =
 				getVolumeBackupServiceBindings(existingVb);
+			if (existingServiceBindings.length === 0) {
+				throwUnboundVolumeBackup();
+			}
 			for (const existingServiceBinding of existingServiceBindings) {
 				await checkServicePermissionAndAccess(ctx, existingServiceBinding.id, {
 					volumeBackup: ["update"],
@@ -335,6 +389,7 @@ export const volumeBackupsRouter = createTRPCRouter({
 				input.destinationId,
 				ctx.session.activeOrganizationId,
 			);
+			await assertVolumeNameDeclaredByService(input);
 			const updatedVolumeBackup = await updateVolumeBackup(
 				input.volumeBackupId,
 				input,
@@ -381,20 +436,7 @@ export const volumeBackupsRouter = createTRPCRouter({
 		.input(z.object({ volumeBackupId: z.string().min(1) }))
 		.mutation(async ({ input, ctx }) => {
 			const vb = await findVolumeBackupById(input.volumeBackupId);
-			const serviceId =
-				vb.applicationId ||
-				vb.postgresId ||
-				vb.mysqlId ||
-				vb.mariadbId ||
-				vb.mongoId ||
-				vb.redisId ||
-				vb.libsqlId ||
-				vb.composeId;
-			if (serviceId) {
-				await checkServicePermissionAndAccess(ctx, serviceId, {
-					volumeBackup: ["create"],
-				});
-			}
+			await assertVolumeBackupServiceAccess(ctx, vb, "create");
 			try {
 				const result = await runVolumeBackup(input.volumeBackupId);
 				await audit(ctx, {

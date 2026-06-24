@@ -386,19 +386,20 @@ export const getContainerLogs = async (
 	if (!useContainerIdDirectly) {
 		// Find the real container ID by appName filter
 		const findResult = await exec(
-			`docker ps -q --filter "name=^${appNameOrId}" | head -1`,
+			`docker ps -q --filter ${quoteShellArg(`name=^${appNameOrId}`)} | head -1`,
 		);
 		const containerId = findResult.stdout.trim();
 
 		if (!containerId) {
 			// Fallback: try as a swarm service
 			const svcResult = await exec(
-				`docker service ls -q --filter "name=${appNameOrId}" | head -1`,
+				`docker service ls -q --filter ${quoteShellArg(`name=${appNameOrId}`)} | head -1`,
 			);
 			const serviceId = svcResult.stdout.trim();
 			if (!serviceId) {
 				throw new Error(`No container or service found for: ${appNameOrId}`);
 			}
+			target = serviceId;
 			isService = true;
 		} else {
 			target = containerId;
@@ -406,13 +407,13 @@ export const getContainerLogs = async (
 	}
 
 	const sinceFlag = since === "all" ? "" : `--since ${since}`;
+	const quotedTarget = quoteShellArg(target);
 	const baseCommand = isService
-		? `docker service logs --timestamps --raw --tail ${tail} ${sinceFlag} ${target}`
-		: `docker container logs --timestamps --tail ${tail} ${sinceFlag} ${target}`;
+		? `docker service logs --timestamps --raw --tail ${tail} ${sinceFlag} ${quotedTarget}`
+		: `docker container logs --timestamps --tail ${tail} ${sinceFlag} ${quotedTarget}`;
 
-	const escapedSearch = search?.replace(/'/g, "'\\''") ?? "";
 	const command = search
-		? `${baseCommand} 2>&1 | grep -iF '${escapedSearch}'`
+		? `${baseCommand} 2>&1 | grep -iF ${quoteShellArg(search)}`
 		: `${baseCommand} 2>&1`;
 
 	try {

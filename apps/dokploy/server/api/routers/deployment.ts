@@ -35,6 +35,93 @@ import { myQueue } from "@/server/queues/queueSetup";
 import { fetchDeployApiJobs, type QueueJobRow } from "@/server/utils/deploy";
 import { createTRPCRouter, protectedProcedure, withPermission } from "../trpc";
 
+type DeploymentPermissionAction = "cancel" | "read";
+type DeploymentOwnerCandidate = {
+	applicationId?: string | null;
+	backup?: {
+		composeId?: string | null;
+		libsqlId?: string | null;
+		mariadbId?: string | null;
+		mongoId?: string | null;
+		mysqlId?: string | null;
+		postgresId?: string | null;
+	} | null;
+	composeId?: string | null;
+	previewDeployment?: {
+		applicationId?: string | null;
+	} | null;
+	serverId?: string | null;
+	schedule?: {
+		serverId?: string | null;
+	} | null;
+	volumeBackup?: {
+		applicationId?: string | null;
+		composeId?: string | null;
+		libsqlId?: string | null;
+		mariadbId?: string | null;
+		mongoId?: string | null;
+		mysqlId?: string | null;
+		postgresId?: string | null;
+		redisId?: string | null;
+	} | null;
+};
+
+const getBackupServiceId = (backup: DeploymentOwnerCandidate["backup"]) =>
+	backup?.composeId ||
+	backup?.postgresId ||
+	backup?.mariadbId ||
+	backup?.mysqlId ||
+	backup?.mongoId ||
+	backup?.libsqlId ||
+	null;
+
+const getVolumeBackupServiceId = (
+	volumeBackup: DeploymentOwnerCandidate["volumeBackup"],
+) =>
+	volumeBackup?.applicationId ||
+	volumeBackup?.composeId ||
+	volumeBackup?.postgresId ||
+	volumeBackup?.mysqlId ||
+	volumeBackup?.mariadbId ||
+	volumeBackup?.mongoId ||
+	volumeBackup?.redisId ||
+	volumeBackup?.libsqlId ||
+	null;
+
+const getDeploymentServiceId = (deployment: DeploymentOwnerCandidate) =>
+	deployment.applicationId ||
+	deployment.composeId ||
+	deployment.previewDeployment?.applicationId ||
+	getBackupServiceId(deployment.backup) ||
+	getVolumeBackupServiceId(deployment.volumeBackup);
+
+const assertDeploymentActionAccess = async (
+	ctx: Parameters<typeof assertTargetServerAccess>[0],
+	deployment: DeploymentOwnerCandidate,
+	action: DeploymentPermissionAction,
+) => {
+	const serviceId = getDeploymentServiceId(deployment);
+	if (serviceId) {
+		await checkServicePermissionAndAccess(ctx, serviceId, {
+			deployment: [action],
+		});
+		return;
+	}
+
+	const deploymentServerId =
+		deployment.serverId || deployment.schedule?.serverId;
+	if (deploymentServerId) {
+		await checkPermission(ctx, { deployment: [action] });
+		await assertTargetServerAccess(ctx, deploymentServerId);
+		return;
+	}
+
+	throw new TRPCError({
+		code: "UNAUTHORIZED",
+		message: "You are not authorized to access this deployment",
+	});
+};
+
 export const deploymentRouter = createTRPCRouter({
 	all: protectedProcedure
 		.input(apiFindAllByApplication)
@@ -145,17 +232,9 @@ export const deploymentRouter = createTRPCRouter({
 		)
 		.mutation(async ({ input, ctx }) => {
 			const deployment = await findDeploymentById(input.deploymentId);
-			const serviceId = deployment.applicationId || deployment.composeId;
 			const deploymentServerId =
 				deployment.serverId || deployment.schedule?.serverId;
-			if (serviceId) {
-				await checkServicePermissionAndAccess(ctx, serviceId, {
-					deployment: ["cancel"],
-				});
-			} else if (deploymentServerId) {
-				await checkPermission(ctx, { deployment: ["cancel"] });
-				await assertTargetServerAccess(ctx, deploymentServerId);
-			}
+			await assertDeploymentActionAccess(ctx, deployment, "cancel");
 
 			if (!deployment.pid) {
 				throw new TRPCError({
@@ -187,17 +266,7 @@ export const deploymentRouter = createTRPCRouter({
 		)
 		.mutation(async ({ input, ctx }) => {
 			const deployment = await findDeploymentById(input.deploymentId);
-			const serviceId = deployment.applicationId || deployment.composeId;
-			const deploymentServerId =
-				deployment.serverId || deployment.schedule?.serverId;
-			if (serviceId) {
-				await checkServicePermissionAndAccess(ctx, serviceId, {
-					deployment: ["cancel"],
-				});
-			} else if (deploymentServerId) {
-				await checkPermission(ctx, { deployment: ["cancel"] });
-				await assertTargetServerAccess(ctx, deploymentServerId);
-			}
+			await assertDeploymentActionAccess(ctx, deployment, "cancel");
 			const result = await removeDeployment(input.deploymentId);
 			await audit(ctx, {
 				action: "delete",
@@ -216,17 +285,9 @@ export const deploymentRouter = createTRPCRouter({
 		)
 		.query(async ({ input, ctx }) => {
 			const deployment = await findDeploymentById(input.deploymentId);
-			const serviceId = deployment.applicationId || deployment.composeId;
 			const deploymentServerId =
 				deployment.serverId || deployment.schedule?.serverId;
-			if (serviceId) {
-				await checkServicePermissionAndAccess(ctx, serviceId, {
-					deployment: ["read"],
-				});
-			} else if (deploymentServerId) {
-				await checkPermission(ctx, { deployment: ["read"] });
-				await assertTargetServerAccess(ctx, deploymentServerId);
-			}
+			await assertDeploymentActionAccess(ctx, deployment, "read");
 
 			if (!deployment.logPath) {
 				return "";

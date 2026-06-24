@@ -317,3 +317,39 @@ export const assertNotificationSmtpHostAllowed = async (
 
 	return normalizedHost;
 };
+
+export const resolveNotificationSmtpTarget = async (
+	smtpHost: string,
+	options: Pick<
+		AssertNotificationUrlOptions,
+		"allowPrivateNetwork" | "lookup"
+	> = {},
+) => {
+	const allowPrivateNetwork = resolveAllowPrivateNetwork(
+		options.allowPrivateNetwork,
+	);
+	const normalizedHost = normalizeNotificationSmtpHost(smtpHost, {
+		allowPrivateNetwork,
+	});
+
+	if (allowPrivateNetwork) {
+		return {
+			host: normalizedHost,
+			servername: normalizedHost,
+		};
+	}
+
+	const resolvedHost = await assertCloudHostResolvesPublic(normalizedHost, {
+		fieldName: "SMTP host",
+		lookup: options.lookup,
+	});
+	const firstAddress = resolvedHost.addresses[0];
+	if (!firstAddress) {
+		throw new Error("SMTP host could not be resolved");
+	}
+
+	return {
+		host: firstAddress.address,
+		servername: normalizedHost,
+	};
+};

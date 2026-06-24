@@ -37,10 +37,20 @@ function sanitizeRegistryError(
 	return message.split(password).join("***");
 }
 
+const assertCloudRegistryServer = (serverId?: string | null) => {
+	if (IS_CLOUD && (!serverId || serverId === "none")) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: "Select a server to add the registry",
+		});
+	}
+};
+
 export const createRegistry = async (
 	input: z.infer<typeof apiCreateRegistry>,
 	organizationId: string,
 ) => {
+	assertCloudRegistryServer(input.serverId);
 	return await db.transaction(async (tx) => {
 		const newRegistry = await tx
 			.insert(registry)
@@ -58,12 +68,6 @@ export const createRegistry = async (
 			});
 		}
 
-		if (IS_CLOUD && !input.serverId && input.serverId !== "none") {
-			throw new TRPCError({
-				code: "NOT_FOUND",
-				message: "Select a server to add the registry",
-			});
-		}
 		const loginCommand = safeDockerLoginCommand(
 			input.registryUrl,
 			input.username,
@@ -118,6 +122,7 @@ export const updateRegistry = async (
 	registryData: Partial<Registry> & { serverId?: string | null },
 ) => {
 	try {
+		assertCloudRegistryServer(registryData.serverId);
 		const response = await db
 			.update(registry)
 			.set({
@@ -132,17 +137,6 @@ export const updateRegistry = async (
 			response?.username,
 			response?.password,
 		);
-
-		if (
-			IS_CLOUD &&
-			!registryData?.serverId &&
-			registryData?.serverId !== "none"
-		) {
-			throw new TRPCError({
-				code: "NOT_FOUND",
-				message: "Select a server to add the registry",
-			});
-		}
 
 		try {
 			if (registryData?.serverId && registryData?.serverId !== "none") {

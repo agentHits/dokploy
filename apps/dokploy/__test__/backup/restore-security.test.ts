@@ -163,6 +163,7 @@ vi.mock("@dokploy/server/utils/backups/utils", async () => {
 	const { quote } = await import("shell-quote");
 
 	return {
+		assertRcloneS3DestinationAllowed: async <T>(destination: T) => destination,
 		buildRcloneS3Command: (
 			command: string,
 			destination: { bucket: string },

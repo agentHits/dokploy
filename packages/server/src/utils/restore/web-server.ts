@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import { IS_CLOUD, paths } from "@dokploy/server/constants";
 import type { Destination } from "@dokploy/server/services/destination";
-import { buildRcloneS3Command, getRcloneS3Destination } from "../backups/utils";
+import {
+	assertRcloneS3DestinationAllowed,
+	buildRcloneS3Command,
+	getRcloneS3Destination,
+} from "../backups/utils";
 import { execAsync } from "../process/execAsync";
 import { normalizeRestoreBackupFile, quoteRestoreShellArg } from "./safe-input";
 
@@ -82,7 +86,8 @@ export const restoreWebServerBackup = async (
 		const { fileName, objectPath } = normalizeRestoreBackupFile(backupFile, [
 			".zip",
 		]);
-		const backupPath = getRcloneS3Destination(destination, objectPath);
+		const safeDestination = await assertRcloneS3DestinationAllowed(destination);
+		const backupPath = getRcloneS3Destination(safeDestination, objectPath);
 		const { BASE_PATH } = paths();
 
 		// Create a temporary directory outside of BASE_PATH
@@ -106,7 +111,7 @@ export const restoreWebServerBackup = async (
 			// Download backup from S3
 			emit("Downloading backup from S3...");
 			await execAsync(
-				buildRcloneS3Command("copyto", destination, [
+				buildRcloneS3Command("copyto", safeDestination, [
 					backupPath,
 					localBackupPath,
 				]),

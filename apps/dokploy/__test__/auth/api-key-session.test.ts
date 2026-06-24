@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -60,7 +61,9 @@ vi.mock("@dokploy/server/db", () => ({
 	},
 }));
 
-const { validateRequest } = await import("@dokploy/server/lib/auth");
+const { validateRequest } = await import(
+	"../../../../packages/server/src/lib/auth"
+);
 
 const apiKeyRequest = {
 	headers: {
@@ -125,5 +128,19 @@ describe("validateRequest API key sessions", () => {
 				ownerId: "user-1",
 			},
 		});
+	});
+});
+
+describe("Better Auth account linking policy", () => {
+	it("does not globally trust tenant SSO providers for implicit account linking", () => {
+		const authSource = readFileSync(
+			new URL("../../../../packages/server/src/lib/auth.ts", import.meta.url),
+			"utf8",
+		);
+
+		expect(authSource).toMatch(/trustedProviders:\s*\["github",\s*"google"\]/);
+		expect(authSource).toContain("allowDifferentEmails: false");
+		expect(authSource).not.toContain("getTrustedProviders");
+		expect(authSource).not.toContain("allowDifferentEmails: true");
 	});
 });

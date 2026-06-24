@@ -3,6 +3,7 @@ import type { Destination } from "@dokploy/server/services/destination";
 import type { Libsql } from "@dokploy/server/services/libsql";
 import type { z } from "zod";
 import {
+	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
 	getRcloneS3Destination,
 	getServiceContainerCommand,
@@ -22,9 +23,10 @@ export const restoreLibsqlBackup = async (
 		const { objectPath } = normalizeRestoreBackupFile(backupInput.backupFile, [
 			".sql.gz",
 		]);
-		const backupPath = getRcloneS3Destination(destination, objectPath);
+		const safeDestination = await assertRcloneS3DestinationAllowed(destination);
+		const backupPath = getRcloneS3Destination(safeDestination, objectPath);
 
-		const rcloneCommand = buildRcloneS3Command("cat", destination, [
+		const rcloneCommand = buildRcloneS3Command("cat", safeDestination, [
 			backupPath,
 		]);
 

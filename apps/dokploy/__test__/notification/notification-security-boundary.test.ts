@@ -9,6 +9,7 @@ import {
 	notificationSecretUpdateValue,
 	REDACTED_NOTIFICATION_SECRET,
 	redactNotificationSecrets,
+	resolveNotificationSmtpTarget,
 } from "@dokploy/server/utils/notifications/security";
 import { describe, expect, it } from "vitest";
 
@@ -272,6 +273,18 @@ describe("notification secret and outbound target boundaries", () => {
 				lookup: async () => [{ address: "127.0.0.1", family: 4 }],
 			}),
 		).rejects.toThrow(/SMTP/i);
+	});
+
+	it("pins cloud SMTP delivery to a validated public address", async () => {
+		await expect(
+			resolveNotificationSmtpTarget("smtp.example.com", {
+				allowPrivateNetwork: false,
+				lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+			}),
+		).resolves.toEqual({
+			host: "8.8.8.8",
+			servername: "smtp.example.com",
+		});
 	});
 
 	it("does not resolve SMTP hosts when private networks are allowed", async () => {

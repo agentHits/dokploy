@@ -32,6 +32,128 @@ const getDeploymentLogPathRoot = (
 	return "logs";
 };
 
+type DeploymentLogAccessCtx = {
+	user: { id: string };
+	session: { activeOrganizationId: string };
+};
+
+type ServiceOwnerFields = {
+	applicationId?: string | null;
+	composeId?: string | null;
+	libsqlId?: string | null;
+	mariadbId?: string | null;
+	mongoId?: string | null;
+	mysqlId?: string | null;
+	postgresId?: string | null;
+	redisId?: string | null;
+};
+
+type ServiceServerFields = ServiceOwnerFields & {
+	application?: { serverId?: string | null } | null;
+	compose?: { serverId?: string | null } | null;
+	libsql?: { serverId?: string | null } | null;
+	mariadb?: { serverId?: string | null } | null;
+	mongo?: { serverId?: string | null } | null;
+	mysql?: { serverId?: string | null } | null;
+	postgres?: { serverId?: string | null } | null;
+	redis?: { serverId?: string | null } | null;
+	serverId?: string | null;
+};
+
+const getDatabaseOrComposeServiceId = (owner?: ServiceOwnerFields | null) =>
+	owner?.applicationId ||
+	owner?.composeId ||
+	owner?.postgresId ||
+	owner?.mysqlId ||
+	owner?.mariadbId ||
+	owner?.mongoId ||
+	owner?.redisId ||
+	owner?.libsqlId ||
+	null;
+
+const getServiceServerId = (owner?: ServiceServerFields | null) =>
+	owner?.serverId ||
+	owner?.application?.serverId ||
+	owner?.compose?.serverId ||
+	owner?.postgres?.serverId ||
+	owner?.mysql?.serverId ||
+	owner?.mariadb?.serverId ||
+	owner?.mongo?.serverId ||
+	owner?.redis?.serverId ||
+	owner?.libsql?.serverId ||
+	null;
+
+const getDeploymentLogServerId = (
+	deployment: Awaited<ReturnType<typeof findDeploymentById>>,
+) =>
+	deployment.serverId ||
+	deployment.buildServerId ||
+	deployment.application?.serverId ||
+	deployment.compose?.serverId ||
+	getServiceServerId(deployment.backup) ||
+	getServiceServerId(deployment.volumeBackup) ||
+	getServiceServerId(deployment.schedule) ||
+	null;
+
+const assertServerDeploymentLogAccess = async (
+	ctx: DeploymentLogAccessCtx,
+	serverId: string,
+) => {
+	await checkPermission(ctx, { deployment: ["read"] });
+	const server = await findServerById(serverId);
+	if (server.organizationId !== ctx.session.activeOrganizationId) {
+		throw new Error("Unauthorized deployment log server");
+	}
+};
+
+const assertOrganizationDeploymentLogAccess = async (
+	ctx: DeploymentLogAccessCtx,
+	organizationId?: string | null,
+) => {
+	await checkPermission(ctx, { deployment: ["read"] });
+	if (organizationId !== ctx.session.activeOrganizationId) {
+		throw new Error("Unauthorized deployment log organization");
+	}
+};
+
+const assertDeploymentLogAccess = async (
+	ctx: DeploymentLogAccessCtx,
+	deployment: Awaited<ReturnType<typeof findDeploymentById>>,
+) => {
+	const serviceId =
+		deployment.applicationId ||
+		deployment.composeId ||
+		getDatabaseOrComposeServiceId(deployment.backup) ||
+		getDatabaseOrComposeServiceId(deployment.volumeBackup) ||
+		getDatabaseOrComposeServiceId(deployment.schedule);
+
+	if (serviceId) {
+		await checkServicePermissionAndAccess(ctx, serviceId, {
+			deployment: ["read"],
+		});
+		return;
+	}
+
+	const serverId =
+		deployment.serverId ||
+		deployment.buildServerId ||
+		deployment.schedule?.serverId;
+	if (serverId) {
+		await assertServerDeploymentLogAccess(ctx, serverId);
+		return;
+	}
+
+	if (deployment.scheduleId) {
+		await assertOrganizationDeploymentLogAccess(
+			ctx,
+			deployment.schedule?.organizationId,
+		);
+		return;
+	}
+
+	throw new Error("Deployment log has no supported owner");
+};
+
 export const setupDeploymentLogsWebSocketServer = (
 	server: http.Server<typeof http.IncomingMessage, typeof http.ServerResponse>,
 ) => {
@@ -57,7 +179,6 @@ export const setupDeploymentLogsWebSocketServer = (
 		const url = new URL(req.url || "", `http://${req.headers.host}`);
 		const logPath = url.searchParams.get("logPath");
 		const deploymentId = url.searchParams.get("deploymentId");
-		const serverId = url.searchParams.get("serverId");
 		const { user, session } = await validateRequest(req);
 
 		// Generate unique connection ID for tracking
@@ -73,51 +194,27 @@ export const setupDeploymentLogsWebSocketServer = (
 			return;
 		}
 
+		if (!deploymentId) {
+			ws.close(4000, "deploymentId required");
+			return;
+		}
+
 		let effectiveLogPath = logPath || "";
-		let effectiveServerId = serverId || undefined;
+		let effectiveServerId: string | undefined;
 		let effectiveLogPathRoot: DeploymentLogPathRoot = "logs";
 
 		try {
-			if (deploymentId) {
-				const deployment = await findDeploymentById(deploymentId);
-				const serviceId = deployment.applicationId || deployment.composeId;
-				const ctx = {
-					user: { id: user.id },
-					session: { activeOrganizationId: session.activeOrganizationId },
-				};
+			const deployment = await findDeploymentById(deploymentId);
+			const ctx = {
+				user: { id: user.id },
+				session: { activeOrganizationId: session.activeOrganizationId },
+			};
 
-				if (serviceId) {
-					await checkServicePermissionAndAccess(ctx, serviceId, {
-						deployment: ["read"],
-					});
-				} else if (deployment.schedule?.serverId) {
-					const targetServer = await findServerById(
-						deployment.schedule.serverId,
-					);
-					if (targetServer.organizationId !== session.activeOrganizationId) {
-						ws.close();
-						return;
-					}
-				} else {
-					await checkPermission(ctx, { logs: ["read"] });
-				}
+			await assertDeploymentLogAccess(ctx, deployment);
 
-				effectiveLogPath = deployment.logPath;
-				effectiveLogPathRoot = getDeploymentLogPathRoot(deployment);
-				effectiveServerId =
-					deployment.serverId ||
-					deployment.buildServerId ||
-					deployment.schedule?.serverId ||
-					effectiveServerId;
-			} else {
-				await checkPermission(
-					{
-						user: { id: user.id },
-						session: { activeOrganizationId: session.activeOrganizationId },
-					},
-					{ logs: ["read"] },
-				);
-			}
+			effectiveLogPath = deployment.logPath;
+			effectiveLogPathRoot = getDeploymentLogPathRoot(deployment);
+			effectiveServerId = getDeploymentLogServerId(deployment) || undefined;
 		} catch {
 			ws.close();
 			return;

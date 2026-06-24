@@ -4,6 +4,7 @@ import { findApplicationById } from "@dokploy/server/services/application";
 import { findComposeById } from "@dokploy/server/services/compose";
 import { findDestinationById } from "@dokploy/server/services/destination";
 import {
+	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
 	getRcloneS3Destination,
 } from "@dokploy/server/utils/backups/utils";
@@ -62,7 +63,8 @@ export const restoreVolume = async (
 	const destination = await findDestinationById(destinationId);
 	const { VOLUME_BACKUPS_PATH } = paths(!!serverId);
 	const volumeBackupPath = path.join(VOLUME_BACKUPS_PATH, safeVolumeName);
-	const backupPath = getRcloneS3Destination(destination, backupObjectPath);
+	const safeDestination = await assertRcloneS3DestinationAllowed(destination);
+	const backupPath = getRcloneS3Destination(safeDestination, backupObjectPath);
 	const localBackupPath = path.join(volumeBackupPath, localBackupFileName);
 	const backupFileInContainer = `/backup/${localBackupFileName}`;
 	const quotedVolumeName = quoteShellArg(safeVolumeName);
@@ -73,7 +75,7 @@ export const restoreVolume = async (
 	const quotedBackupFileInContainer = quoteShellArg(backupFileInContainer);
 
 	// Command to download backup file from S3
-	const downloadCommand = buildRcloneS3Command("copyto", destination, [
+	const downloadCommand = buildRcloneS3Command("copyto", safeDestination, [
 		backupPath,
 		localBackupPath,
 	]);
