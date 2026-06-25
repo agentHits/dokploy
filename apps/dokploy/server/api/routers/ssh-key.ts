@@ -63,7 +63,9 @@ export const sshRouter = createTRPCRouter({
 					resourceId: sshKey.sshKeyId,
 					resourceName: sshKey.name,
 				});
-				return await removeSSHKeyById(input.sshKeyId);
+				return redactSecretFields(await removeSSHKeyById(input.sshKeyId), [
+					"privateKey",
+				]);
 			} catch (error) {
 				throw error;
 			}

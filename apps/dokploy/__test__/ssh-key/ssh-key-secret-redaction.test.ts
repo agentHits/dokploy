@@ -71,6 +71,7 @@ describe("ssh key router secret redaction", () => {
 		vi.clearAllMocks();
 		mocks.checkPermission.mockResolvedValue(undefined);
 		mocks.findSSHKeyById.mockResolvedValue(sshKeyRecord);
+		mocks.removeSSHKeyById.mockResolvedValue(sshKeyRecord);
 		mocks.sshKeyFindMany.mockResolvedValue([sshKeyRecord]);
 		mocks.updateSSHKeyById.mockResolvedValue({
 			...sshKeyRecord,
@@ -102,5 +103,13 @@ describe("ssh key router secret redaction", () => {
 			sshKeyId: "ssh-key-1",
 			name: "updated",
 		});
+	});
+
+	it("redacts private keys from delete responses", async () => {
+		const result = await createCaller().remove({ sshKeyId: "ssh-key-1" });
+
+		expect(result?.privateKey).toBe(REDACTED_SECRET_VALUE);
+		expect(result?.name).toBe("deploy");
+		expect(mocks.removeSSHKeyById).toHaveBeenCalledWith("ssh-key-1");
 	});
 });
