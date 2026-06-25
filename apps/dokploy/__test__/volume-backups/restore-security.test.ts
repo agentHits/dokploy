@@ -240,18 +240,25 @@ const project = (organizationId = "org-1") => ({
 const applicationService = (
 	applicationId: string,
 	organizationId = "org-1",
+	serverId: string | null = null,
 ) => ({
 	applicationId,
 	environmentId: "env-1",
+	serverId,
 	environment: {
 		environmentId: "env-1",
 		project: project(organizationId),
 	},
 });
 
-const composeService = (composeId: string, organizationId = "org-1") => ({
+const composeService = (
+	composeId: string,
+	organizationId = "org-1",
+	serverId: string | null = null,
+) => ({
 	composeId,
 	environmentId: "env-1",
+	serverId,
 	environment: {
 		environmentId: "env-1",
 		project: project(organizationId),
@@ -579,6 +586,13 @@ describe("volume backup restore access boundary", () => {
 		vi.clearAllMocks();
 		mocks.checkPermission.mockResolvedValue(undefined);
 		mocks.checkServicePermissionAndAccess.mockResolvedValue(undefined);
+		mocks.findMemberByUserId.mockResolvedValue({
+			role: "admin",
+			accessedEnvironments: [],
+			accessedProjects: [],
+			accessedServices: [],
+		});
+		mocks.findApplicationById.mockResolvedValue(applicationService("app-1"));
 		mocks.findDestinationById.mockResolvedValue({
 			bucket: "dokploy-backups",
 			organizationId: "org-1",
@@ -627,6 +641,9 @@ describe("volume backup restore access boundary", () => {
 	});
 
 	it("denies inaccessible restore execution servers before command generation", async () => {
+		mocks.findApplicationById.mockResolvedValue(
+			applicationService("app-1", "org-1", "server-1"),
+		);
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
 
 		await expect(
@@ -642,6 +659,78 @@ describe("volume backup restore access boundary", () => {
 
 		expect(mocks.restoreVolume).not.toHaveBeenCalled();
 		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+		expect(mocks.execAsyncStream).not.toHaveBeenCalled();
+	});
+
+	it("rejects caller-selected servers that differ from service placement", async () => {
+		mocks.findApplicationById.mockResolvedValue(
+			applicationService("app-1", "org-1", "server-1"),
+		);
+		mocks.getAccessibleServerIds.mockResolvedValue(
+			new Set(["server-1", "server-2"]),
+		);
+
+		await expect(
+			createCaller().restoreVolumeBackupWithLogs({
+				backupFileName: "app-one/prefix/data_volume-2026-06-22.tar",
+				destinationId: "destination-1",
+				volumeName: "data_volume",
+				id: "app-1",
+				serviceType: "application",
+				serverId: "server-2",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.restoreVolume).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+		expect(mocks.execAsyncStream).not.toHaveBeenCalled();
+	});
+
+	it("rejects caller-selected servers for local service placement", async () => {
+		await expect(
+			createCaller().restoreVolumeBackupWithLogs({
+				backupFileName: "app-one/prefix/data_volume-2026-06-22.tar",
+				destinationId: "destination-1",
+				volumeName: "data_volume",
+				id: "app-1",
+				serviceType: "application",
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.restoreVolume).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+		expect(mocks.execAsyncStream).not.toHaveBeenCalled();
+	});
+
+	it("restores on the service placement server when caller omits serverId", async () => {
+		mocks.findApplicationById.mockResolvedValue(
+			applicationService("app-1", "org-1", "server-1"),
+		);
+
+		await expect(
+			runVolumeRestoreSubscription({
+				backupFileName: "app-one/prefix/data_volume-2026-06-22.tar",
+				destinationId: "destination-1",
+				volumeName: "data_volume",
+				id: "app-1",
+				serviceType: "application",
+			}),
+		).resolves.toBe(undefined);
+
+		expect(mocks.restoreVolume).toHaveBeenCalledWith(
+			"app-1",
+			"destination-1",
+			"data_volume",
+			"app-one/prefix/data_volume-2026-06-22.tar",
+			"server-1",
+			"application",
+		);
+		expect(mocks.execAsyncRemote).toHaveBeenCalledWith(
+			"server-1",
+			"echo restore",
+			expect.any(Function),
+		);
 		expect(mocks.execAsyncStream).not.toHaveBeenCalled();
 	});
 

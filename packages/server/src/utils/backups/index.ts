@@ -17,6 +17,7 @@ import {
 	getRcloneS3Destination,
 	normalizeS3Path,
 	scheduleBackup,
+	shouldRunBackupRetention,
 } from "./utils";
 
 export const initCronJobs = async () => {
@@ -135,7 +136,9 @@ export const keepLatestNBackups = async (
 ) => {
 	// 0 also immediately returns which is good as the empty "keep latest" field in the UI
 	// is saved as 0 in the database
-	if (!backup.keepLatestCount) return;
+	if (!shouldRunBackupRetention(backup.keepLatestCount)) {
+		return;
+	}
 
 	try {
 		const destination = await assertRcloneS3DestinationAllowed(

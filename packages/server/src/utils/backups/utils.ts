@@ -19,6 +19,7 @@ import {
 import { scheduledJobs, scheduleJob } from "node-schedule";
 import { keepLatestNBackups } from ".";
 import { runComposeBackup } from "./compose";
+import { isBackupScheduleTargetBound } from "./invariant";
 import { runLibsqlBackup } from "./libsql";
 import { runMariadbBackup } from "./mariadb";
 import { runMongoBackup } from "./mongo";
@@ -27,6 +28,18 @@ import { runPostgresBackup } from "./postgres";
 import { runWebServerBackup } from "./web-server";
 
 export const scheduleBackup = (backup: BackupSchedule) => {
+	if (!isBackupScheduleTargetBound(backup)) {
+		logger.warn(
+			{
+				backupId: backup.backupId,
+				backupType: backup.backupType,
+				databaseType: backup.databaseType,
+			},
+			"Skipping backup schedule with mismatched service binding",
+		);
+		return;
+	}
+
 	const {
 		schedule,
 		backupId,
@@ -80,6 +93,9 @@ export const normalizeS3Path = (prefix: string) => {
 	// Return empty string if prefix is empty, otherwise append trailing slash
 	return normalizedPrefix ? `${normalizedPrefix}/` : "";
 };
+
+export const shouldRunBackupRetention = (keepLatestCount?: number | null) =>
+	Number.isInteger(keepLatestCount) && (keepLatestCount ?? 0) > 0;
 
 export type RcloneS3Destination = Pick<
 	Destination,
@@ -371,8 +387,16 @@ export const getBackupCommand = (
 	rcloneCommand: string,
 	logPath: string,
 ) => {
+	if (!isBackupScheduleTargetBound(backup)) {
+		throw new Error("Backup schedule target is not linked to its backup type.");
+	}
+
 	const containerSearch = getContainerSearchCommand(backup);
 	const backupCommand = generateBackupCommand(backup);
+
+	if (!containerSearch || !backupCommand) {
+		throw new Error("Backup command could not be generated.");
+	}
 
 	logger.info(
 		{

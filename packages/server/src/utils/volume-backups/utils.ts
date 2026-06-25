@@ -16,6 +16,7 @@ import {
 	buildRcloneS3Command,
 	getRcloneS3Destination,
 	normalizeS3Path,
+	shouldRunBackupRetention,
 } from "../backups/utils";
 import { sendVolumeBackupNotifications } from "../notifications/volume-backup";
 import { backupVolume, getVolumeServiceAppName } from "./backup";
@@ -86,7 +87,9 @@ const cleanupOldVolumeBackups = async (
 	const { keepLatestCount, prefix, volumeName } = volumeBackup;
 	const destination = await findDestinationById(volumeBackup.destinationId);
 
-	if (!keepLatestCount) return;
+	if (!shouldRunBackupRetention(keepLatestCount)) {
+		return;
+	}
 
 	try {
 		const safeDestination = await assertRcloneS3DestinationAllowed(destination);

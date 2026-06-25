@@ -33,6 +33,8 @@ const safeBackupShellName = (fieldName: string) =>
 			`${fieldName} may only contain letters, numbers, underscores, dots, and dashes, and must start with a letter, number, or underscore`,
 		);
 
+const safeBackupRetentionCount = z.number().int().min(0).nullable().optional();
+
 const backupMetadataSchema = z
 	.object({
 		postgres: z
@@ -186,7 +188,7 @@ const createSchema = createInsertSchema(backups, {
 	database: safeBackupShellName("Database name"),
 	serviceName: safeBackupShellName("Service name").nullable().optional(),
 	schedule: z.string(),
-	keepLatestCount: z.number().nullable().optional(),
+	keepLatestCount: safeBackupRetentionCount,
 	databaseType: z.enum([
 		"postgres",
 		"mariadb",

@@ -21,6 +21,9 @@ vi.mock("@dokploy/server/services/destination", () => ({
 const { createVolumeBackupSchema, updateVolumeBackupSchema } = await import(
 	"@dokploy/server/db/schema"
 );
+const { shouldRunBackupRetention } = await import(
+	"@dokploy/server/utils/backups/utils"
+);
 const { backupVolume } = await import(
 	"@dokploy/server/utils/volume-backups/backup"
 );
@@ -92,6 +95,39 @@ describe("volume backup command and schema boundaries", () => {
 				volumeBackupId: "volume-backup-1",
 			}).success,
 		).toBe(false);
+	});
+
+	it("rejects unsafe retention counts before persistence", () => {
+		expect(
+			createVolumeBackupSchema.safeParse({
+				...safeCreateVolumeBackupInput,
+				keepLatestCount: -1,
+			}).success,
+		).toBe(false);
+
+		expect(
+			createVolumeBackupSchema.safeParse({
+				...safeCreateVolumeBackupInput,
+				keepLatestCount: 1.5,
+			}).success,
+		).toBe(false);
+
+		expect(
+			updateVolumeBackupSchema.safeParse({
+				...safeCreateVolumeBackupInput,
+				keepLatestCount: -1,
+				volumeBackupId: "volume-backup-1",
+			}).success,
+		).toBe(false);
+
+		expect(
+			createVolumeBackupSchema.safeParse({
+				...safeCreateVolumeBackupInput,
+				keepLatestCount: 0,
+			}).success,
+		).toBe(true);
+		expect(shouldRunBackupRetention(-1)).toBe(false);
+		expect(shouldRunBackupRetention(1)).toBe(true);
 	});
 
 	it("rejects unsafe stored volume and service names before backup command generation", async () => {

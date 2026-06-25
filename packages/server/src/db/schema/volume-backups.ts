@@ -37,6 +37,13 @@ const safeDockerServiceName = z
 		"Service name may only contain letters, numbers, underscores, dots, and dashes, and must start with a letter, number, or underscore",
 	);
 
+const safeVolumeBackupRetentionCount = z
+	.number()
+	.int()
+	.min(0)
+	.nullable()
+	.optional();
+
 export const volumeBackups = pgTable("volume_backup", {
 	volumeBackupId: text("volumeBackupId")
 		.notNull()
@@ -140,6 +147,7 @@ export const createVolumeBackupSchema = createInsertSchema(volumeBackups)
 	})
 	.extend({
 		appName: safeDockerServiceName.optional(),
+		keepLatestCount: safeVolumeBackupRetentionCount,
 		serviceName: safeDockerServiceName.nullable().optional(),
 		volumeName: safeDockerVolumeName,
 	});

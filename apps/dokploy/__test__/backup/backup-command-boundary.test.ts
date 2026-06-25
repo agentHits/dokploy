@@ -1,3 +1,4 @@
+import { isBackupScheduleTargetBound } from "@dokploy/server/utils/backups/invariant";
 import {
 	getComposeContainerCommand,
 	getLibsqlBackupCommand,
@@ -6,10 +7,15 @@ import {
 	getMysqlBackupCommand,
 	getPostgresBackupCommand,
 	getServiceContainerCommand,
+	shouldRunBackupRetention,
 } from "@dokploy/server/utils/backups/utils";
 import { parse } from "shell-quote";
 import { describe, expect, it } from "vitest";
-import { apiCreateBackup, apiRestoreBackup } from "@/server/db/schema";
+import {
+	apiCreateBackup,
+	apiRestoreBackup,
+	apiUpdateBackup,
+} from "@/server/db/schema";
 
 const safeCreateBackupInput = {
 	backupType: "database" as const,
@@ -24,6 +30,19 @@ const safeCreateBackupInput = {
 	schedule: "0 0 * * *",
 	serviceName: "postgres",
 	userId: "user-1",
+};
+
+const safeUpdateBackupInput = {
+	backupId: "backup-1",
+	database: "appdb",
+	databaseType: "postgres" as const,
+	destinationId: "destination-1",
+	enabled: false,
+	keepLatestCount: 3,
+	metadata: {},
+	prefix: "daily",
+	schedule: "0 0 * * *",
+	serviceName: "postgres",
 };
 
 const parseShellArgs = (command: string) =>
@@ -57,6 +76,97 @@ describe("backup command and schema boundaries", () => {
 					serviceName: "api;id",
 				},
 			}).success,
+		).toBe(false);
+	});
+
+	it("rejects unsafe retention counts before persistence", () => {
+		expect(
+			apiCreateBackup.safeParse({
+				...safeCreateBackupInput,
+				keepLatestCount: -1,
+			}).success,
+		).toBe(false);
+
+		expect(
+			apiCreateBackup.safeParse({
+				...safeCreateBackupInput,
+				keepLatestCount: 1.5,
+			}).success,
+		).toBe(false);
+
+		expect(
+			apiUpdateBackup.safeParse({
+				...safeUpdateBackupInput,
+				keepLatestCount: -1,
+			}).success,
+		).toBe(false);
+
+		expect(
+			apiCreateBackup.safeParse({
+				...safeCreateBackupInput,
+				keepLatestCount: 0,
+			}).success,
+		).toBe(true);
+	});
+
+	it("skips retention deletion for invalid legacy counts", () => {
+		expect(shouldRunBackupRetention(-1)).toBe(false);
+		expect(shouldRunBackupRetention(1.5)).toBe(false);
+		expect(shouldRunBackupRetention(0)).toBe(false);
+		expect(shouldRunBackupRetention(null)).toBe(false);
+		expect(shouldRunBackupRetention(1)).toBe(true);
+	});
+
+	it("rejects stored backup schedules with mismatched service bindings", () => {
+		const validPostgresBackup = {
+			backupType: "database",
+			databaseType: "postgres",
+			postgres: { appName: "postgres-one" },
+			postgresId: "postgres-1",
+		};
+
+		expect(isBackupScheduleTargetBound(validPostgresBackup as never)).toBe(
+			true,
+		);
+		expect(
+			isBackupScheduleTargetBound({
+				backupType: "database",
+				databaseType: "web-server",
+			} as never),
+		).toBe(true);
+		expect(
+			isBackupScheduleTargetBound({
+				backupType: "compose",
+				compose: { appName: "compose-one" },
+				composeId: "compose-1",
+				databaseType: "postgres",
+			} as never),
+		).toBe(true);
+		expect(
+			isBackupScheduleTargetBound({
+				...validPostgresBackup,
+				databaseType: "mysql",
+				mysql: { appName: "mysql-one" },
+				mysqlId: "mysql-1",
+			} as never),
+		).toBe(false);
+		expect(
+			isBackupScheduleTargetBound({
+				backupType: "database",
+				databaseType: "web-server",
+				postgres: { appName: "postgres-one" },
+				postgresId: "postgres-1",
+			} as never),
+		).toBe(false);
+		expect(
+			isBackupScheduleTargetBound({
+				backupType: "compose",
+				compose: { appName: "compose-one" },
+				composeId: "compose-1",
+				databaseType: "postgres",
+				postgres: { appName: "postgres-one" },
+				postgresId: "postgres-1",
+			} as never),
 		).toBe(false);
 	});
 

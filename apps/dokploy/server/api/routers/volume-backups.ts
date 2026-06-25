@@ -252,6 +252,36 @@ const assertVolumeRestoreObjectBound = async (input: {
 	}
 };
 
+const normalizeRestoreServerId = (serverId?: string | null) => serverId || null;
+
+const assertVolumeRestoreServerBinding = async (
+	ctx: Parameters<typeof assertServicePlacementAccess>[0],
+	input: {
+		id: string;
+		serverId?: string;
+		serviceType: "application" | "compose";
+	},
+) => {
+	const service = await assertServicePlacementAccess(
+		ctx,
+		input.id,
+		input.serviceType,
+	);
+	const boundServerId = normalizeRestoreServerId(service.serverId);
+	const requestedServerId = normalizeRestoreServerId(input.serverId);
+
+	if (requestedServerId && requestedServerId !== boundServerId) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "Volume restore server must match the service placement server.",
+		});
+	}
+
+	await assertTargetServerAccess(ctx, boundServerId ?? undefined);
+
+	return boundServerId;
+};
+
 export const volumeBackupsRouter = createTRPCRouter({
 	list: protectedProcedure
 		.input(
@@ -474,10 +504,13 @@ export const volumeBackupsRouter = createTRPCRouter({
 				input.destinationId,
 				ctx.session.activeOrganizationId,
 			);
-			await assertTargetServerAccess(ctx, input.serverId);
 			await checkServicePermissionAndAccess(ctx, input.id, {
 				volumeBackup: ["restore"],
 			});
+			const restoreServerId = await assertVolumeRestoreServerBinding(
+				ctx,
+				input,
+			);
 			await assertVolumeRestoreObjectBound(input);
 			return observable<string>((emit) => {
 				const runRestore = async () => {
@@ -494,7 +527,7 @@ export const volumeBackupsRouter = createTRPCRouter({
 							input.destinationId,
 							input.volumeName,
 							input.backupFileName,
-							input.serverId || "",
+							restoreServerId ?? "",
 							input.serviceType,
 						);
 
@@ -503,9 +536,9 @@ export const volumeBackupsRouter = createTRPCRouter({
 						emit.next(""); // Empty line
 
 						// Execute the restore command with real-time output
-						if (input.serverId) {
-							emit.next(`🌐 Executing on remote server: ${input.serverId}`);
-							await execAsyncRemote(input.serverId, restoreCommand, (data) => {
+						if (restoreServerId) {
+							emit.next(`🌐 Executing on remote server: ${restoreServerId}`);
+							await execAsyncRemote(restoreServerId, restoreCommand, (data) => {
 								emit.next(data);
 							});
 						} else {

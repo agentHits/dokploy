@@ -16,6 +16,7 @@ import {
 	environments,
 	projects,
 } from "@dokploy/server/db/schema";
+import { isBackupScheduleTargetBound } from "@dokploy/server/utils/backups/invariant";
 import { removeDirectoryIfExistsContent } from "@dokploy/server/utils/filesystem/directory";
 import {
 	execAsync,
@@ -386,6 +387,12 @@ export const createDeploymentBackup = async (
 	>,
 ) => {
 	const backup = await findBackupById(deployment.backupId);
+	if (!isBackupScheduleTargetBound(backup)) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Backup schedule target is not linked to its backup type.",
+		});
+	}
 
 	let serverId: string | null | undefined;
 	if (backup.backupType === "database") {

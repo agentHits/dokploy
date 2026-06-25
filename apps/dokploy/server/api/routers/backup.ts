@@ -104,12 +104,74 @@ type BackupServiceIdShape = {
 	[K in (typeof backupServiceIdFields)[number]]?: string | null;
 };
 
-const getBackupServiceId = (backup: BackupServiceIdShape) => {
+const backupServiceFieldByDatabaseType = {
+	libsql: "libsqlId",
+	mariadb: "mariadbId",
+	mongo: "mongoId",
+	mysql: "mysqlId",
+	postgres: "postgresId",
+} as const;
+
+const getBackupServiceBindings = (backup: BackupServiceIdShape) => {
+	const bindings: {
+		field: (typeof backupServiceIdFields)[number];
+		id: string;
+	}[] = [];
 	for (const field of backupServiceIdFields) {
-		if (backup[field]) {
-			return backup[field];
+		const id = backup[field];
+		if (id) {
+			bindings.push({ field, id });
 		}
 	}
+	return bindings;
+};
+
+const assertBoundBackupService = (
+	backup: BackupServiceIdShape & {
+		backupType: "database" | "compose";
+		databaseType: BackupScheduleWithRelations["databaseType"];
+	},
+) => {
+	const bindings = getBackupServiceBindings(backup);
+
+	if (backup.backupType === "compose") {
+		if (
+			bindings.length !== 1 ||
+			bindings[0]?.field !== "composeId" ||
+			!backup.composeId
+		) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "Compose backups must be linked only to a compose service.",
+			});
+		}
+		return backup.composeId;
+	}
+
+	if (backup.databaseType === "web-server") {
+		if (bindings.length !== 0) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "Server backups must not be linked to a service.",
+			});
+		}
+		return null;
+	}
+
+	const expectedField = backupServiceFieldByDatabaseType[backup.databaseType];
+	const serviceId = backup[expectedField];
+	if (
+		bindings.length !== 1 ||
+		!serviceId ||
+		bindings[0]?.field !== expectedField
+	) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Backup must be linked only to the selected service type.",
+		});
+	}
+
+	return serviceId;
 };
 
 const assertOwnerOrAdmin = (
@@ -148,7 +210,7 @@ const assertBackupAccess = async (
 	backup: BackupScheduleWithRelations,
 	action: BackupAction,
 ) => {
-	const serviceId = getBackupServiceId(backup);
+	const serviceId = assertBoundBackupService(backup);
 	if (serviceId) {
 		await checkServicePermissionAndAccess(ctx, serviceId, {
 			backup: [action],
@@ -164,9 +226,10 @@ const assertBackupListingAccess = async (
 	backup: BackupServiceIdShape & {
 		destinationId: string;
 		databaseType: BackupScheduleWithRelations["databaseType"];
+		backupType: "database" | "compose";
 	},
 ) => {
-	const serviceId = getBackupServiceId(backup);
+	const serviceId = assertBoundBackupService(backup);
 	if (serviceId) {
 		await checkServicePermissionAndAccess(ctx, serviceId, {
 			backup: ["read"],
@@ -462,7 +525,10 @@ export const backupRouter = createTRPCRouter({
 		.input(apiCreateBackup)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				const serviceId = getBackupServiceId(input);
+				const serviceId = assertBoundBackupService({
+					...input,
+					backupType: input.backupType ?? "database",
+				});
 				if (serviceId) {
 					await checkServicePermissionAndAccess(ctx, serviceId, {
 						backup: ["create"],
@@ -560,6 +626,12 @@ export const backupRouter = createTRPCRouter({
 			try {
 				const existing = await findBackupById(input.backupId);
 				await assertBackupAccess(ctx, existing, "update");
+				if (input.databaseType !== existing.databaseType) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "Backup database type cannot be changed.",
+					});
+				}
 				await assertDestinationAccess(
 					input.destinationId,
 					ctx.session.activeOrganizationId,

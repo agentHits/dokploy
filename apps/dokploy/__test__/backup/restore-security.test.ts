@@ -383,6 +383,35 @@ describe("backup destination ownership boundary", () => {
 		expect(mocks.createBackup).toHaveBeenCalledWith(safeCreateBackupInput);
 	});
 
+	it("rejects backup creates with mismatched service foreign keys before persistence", async () => {
+		await expect(
+			createCaller().create({
+				...safeCreateBackupInput,
+				databaseType: "mysql",
+				mysqlId: "mysql-1",
+			}),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(mocks.checkServicePermissionAndAccess).not.toHaveBeenCalled();
+		expect(mocks.createBackup).not.toHaveBeenCalled();
+		expect(mocks.scheduleBackup).not.toHaveBeenCalled();
+		expect(mocks.schedule).not.toHaveBeenCalled();
+	});
+
+	it("rejects web-server backup creates that include a service foreign key", async () => {
+		await expect(
+			createCaller("admin").create({
+				...safeWebServerCreateBackupInput,
+				postgresId: "postgres-1",
+			}),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(mocks.checkServicePermissionAndAccess).not.toHaveBeenCalled();
+		expect(mocks.createBackup).not.toHaveBeenCalled();
+		expect(mocks.scheduleBackup).not.toHaveBeenCalled();
+		expect(mocks.schedule).not.toHaveBeenCalled();
+	});
+
 	it("requires owner or admin role for service-less web-server backup create", async () => {
 		mocks.findDestinationById.mockResolvedValue({
 			...safeDestination,
@@ -419,6 +448,19 @@ describe("backup destination ownership boundary", () => {
 			safeWebServerCreateBackupInput,
 		);
 		expect(mocks.checkServicePermissionAndAccess).not.toHaveBeenCalled();
+	});
+
+	it("rejects backup updates that change database type without a service rebind", async () => {
+		await expect(
+			createCaller().update({
+				...safeUpdateBackupInput,
+				databaseType: "mysql",
+			}),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(mocks.updateBackupById).not.toHaveBeenCalled();
+		expect(mocks.scheduleBackup).not.toHaveBeenCalled();
+		expect(mocks.updateJob).not.toHaveBeenCalled();
 	});
 
 	it("allows same-organization destinations on backup update", async () => {
