@@ -4,7 +4,7 @@ import { sso } from "@better-auth/sso";
 import * as bcrypt from "bcrypt";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { admin, organization, twoFactor } from "better-auth/plugins";
 import { and, desc, eq } from "drizzle-orm";
 import { IS_CLOUD } from "../constants";
@@ -25,6 +25,20 @@ import {
 import { getPublicIpWithFallback } from "../wss/utils";
 import { ac, adminRole, memberRole, ownerRole } from "./access-control";
 import { betterAuthSecret } from "./auth-secret";
+
+export const isEmailPasswordSignInPath = (path: string | undefined) =>
+	path === "/sign-in/email" || path?.endsWith("/sign-in/email");
+
+export const shouldBlockEmailPasswordSignIn = async (
+	path: string | undefined,
+) => {
+	if (IS_CLOUD || !isEmailPasswordSignInPath(path)) {
+		return false;
+	}
+
+	const settings = await getWebServerSettings();
+	return settings?.enforceSSO === true;
+};
 
 const { handler, api } = betterAuth({
 	database: drizzleAdapter(db, {
@@ -73,6 +87,16 @@ const { handler, api } = betterAuth({
 	},
 	logger: {
 		disabled: process.env.NODE_ENV === "production",
+	},
+	hooks: {
+		before: createAuthMiddleware(async (ctx) => {
+			if (await shouldBlockEmailPasswordSignIn(ctx.path)) {
+				throw new APIError("FORBIDDEN", {
+					message:
+						"Email and password sign-in is disabled while SSO is enforced",
+				});
+			}
+		}),
 	},
 	async trustedOrigins() {
 		try {

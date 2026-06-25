@@ -81,7 +81,7 @@ import { appRouter } from "../root";
 import {
 	adminProcedure,
 	createTRPCRouter,
-	enterpriseProcedure,
+	enterpriseOwnerProcedure,
 	protectedProcedure,
 	publicProcedure,
 } from "../trpc";
@@ -489,7 +489,7 @@ export const settingsRouter = createTRPCRouter({
 			return true;
 		}),
 
-	updateRemoteServersOnly: enterpriseProcedure
+	updateRemoteServersOnly: enterpriseOwnerProcedure
 		.input(z.object({ remoteServersOnly: z.boolean() }))
 		.mutation(async ({ input, ctx }) => {
 			if (IS_CLOUD) {
@@ -538,7 +538,7 @@ export const settingsRouter = createTRPCRouter({
 			return true;
 		}),
 
-	updateEnforceSSO: enterpriseProcedure
+	updateEnforceSSO: enterpriseOwnerProcedure
 		.input(z.object({ enforceSSO: z.boolean() }))
 		.mutation(async ({ input, ctx }) => {
 			if (IS_CLOUD) {

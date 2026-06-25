@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
 	apiUpdateApplication,
 	apiUpdateCompose,
@@ -124,5 +125,20 @@ describe("high-severity schema security boundaries", () => {
 				serviceName: "web",
 			}).success,
 		).toBe(false);
+	});
+
+	it("backfills host-level schedule organizations only for unambiguous owners", () => {
+		const migration = readFileSync(
+			new URL("../../drizzle/0169_parched_johnny_storm.sql", import.meta.url),
+			"utf8",
+		);
+
+		expect(migration).toContain("owner_memberships");
+		expect(migration).toContain(
+			'count(DISTINCT m."organization_id") AS "owner_org_count"',
+		);
+		expect(migration).toContain('AND owner_memberships."owner_org_count" = 1');
+		expect(migration).toContain('SET "enabled" = false');
+		expect(migration).not.toContain('FROM "member" m\nWHERE');
 	});
 });

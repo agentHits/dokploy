@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 	getLogCleanupStatus: vi.fn(),
 	getUpdateData: vi.fn(),
 	getWebServerSettings: vi.fn(),
+	hasValidLicense: vi.fn(),
 	parseRawConfig: vi.fn(),
 	paths: vi.fn(),
 	prepareEnvironmentVariables: vi.fn(),
@@ -119,6 +120,10 @@ vi.mock("@dokploy/server/services/permission", () => ({
 	checkPermission: mocks.checkPermission,
 }));
 
+vi.mock("@dokploy/server/services/proprietary/license-key", () => ({
+	hasValidLicense: mocks.hasValidLicense,
+}));
+
 vi.mock("@dokploy/trpc-openapi", () => ({
 	generateOpenApiDocument: mocks.generateOpenApiDocument,
 }));
@@ -151,7 +156,7 @@ vi.mock("../../server/api/root", () => ({
 
 const { settingsRouter } = await import("../../server/api/routers/settings");
 
-const createCaller = () =>
+const createCaller = (role: "owner" | "admin" | "member" = "admin") =>
 	settingsRouter.createCaller({
 		db: {},
 		req: {
@@ -167,7 +172,7 @@ const createCaller = () =>
 		},
 		user: {
 			id: "user-1",
-			role: "admin",
+			role,
 		},
 	} as never);
 
@@ -175,6 +180,7 @@ describe("settings Docker server boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.hasValidLicense.mockResolvedValue(true);
 		mocks.generateOpenApiDocument.mockReturnValue({
 			components: {},
 			info: {},
@@ -395,5 +401,49 @@ describe("settings Docker server boundary", () => {
 		);
 
 		expect(mocks.generateOpenApiDocument).not.toHaveBeenCalled();
+	});
+
+	it("denies org admins from changing instance-wide SSO policy", async () => {
+		await expect(
+			createCaller("admin").updateEnforceSSO({ enforceSSO: false }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.hasValidLicense).not.toHaveBeenCalled();
+		expect(mocks.updateWebServerSettings).not.toHaveBeenCalled();
+	});
+
+	it("denies org admins from changing remote-only deployment policy", async () => {
+		await expect(
+			createCaller("admin").updateRemoteServersOnly({
+				remoteServersOnly: false,
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.hasValidLicense).not.toHaveBeenCalled();
+		expect(mocks.updateWebServerSettings).not.toHaveBeenCalled();
+	});
+
+	it("allows owners with an enterprise license to change instance-wide restrictions", async () => {
+		await expect(
+			createCaller("owner").updateEnforceSSO({ enforceSSO: true }),
+		).resolves.toBe(true);
+
+		expect(mocks.hasValidLicense).toHaveBeenCalledWith("org-1");
+		expect(mocks.updateWebServerSettings).toHaveBeenCalledWith({
+			enforceSSO: true,
+		});
+	});
+
+	it("allows owners with an enterprise license to change remote-only deployment policy", async () => {
+		await expect(
+			createCaller("owner").updateRemoteServersOnly({
+				remoteServersOnly: true,
+			}),
+		).resolves.toBe(true);
+
+		expect(mocks.hasValidLicense).toHaveBeenCalledWith("org-1");
+		expect(mocks.updateWebServerSettings).toHaveBeenCalledWith({
+			remoteServersOnly: true,
+		});
 	});
 });

@@ -8,27 +8,41 @@ const mocks = vi.hoisted(() => ({
 	handler: vi.fn(),
 	memberFindFirst: vi.fn(),
 	apiKeyFindFirst: vi.fn(),
+	authOptions: undefined as any,
 	checkPermission: vi.fn(),
+	createAuthMiddleware: vi.fn((middleware) => middleware),
 	registerSSOProvider: vi.fn(),
 	updateSSOProvider: vi.fn(),
 	verifyApiKey: vi.fn(),
+	webServerSettingsFindFirst: vi.fn(),
 }));
 
 vi.mock("better-auth", () => ({
-	betterAuth: vi.fn(() => ({
-		handler: mocks.handler,
-		api: {
-			createApiKey: mocks.createApiKey,
-			getSession: mocks.getSession,
-			registerSSOProvider: mocks.registerSSOProvider,
-			updateSSOProvider: mocks.updateSSOProvider,
-			verifyApiKey: mocks.verifyApiKey,
-		},
-	})),
+	betterAuth: vi.fn((options) => {
+		mocks.authOptions = options;
+		return {
+			handler: mocks.handler,
+			api: {
+				createApiKey: mocks.createApiKey,
+				getSession: mocks.getSession,
+				registerSSOProvider: mocks.registerSSOProvider,
+				updateSSOProvider: mocks.updateSSOProvider,
+				verifyApiKey: mocks.verifyApiKey,
+			},
+		};
+	}),
 }));
 
 vi.mock("better-auth/api", () => ({
-	APIError: class APIError extends Error {},
+	APIError: class APIError extends Error {
+		status: string;
+
+		constructor(status: string, options?: { message?: string }) {
+			super(options?.message ?? status);
+			this.status = status;
+		}
+	},
+	createAuthMiddleware: mocks.createAuthMiddleware,
 }));
 
 vi.mock("better-auth/adapters/drizzle", () => ({
@@ -55,6 +69,9 @@ vi.mock("@dokploy/server/db", () => ({
 			apikey: {
 				findFirst: mocks.apiKeyFindFirst,
 			},
+			webServerSettings: {
+				findFirst: mocks.webServerSettingsFindFirst,
+			},
 			member: {
 				findFirst: mocks.memberFindFirst,
 			},
@@ -67,6 +84,9 @@ vi.mock("@dokploy/server/services/permission", () => ({
 }));
 
 const { validateRequest } = await import(
+	"../../../../packages/server/src/lib/auth"
+);
+const { shouldBlockEmailPasswordSignIn } = await import(
 	"../../../../packages/server/src/lib/auth"
 );
 
@@ -104,6 +124,7 @@ describe("validateRequest API key sessions", () => {
 			metadata: JSON.stringify({ organizationId: "org-1" }),
 			user: userRecord,
 		});
+		mocks.webServerSettingsFindFirst.mockResolvedValue({ enforceSSO: false });
 	});
 
 	it("rejects API key sessions when the key owner lacks api.read", async () => {
@@ -156,6 +177,35 @@ describe("validateRequest API key sessions", () => {
 			},
 			{ api: ["read"] },
 		);
+	});
+});
+
+describe("Better Auth SSO enforcement", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.webServerSettingsFindFirst.mockResolvedValue({ enforceSSO: false });
+	});
+
+	it("blocks direct email/password sign-in while enforceSSO is enabled", async () => {
+		mocks.webServerSettingsFindFirst.mockResolvedValue({ enforceSSO: true });
+
+		await expect(
+			shouldBlockEmailPasswordSignIn("/sign-in/email"),
+		).resolves.toBe(true);
+		await expect(
+			mocks.authOptions.hooks.before({ path: "/sign-in/email" }),
+		).rejects.toThrow(
+			"Email and password sign-in is disabled while SSO is enforced",
+		);
+	});
+
+	it("does not block SSO endpoints or password sign-in when enforceSSO is off", async () => {
+		await expect(shouldBlockEmailPasswordSignIn("/sso/callback")).resolves.toBe(
+			false,
+		);
+		await expect(
+			shouldBlockEmailPasswordSignIn("/sign-in/email"),
+		).resolves.toBe(false);
 	});
 });
 

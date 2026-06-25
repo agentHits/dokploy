@@ -25,6 +25,7 @@ import {
 	apiUpdateUser,
 	invitation,
 	member,
+	server,
 	session,
 	user,
 } from "@dokploy/server/db/schema";
@@ -38,7 +39,7 @@ import { hasValidLicense } from "@dokploy/server/services/proprietary/license-ke
 import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
 import { TRPCError } from "@trpc/server";
 import * as bcrypt from "bcrypt";
-import { and, asc, eq, gt, ne } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, ne } from "drizzle-orm";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
 import { assertContainerMetricsServiceAccess } from "@/server/api/utils/monitoring-access";
@@ -101,6 +102,33 @@ const getContainerMetricsTarget = async (
 		port: settings?.metricsConfig?.server?.port,
 		token: settings?.metricsConfig?.server?.token,
 	};
+};
+
+const assertAssignedServersBelongToOrganization = async (
+	serverIds: string[] | undefined,
+	organizationId: string,
+) => {
+	if (!serverIds?.length) {
+		return;
+	}
+
+	const uniqueServerIds = [...new Set(serverIds)];
+	const organizationServers = await db.query.server.findMany({
+		where: and(
+			inArray(server.serverId, uniqueServerIds),
+			eq(server.organizationId, organizationId),
+		),
+		columns: {
+			serverId: true,
+		},
+	});
+
+	if (organizationServers.length !== uniqueServerIds.length) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Assigned servers must belong to the active organization",
+		});
+	}
 };
 
 const buildContainerMetricsRequest = ({
@@ -476,6 +504,12 @@ export const userRouter = createTRPCRouter({
 				const licensed = await hasValidLicense(
 					ctx.session?.activeOrganizationId || "",
 				);
+				if (licensed && accessedServers !== undefined) {
+					await assertAssignedServersBelongToOrganization(
+						accessedServers,
+						ctx.session?.activeOrganizationId || "",
+					);
+				}
 
 				await db
 					.update(member)
