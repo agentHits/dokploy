@@ -28,6 +28,7 @@ const serverMocks = vi.hoisted(() => ({
 	findGithubGitProviderId: vi.fn(),
 	findGitlabById: vi.fn(),
 	findGitlabGitProviderId: vi.fn(),
+	findRegistryById: vi.fn(),
 	findLibsqlById: vi.fn(),
 	findMariadbById: vi.fn(),
 	findMongoById: vi.fn(),
@@ -108,6 +109,7 @@ vi.mock("@dokploy/server", () => ({
 	findGithubGitProviderId: serverMocks.findGithubGitProviderId,
 	findGitlabById: serverMocks.findGitlabById,
 	findGitlabGitProviderId: serverMocks.findGitlabGitProviderId,
+	findRegistryById: serverMocks.findRegistryById,
 	findLibsqlById: serverMocks.findLibsqlById,
 	findMariadbById: serverMocks.findMariadbById,
 	findMongoById: serverMocks.findMongoById,
@@ -269,6 +271,10 @@ describe("deploy source credential access", () => {
 			groupName: "allowed/group",
 		});
 		serverMocks.findGitlabGitProviderId.mockResolvedValue("git-provider-1");
+		serverMocks.findRegistryById.mockResolvedValue({
+			registryId: "registry-1",
+			organizationId: "org-1",
+		});
 		serverMocks.assertGitProviderAccess.mockResolvedValue(undefined);
 		serverMocks.assertSshKeyAccess.mockResolvedValue(undefined);
 		serverMocks.updateApplication.mockResolvedValue({});
@@ -383,6 +389,126 @@ describe("deploy source credential access", () => {
 			{ sshKeys: ["read"] },
 		);
 		expect(serverMocks.updateApplication).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["runtime registry", "registryId"],
+		["build registry", "buildRegistryId"],
+		["rollback registry", "rollbackRegistryId"],
+	] as const)("rejects another organization's %s before application persistence", async (_label, field) => {
+		serverMocks.findRegistryById.mockResolvedValueOnce({
+			registryId: "registry-org-2",
+			organizationId: "org-2",
+		});
+
+		try {
+			await expect(
+				applicationRouter.createCaller(createContext()).update({
+					applicationId: "app-1",
+					[field]: "registry-org-2",
+				}),
+			).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+			expect(permissionMocks.checkPermission).toHaveBeenCalledWith(
+				expect.objectContaining({
+					session: expect.objectContaining({
+						activeOrganizationId: "org-1",
+					}),
+				}),
+				{ registry: ["read"] },
+			);
+			expect(serverMocks.findRegistryById).toHaveBeenCalledWith(
+				"registry-org-2",
+			);
+			expect(serverMocks.updateApplication).not.toHaveBeenCalled();
+		} finally {
+			serverMocks.findRegistryById.mockReset();
+			serverMocks.findRegistryById.mockResolvedValue({
+				registryId: "registry-1",
+				organizationId: "org-1",
+			});
+		}
+	});
+
+	it("rejects registry binding when registry read permission is missing", async () => {
+		permissionMocks.checkPermission.mockRejectedValueOnce(
+			new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "denied",
+			}),
+		);
+
+		try {
+			await expect(
+				applicationRouter.createCaller(createContext()).update({
+					applicationId: "app-1",
+					registryId: "registry-1",
+				}),
+			).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+			expect(serverMocks.findRegistryById).not.toHaveBeenCalled();
+			expect(serverMocks.updateApplication).not.toHaveBeenCalled();
+		} finally {
+			permissionMocks.checkPermission.mockReset();
+			permissionMocks.checkPermission.mockResolvedValue(undefined);
+		}
+	});
+
+	it("allows active-organization registries and registry clearing", async () => {
+		await expect(
+			applicationRouter.createCaller(createContext()).update({
+				applicationId: "app-1",
+				registryId: "registry-1",
+				buildRegistryId: "registry-1",
+				rollbackRegistryId: "registry-1",
+			}),
+		).resolves.toBe(true);
+
+		expect(serverMocks.findRegistryById).toHaveBeenCalledTimes(1);
+		expect(serverMocks.updateApplication).toHaveBeenCalledWith(
+			"app-1",
+			expect.objectContaining({
+				registryId: "registry-1",
+				buildRegistryId: "registry-1",
+				rollbackRegistryId: "registry-1",
+			}),
+		);
+
+		permissionMocks.checkPermission.mockClear();
+		permissionMocks.checkServicePermissionAndAccess.mockClear();
+		serverMocks.findRegistryById.mockClear();
+		serverMocks.updateApplication.mockClear();
+		serverMocks.findApplicationById.mockClear();
+		auditMocks.audit.mockClear();
+		permissionMocks.checkServicePermissionAndAccess.mockResolvedValue(
+			undefined,
+		);
+		serverMocks.updateApplication.mockResolvedValue({});
+		serverMocks.findApplicationById.mockResolvedValue({
+			applicationId: "app-1",
+			appName: "app-one",
+		});
+
+		await expect(
+			applicationRouter.createCaller(createContext()).update({
+				applicationId: "app-1",
+				registryId: null,
+				buildRegistryId: null,
+				rollbackRegistryId: null,
+			}),
+		).resolves.toBe(true);
+
+		expect(permissionMocks.checkPermission).not.toHaveBeenCalledWith(
+			expect.anything(),
+			{ registry: ["read"] },
+		);
+		expect(serverMocks.findRegistryById).not.toHaveBeenCalled();
+		expect(serverMocks.updateApplication).toHaveBeenCalledWith(
+			"app-1",
+			expect.objectContaining({
+				registryId: null,
+				buildRegistryId: null,
+				rollbackRegistryId: null,
+			}),
+		);
 	});
 
 	it("rejects inaccessible GitHub providers before compose source persistence", async () => {

@@ -3,6 +3,7 @@ import {
 	createApplication,
 	deleteAllMiddlewares,
 	findApplicationById,
+	findRegistryById,
 	getAccessibleServerIds,
 	getApplicationStats,
 	getContainerLogs,
@@ -34,6 +35,7 @@ import {
 } from "@dokploy/server/services/git-provider";
 import {
 	addNewService,
+	checkPermission,
 	checkServiceAccess,
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
@@ -80,6 +82,46 @@ import {
 	myQueue,
 } from "@/server/queues/queueSetup";
 import { cancelDeployment, deploy } from "@/server/utils/deploy";
+
+const applicationRegistryFields = [
+	"registryId",
+	"buildRegistryId",
+	"rollbackRegistryId",
+] as const;
+
+type ApplicationRegistryUpdateInput = Pick<
+	z.infer<typeof apiUpdateApplication>,
+	(typeof applicationRegistryFields)[number]
+>;
+
+const assertApplicationRegistryAccess = async (
+	input: ApplicationRegistryUpdateInput,
+	ctx: Parameters<typeof checkPermission>[0],
+) => {
+	const registryIds = [
+		...new Set(
+			applicationRegistryFields
+				.map((field) => input[field])
+				.filter((registryId): registryId is string => !!registryId),
+		),
+	];
+
+	if (registryIds.length === 0) {
+		return;
+	}
+
+	await checkPermission(ctx, { registry: ["read"] });
+
+	for (const registryId of registryIds) {
+		const registry = await findRegistryById(registryId);
+		if (registry.organizationId !== ctx.session.activeOrganizationId) {
+			throw new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You are not authorized to use this registry",
+			});
+		}
+	}
+};
 
 export const applicationRouter = createTRPCRouter({
 	create: protectedProcedure
@@ -697,6 +739,7 @@ export const applicationRouter = createTRPCRouter({
 				permissionCtx: ctx,
 				requireSshKeyRead: true,
 			});
+			await assertApplicationRegistryAccess(input, ctx);
 
 			const { applicationId, ...rest } = input;
 			const updateApp = await updateApplication(applicationId, {
