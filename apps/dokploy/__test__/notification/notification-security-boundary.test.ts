@@ -11,6 +11,7 @@ import {
 	redactNotificationSecrets,
 	resolveNotificationSmtpTarget,
 } from "@dokploy/server/utils/notifications/security";
+import { sendCustomNotification } from "@dokploy/server/utils/notifications/utils";
 import { describe, expect, it } from "vitest";
 
 describe("notification secret and outbound target boundaries", () => {
@@ -285,6 +286,20 @@ describe("notification secret and outbound target boundaries", () => {
 			host: "8.8.8.8",
 			servername: "smtp.example.com",
 		});
+	});
+
+	it("rejects private custom notification endpoints before sending", async () => {
+		await expect(
+			sendCustomNotification(
+				{
+					endpoint: "http://127.0.0.1:8080/webhook",
+					headers: {
+						Authorization: "Bearer caller-secret",
+					},
+				} as never,
+				{ title: "test" },
+			),
+		).rejects.toThrow(/Custom notification endpoint/i);
 	});
 
 	it("does not resolve SMTP hosts when private networks are allowed", async () => {

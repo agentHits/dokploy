@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
 	findServersByUserId: vi.fn(),
 	findUserById: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
+	getDokployUrl: vi.fn(),
 	getPublicIpWithFallback: vi.fn(),
 	getWebServerSettings: vi.fn(),
 	hasValidLicense: vi.fn(),
@@ -81,6 +82,7 @@ vi.mock("@dokploy/server", () => ({
 	findServersByUserId: mocks.findServersByUserId,
 	findUserById: mocks.findUserById,
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
+	getDokployUrl: mocks.getDokployUrl,
 	getPublicIpWithFallback: mocks.getPublicIpWithFallback,
 	getWebServerSettings: mocks.getWebServerSettings,
 	hasValidLicense: mocks.hasValidLicense,
@@ -116,6 +118,7 @@ vi.mock("@dokploy/server/index", () => ({
 	findServersByUserId: mocks.findServersByUserId,
 	findUserById: mocks.findUserById,
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
+	getDokployUrl: mocks.getDokployUrl,
 	getPublicIpWithFallback: mocks.getPublicIpWithFallback,
 	getWebServerSettings: mocks.getWebServerSettings,
 	hasValidLicense: mocks.hasValidLicense,
@@ -339,6 +342,7 @@ describe("server router assigned-server boundary", () => {
 			serverType: "deploy",
 		});
 		mocks.haveActiveServices.mockResolvedValue(false);
+		mocks.getDokployUrl.mockResolvedValue("https://dokploy.example.com");
 		mocks.serverSetup.mockResolvedValue({ serverId: "server-1" });
 		mocks.serverValidate.mockResolvedValue({ docker: { enabled: true } });
 		mocks.serverAudit.mockResolvedValue({ ufw: { installed: true } });
@@ -392,6 +396,60 @@ describe("server router assigned-server boundary", () => {
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
 		expect(mocks.defaultCommand).not.toHaveBeenCalled();
+	});
+
+	it("replaces caller supplied monitoring callbacks with the trusted Dokploy callback", async () => {
+		mocks.findServerById.mockResolvedValue({
+			serverId: "server-1",
+			name: "primary",
+			organizationId: "org-1",
+			serverStatus: "active",
+			serverType: "deploy",
+			metricsConfig: {
+				server: {
+					token: "stored-monitoring-token",
+				},
+			},
+		});
+
+		await expect(
+			createCaller().setupMonitoring({
+				serverId: "server-1",
+				metricsConfig: {
+					server: {
+						refreshRate: 60,
+						retentionDays: 7,
+						port: 4500,
+						token: "__DOKPLOY_REDACTED_SECRET__",
+						urlCallback:
+							"https://attacker.example.invalid/capture-monitoring-token",
+						cronJob: "* * * * *",
+						thresholds: {
+							cpu: 80,
+							memory: 80,
+						},
+					},
+					containers: {
+						refreshRate: 60,
+						services: {
+							include: [],
+							exclude: [],
+						},
+					},
+				},
+			}),
+		).resolves.toMatchObject({ serverId: "server-1" });
+
+		expect(mocks.updateServerById).toHaveBeenCalledWith("server-1", {
+			metricsConfig: expect.objectContaining({
+				server: expect.objectContaining({
+					token: "stored-monitoring-token",
+					urlCallback:
+						"https://dokploy.example.com/api/trpc/notification.receiveNotification",
+				}),
+			}),
+		});
+		expect(mocks.setupMonitoring).toHaveBeenCalledWith("server-1");
 	});
 
 	it("denies inaccessible server setup before remote setup side effects", async () => {

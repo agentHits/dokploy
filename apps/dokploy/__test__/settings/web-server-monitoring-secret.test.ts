@@ -2,6 +2,7 @@ import { REDACTED_SECRET_VALUE } from "@dokploy/server/utils/security/redaction"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+	getDokployUrl: vi.fn(),
 	getWebServerSettings: vi.fn(),
 	setupWebMonitoring: vi.fn(),
 	updateWebServerSettings: vi.fn(),
@@ -55,6 +56,7 @@ const resolveWebServerMetricsConfigUpdate = (
 
 vi.mock("@dokploy/server", () => ({
 	IS_CLOUD: false,
+	getDokployUrl: mocks.getDokployUrl,
 	getWebServerSettings: mocks.getWebServerSettings,
 	redactWebServerSettings,
 	resolveWebServerMetricsConfigUpdate,
@@ -120,6 +122,7 @@ describe("web server monitoring secret preservation", () => {
 					},
 				},
 			});
+		mocks.getDokployUrl.mockResolvedValue("https://trusted.dokploy.example");
 		mocks.setupWebMonitoring.mockResolvedValue(undefined);
 		mocks.updateWebServerSettings.mockResolvedValue(undefined);
 	});
@@ -137,5 +140,30 @@ describe("web server monitoring secret preservation", () => {
 			}),
 		);
 		expect(result?.metricsConfig?.server.token).toBe(REDACTED_SECRET_VALUE);
+	});
+
+	it("replaces caller supplied web monitoring callbacks with the trusted Dokploy callback", async () => {
+		await expect(
+			createCaller().setupMonitoring({
+				metricsConfig: {
+					...metricsConfig,
+					server: {
+						...metricsConfig.server,
+						urlCallback: "https://attacker.example.invalid/callback",
+					},
+				},
+			}),
+		).resolves.toBeDefined();
+
+		expect(mocks.updateWebServerSettings).toHaveBeenCalledWith(
+			expect.objectContaining({
+				metricsConfig: expect.objectContaining({
+					server: expect.objectContaining({
+						urlCallback:
+							"https://trusted.dokploy.example/api/trpc/notification.receiveNotification",
+					}),
+				}),
+			}),
+		);
 	});
 });

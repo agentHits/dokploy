@@ -6,6 +6,7 @@ import {
 	findServersByUserId,
 	findUserById,
 	getAccessibleServerIds,
+	getDokployUrl,
 	getPublicIpWithFallback,
 	getWebServerSettings,
 	haveActiveServices,
@@ -503,7 +504,7 @@ export const serverRouter = createTRPCRouter({
 							retentionDays: input.metricsConfig.server.retentionDays,
 							port: input.metricsConfig.server.port,
 							token: input.metricsConfig.server.token,
-							urlCallback: input.metricsConfig.server.urlCallback,
+							urlCallback: `${await getDokployUrl()}/api/trpc/notification.receiveNotification`,
 							cronJob: input.metricsConfig.server.cronJob,
 							thresholds: {
 								cpu: input.metricsConfig.server.thresholds.cpu,

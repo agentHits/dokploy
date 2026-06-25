@@ -318,6 +318,7 @@ export const sendCustomNotification = async (
 		const endpoint = await assertNotificationHttpUrlAllowed(
 			connection.endpoint,
 			{
+				allowPrivateNetwork: false,
 				fieldName: "Custom notification endpoint",
 			},
 		);
@@ -329,7 +330,10 @@ export const sendCustomNotification = async (
 				body,
 				redirect: "error",
 			},
-			{ fieldName: "Custom notification endpoint" },
+			{
+				allowPrivateNetwork: false,
+				fieldName: "Custom notification endpoint",
+			},
 		);
 
 		if (!response.ok) {

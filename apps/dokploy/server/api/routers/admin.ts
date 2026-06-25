@@ -1,4 +1,5 @@
 import {
+	getDokployUrl,
 	getWebServerSettings,
 	IS_CLOUD,
 	redactWebServerSettings,
@@ -27,6 +28,7 @@ export const adminRouter = createTRPCRouter({
 					input.metricsConfig,
 					currentSettings?.metricsConfig,
 				);
+				const urlCallback = `${await getDokployUrl()}/api/trpc/notification.receiveNotification`;
 
 				await updateWebServerSettings({
 					metricsConfig: {
@@ -36,7 +38,7 @@ export const adminRouter = createTRPCRouter({
 							port: metricsConfig.server.port,
 							token: metricsConfig.server.token,
 							cronJob: metricsConfig.server.cronJob,
-							urlCallback: metricsConfig.server.urlCallback,
+							urlCallback,
 							retentionDays: metricsConfig.server.retentionDays,
 							thresholds: {
 								cpu: metricsConfig.server.thresholds.cpu,

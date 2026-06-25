@@ -55,10 +55,11 @@ export type Notification = typeof notifications.$inferSelect;
 const normalizeWebhookUpdateValue = (
 	value: string | undefined,
 	fieldName: string,
+	options?: { allowPrivateNetwork?: boolean },
 ) => {
 	const secretValue = notificationSecretUpdateValue(value);
 	return secretValue
-		? normalizeNotificationHttpUrl(secretValue, { fieldName })
+		? normalizeNotificationHttpUrl(secretValue, { ...options, fieldName })
 		: undefined;
 };
 
@@ -773,6 +774,7 @@ export const createCustomNotification = async (
 			.insert(custom)
 			.values({
 				endpoint: normalizeNotificationHttpUrl(input.endpoint, {
+					allowPrivateNetwork: false,
 					fieldName: "Custom notification endpoint",
 				}),
 				headers: input.headers,
@@ -852,6 +854,7 @@ export const updateCustomNotification = async (
 				endpoint: normalizeWebhookUpdateValue(
 					input.endpoint,
 					"Custom notification endpoint",
+					{ allowPrivateNetwork: false },
 				),
 				headers: notificationHeadersUpdateValue(input.headers),
 			})
