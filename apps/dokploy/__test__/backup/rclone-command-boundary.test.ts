@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
 	findEnvironmentById: vi.fn(),
 	findProjectById: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
+	loggerInfo: vi.fn(),
 	removeDestinationById: vi.fn(),
 	sendDatabaseBackupNotifications: vi.fn(),
 	updateDeploymentStatus: vi.fn(),
@@ -74,6 +75,12 @@ vi.mock("@dokploy/server/services/project", () => ({
 	findProjectById: mocks.findProjectById,
 }));
 
+vi.mock("@dokploy/server/lib/logger", () => ({
+	logger: {
+		info: mocks.loggerInfo,
+	},
+}));
+
 vi.mock("@dokploy/server/utils/process/execAsync", () => ({
 	execAsync: mocks.execAsync,
 	execAsyncRemote: mocks.execAsyncRemote,
@@ -93,6 +100,7 @@ const { destinationRouter } = await import(
 const { runPostgresBackup } = await import(
 	"@dokploy/server/utils/backups/postgres"
 );
+const { runMongoBackup } = await import("@dokploy/server/utils/backups/mongo");
 
 const createDestinationCaller = () =>
 	destinationRouter.createCaller({
@@ -222,5 +230,74 @@ describe("destination rclone command boundary", () => {
 		expect(command).not.toContain(
 			'":s3:bucket$(id);touch/postgres-app/prefix$(id);touch/',
 		);
+	});
+
+	it("redacts destination credentials from structured backup command logs", async () => {
+		await runPostgresBackup(
+			{
+				appName: "postgres-app",
+				environmentId: "environment-1",
+				name: "Postgres",
+				serverId: "server-1",
+			} as never,
+			{
+				backupId: "backup-1",
+				backupType: "database",
+				database: "appdb",
+				databaseType: "postgres",
+				destinationId: "destination-1",
+				prefix: "prefix",
+				postgres: {
+					appName: "postgres-app",
+					databaseUser: "postgres",
+				},
+			} as never,
+		);
+
+		const payload = mocks.loggerInfo.mock.calls[0]?.[0] as {
+			backupCommand: string;
+			rcloneCommand: string;
+		};
+
+		expect(payload.backupCommand).not.toContain(
+			dangerousDestination.secretAccessKey,
+		);
+		expect(payload.rcloneCommand).not.toContain(dangerousDestination.accessKey);
+		expect(payload.rcloneCommand).not.toContain(
+			dangerousDestination.secretAccessKey,
+		);
+	});
+
+	it("redacts mongo database password from structured backup command logs", async () => {
+		const databasePassword = "mongo-secret-password";
+
+		await runMongoBackup(
+			{
+				appName: "mongo-app",
+				environmentId: "environment-1",
+				name: "Mongo",
+				serverId: "server-1",
+			} as never,
+			{
+				backupId: "backup-1",
+				backupType: "database",
+				database: "appdb",
+				databaseType: "mongo",
+				destinationId: "destination-1",
+				prefix: "prefix",
+				mongo: {
+					appName: "mongo-app",
+					databasePassword,
+					databaseUser: "root",
+				},
+			} as never,
+		);
+
+		const payload = mocks.loggerInfo.mock.calls[0]?.[0] as {
+			backupCommand: string;
+		};
+
+		expect(payload.backupCommand).toContain("mongodump");
+		expect(payload.backupCommand).not.toContain(databasePassword);
 	});
 });

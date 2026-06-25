@@ -1,8 +1,10 @@
+import { ExecError } from "@dokploy/server/utils/process/ExecError";
 import {
 	REDACTED_SECRET_VALUE,
 	redactDatabaseServiceSecrets,
 	redactDeployableServiceSecrets,
 	redactSecretFields,
+	redactSensitiveText,
 	secretUpdateValue,
 } from "@dokploy/server/utils/security/redaction";
 import { describe, expect, it } from "vitest";
@@ -62,5 +64,74 @@ describe("shared secret redaction helpers", () => {
 			databasePassword: REDACTED_SECRET_VALUE,
 			databaseRootPassword: REDACTED_SECRET_VALUE,
 		});
+	});
+
+	it("redacts secrets embedded in command and provider error text", () => {
+		const message = [
+			"Command failed: git clone https://x-access-token:ghp_abcdefghijklmnopqrstuvwxyz@github.com/org/repo.git",
+			"rclone rcat --s3-access-key-id AKIA123 --s3-secret-access-key rcloneSecretValue :s3:bucket/path",
+			"mongodump -d appdb -u root -p mongo-secret-value --archive",
+			"mongodump -d appdb -u root -p 'mongo'\\''quoted-secret' --archive",
+			"DATABASE_URL=postgres://dokploy:postgres-password@postgres:5432/dokploy",
+			"Authorization: Bearer bearer-token-123",
+		].join("\n");
+
+		const redacted = redactSensitiveText(message);
+
+		expect(redacted).toContain(REDACTED_SECRET_VALUE);
+		expect(redacted).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz");
+		expect(redacted).not.toContain("rcloneSecretValue");
+		expect(redacted).not.toContain("mongo-secret-value");
+		expect(redacted).not.toContain("quoted-secret");
+		expect(redacted).not.toContain("postgres-password");
+		expect(redacted).not.toContain("bearer-token-123");
+	});
+
+	it("redacts standalone mongo password arguments with adjacent quoted fragments", () => {
+		const messages = [
+			"mongodump -d appdb -u root -p mongo-secret-value --archive",
+			"mongodump -d appdb -u root -p 'mongo'''quoted-secret' --archive",
+			String.raw`mongodump -d appdb -u root -p 'mongo'\''raw-quoted-secret' --archive`,
+		];
+
+		for (const message of messages) {
+			const redacted = redactSensitiveText(message);
+
+			expect(redacted).not.toContain("mongo-secret-value");
+			expect(redacted).not.toContain("quoted-secret");
+			expect(redacted).not.toContain("raw-quoted-secret");
+		}
+	});
+
+	it("stores only redacted command output on ExecError", () => {
+		const error = new ExecError(
+			"Command failed: npm run build TOKEN=build-secret",
+			{
+				command:
+					"git clone https://oauth2:gitlab-token@example.com/group/repo.git && rclone rcat --s3-secret-access-key rcloneSecretValue :s3:bucket/path",
+				stdout: "NPM_TOKEN=npm-secret",
+				stderr: "postgres://dokploy:database-secret@postgres:5432/dokploy",
+				exitCode: 1,
+				originalError: Object.assign(
+					new Error("raw original error with original-secret"),
+					{
+						command: "TOKEN=original-secret",
+					},
+				),
+			},
+		);
+
+		const detailedMessage = error.getDetailedMessage();
+		const enumerableError = JSON.stringify({ ...error });
+
+		expect(error.message).not.toContain("build-secret");
+		expect(error.command).not.toContain("gitlab-token");
+		expect(error.command).not.toContain("rcloneSecretValue");
+		expect(error.stdout).not.toContain("npm-secret");
+		expect(error.stderr).not.toContain("database-secret");
+		expect(detailedMessage).not.toContain("gitlab-token");
+		expect(detailedMessage).not.toContain("database-secret");
+		expect(detailedMessage).toContain(REDACTED_SECRET_VALUE);
+		expect(enumerableError).not.toContain("original-secret");
 	});
 });

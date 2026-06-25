@@ -2,6 +2,9 @@ export const REDACTED_SECRET_VALUE = "__DOKPLOY_REDACTED_SECRET__";
 
 type SecretRecord = Record<string, unknown>;
 
+const SENSITIVE_KEY_PATTERN =
+	"(?:access[_-]?key|api[_-]?key|authorization|credential|private[_-]?key|refresh[_-]?token|secret|token|password|passwd|pwd)";
+
 export const isRedactedSecretValue = (value: unknown) =>
 	value === REDACTED_SECRET_VALUE;
 
@@ -62,6 +65,75 @@ export const redactDatabaseServiceSecrets = <
 		"databasePassword",
 		"databaseRootPassword",
 	]);
+
+export function redactSensitiveText(value: string): string;
+export function redactSensitiveText(value: null): null;
+export function redactSensitiveText(value: undefined): undefined;
+export function redactSensitiveText(value: string | null): string | null;
+export function redactSensitiveText(
+	value: string | undefined,
+): string | undefined;
+export function redactSensitiveText(
+	value: string | null | undefined,
+): string | null | undefined;
+export function redactSensitiveText(value: string | null | undefined) {
+	if (typeof value !== "string" || value === "") {
+		return value;
+	}
+
+	let redacted = value;
+
+	redacted = redacted.replace(
+		/(\b[a-z][a-z0-9+.-]*:\/\/)([^@\s/?#]+)@/gi,
+		`$1${REDACTED_SECRET_VALUE}@`,
+	);
+
+	redacted = redacted.replace(
+		new RegExp(
+			`([?&#][^=\\s]*${SENSITIVE_KEY_PATTERN}[^=\\s]*=)([^&#\\s]+)`,
+			"gi",
+		),
+		`$1${REDACTED_SECRET_VALUE}`,
+	);
+
+	redacted = redacted.replace(
+		new RegExp(
+			`(\\b[A-Z0-9_]*${SENSITIVE_KEY_PATTERN}[A-Z0-9_]*=)("[^"]*"|'[^']*'|[^\\s;&|]+)`,
+			"gi",
+		),
+		`$1${REDACTED_SECRET_VALUE}`,
+	);
+
+	redacted = redacted.replace(
+		new RegExp(
+			`(\\s--?[a-z0-9-]*${SENSITIVE_KEY_PATTERN}[a-z0-9-]*(?:=|\\s+))("[^"]*"|'[^']*'|[^\\s;&|]+)`,
+			"gi",
+		),
+		`$1${REDACTED_SECRET_VALUE}`,
+	);
+
+	redacted = redacted.replace(
+		/(\bmongo(?:dump|export|import|restore|sh)?\b[^\n;&|]*?\s-p\s+)[^\n;&|]+/gi,
+		`$1${REDACTED_SECRET_VALUE}`,
+	);
+
+	redacted = redacted.replace(
+		/(\b(?:postgres(?:ql)?|mysql|mariadb|mongodb|redis):\/\/[^:\s/@]+:)([^@\s/]+)(@)/gi,
+		`$1${REDACTED_SECRET_VALUE}$3`,
+	);
+
+	redacted = redacted.replace(
+		/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/-]+=*/gi,
+		`$1 ${REDACTED_SECRET_VALUE}`,
+	);
+
+	redacted = redacted.replace(
+		/\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g,
+		REDACTED_SECRET_VALUE,
+	);
+
+	return redacted;
+}
 
 export const secretUpdateValue = (value: unknown) => {
 	if (

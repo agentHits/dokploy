@@ -11,6 +11,7 @@ import {
 	normalizeRestoreServiceName,
 	quoteRestoreShellArg,
 } from "@dokploy/server/utils/restore/safe-input";
+import { redactSensitiveText } from "@dokploy/server/utils/security/redaction";
 import {
 	quoteShellArgs,
 	quoteShellArgument,
@@ -376,8 +377,8 @@ export const getBackupCommand = (
 	logger.info(
 		{
 			containerSearch,
-			backupCommand,
-			rcloneCommand,
+			backupCommand: redactSensitiveText(backupCommand),
+			rcloneCommand: redactSensitiveText(rcloneCommand),
 			logPath,
 		},
 		`Executing backup command: ${backup.databaseType} ${backup.backupType}`,
