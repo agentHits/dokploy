@@ -12,7 +12,6 @@ import {
 	execAsyncRemote,
 	findComposeById,
 	findDomainsByComposeId,
-	findEnvironmentById,
 	findProjectById,
 	findServerById,
 	getAccessibleServerIds,
@@ -169,8 +168,11 @@ export const composeRouter = createTRPCRouter({
 		.input(apiCreateCompose)
 		.mutation(async ({ ctx, input }) => {
 			try {
-				const environment = await findEnvironmentById(input.environmentId);
-				const project = await findProjectById(environment.projectId);
+				const environment = await assertTargetEnvironmentAccess(
+					ctx,
+					input.environmentId,
+				);
+				const project = environment.project;
 
 				await checkServiceAccess(ctx, project.projectId, "create");
 

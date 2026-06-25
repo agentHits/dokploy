@@ -6,9 +6,7 @@ import {
 	execAsync,
 	execAsyncRemote,
 	findBackupsByDbId,
-	findEnvironmentById,
 	findMariadbById,
-	findProjectById,
 	getAccessibleServerIds,
 	getContainerLogs,
 	getServiceContainerCommand,
@@ -61,8 +59,11 @@ export const mariadbRouter = createTRPCRouter({
 		.input(apiCreateMariaDB)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				const environment = await findEnvironmentById(input.environmentId);
-				const project = await findProjectById(environment.projectId);
+				const environment = await assertTargetEnvironmentAccess(
+					ctx,
+					input.environmentId,
+				);
+				const project = environment.project;
 
 				await checkServiceAccess(ctx, project.projectId, "create");
 
