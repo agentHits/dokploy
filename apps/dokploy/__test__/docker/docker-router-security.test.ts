@@ -1,7 +1,9 @@
+import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	audit: vi.fn(),
+	assertLocalDockerContainerAccess: vi.fn(),
 	checkPermission: vi.fn(),
 	containerKill: vi.fn(),
 	containerRemove: vi.fn(),
@@ -46,6 +48,10 @@ vi.mock("@/server/api/utils/audit", () => ({
 	audit: mocks.audit,
 }));
 
+vi.mock("@/server/api/utils/local-docker-access", () => ({
+	assertLocalDockerContainerAccess: mocks.assertLocalDockerContainerAccess,
+}));
+
 const { dockerRouter } = await import("../../server/api/routers/docker");
 
 const createCaller = () =>
@@ -71,6 +77,14 @@ describe("docker router assigned-server boundary", () => {
 		mocks.findServerById.mockResolvedValue({
 			serverId: "server-1",
 			organizationId: "org-1",
+		});
+		mocks.assertLocalDockerContainerAccess.mockResolvedValue({
+			Id: "container-1",
+			Config: {
+				Labels: {
+					"com.docker.swarm.service.name": "app-1",
+				},
+			},
 		});
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
 		mocks.getContainers.mockResolvedValue([{ Id: "container-1" }]);
@@ -124,7 +138,7 @@ describe("docker router assigned-server boundary", () => {
 		expect(mocks.getContainers).not.toHaveBeenCalled();
 	});
 
-	it("keeps local container mutations available without remote server checks", async () => {
+	it("binds local container mutations to an authorized service before side effects", async () => {
 		await expect(
 			createCaller().restartContainer({
 				containerId: "container-1",
@@ -132,10 +146,30 @@ describe("docker router assigned-server boundary", () => {
 		).resolves.toBeUndefined();
 
 		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
+		expect(mocks.assertLocalDockerContainerAccess).toHaveBeenCalledWith(
+			expect.anything(),
+			"container-1",
+			"execute",
+		);
 		expect(mocks.containerRestart).toHaveBeenCalledWith(
 			"container-1",
 			undefined,
 		);
+	});
+
+	it("denies unbound local container mutations before side effects", async () => {
+		mocks.assertLocalDockerContainerAccess.mockRejectedValue(
+			new TRPCError({ code: "UNAUTHORIZED" }),
+		);
+
+		await expect(
+			createCaller().restartContainer({
+				containerId: "container-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.containerRestart).not.toHaveBeenCalled();
+		expect(mocks.audit).not.toHaveBeenCalled();
 	});
 
 	it("requires docker.execute for container lifecycle actions", async () => {
@@ -173,6 +207,12 @@ describe("docker router assigned-server boundary", () => {
 		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
 			docker: ["inspect"],
 		});
+		expect(mocks.assertLocalDockerContainerAccess).toHaveBeenCalledWith(
+			expect.anything(),
+			"container-1",
+			"inspect",
+		);
+		expect(mocks.getConfig).not.toHaveBeenCalled();
 	});
 
 	it("requires docker.write for container file uploads", async () => {
@@ -187,6 +227,17 @@ describe("docker router assigned-server boundary", () => {
 		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
 			docker: ["write"],
 		});
-		expect(mocks.uploadFileToContainer).toHaveBeenCalled();
+		expect(mocks.assertLocalDockerContainerAccess).toHaveBeenCalledWith(
+			expect.anything(),
+			"container-1",
+			"write",
+		);
+		expect(mocks.uploadFileToContainer).toHaveBeenCalledWith(
+			"container-1",
+			expect.any(Buffer),
+			"config.txt",
+			"/tmp/config.txt",
+			null,
+		);
 	});
 });

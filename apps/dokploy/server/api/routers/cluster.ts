@@ -10,6 +10,7 @@ import { quoteShellArg } from "@dokploy/server/utils/filesystem/safe-path";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
+import { assertLocalHostAccess } from "@/server/api/utils/local-host-access";
 import { getLocalServerIp } from "@/server/wss/terminal";
 import { createTRPCRouter, withPermission } from "../trpc";
 
@@ -30,6 +31,9 @@ const normalizeDockerNodeIdentifier = (nodeId: string) => {
 
 const assertClusterServerAccess = async (
 	ctx: {
+		user: {
+			id: string;
+		};
 		session: {
 			userId: string;
 			activeOrganizationId: string;
@@ -38,6 +42,7 @@ const assertClusterServerAccess = async (
 	serverId?: string,
 ) => {
 	if (!serverId) {
+		await assertLocalHostAccess(ctx);
 		return;
 	}
 

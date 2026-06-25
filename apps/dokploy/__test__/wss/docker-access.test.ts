@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 
 const mocks = vi.hoisted(() => ({
+	assertLocalDockerContainerAccess: vi.fn(),
+	assertLocalDockerServiceAccess: vi.fn(),
 	checkPermission: vi.fn(),
 	findMemberByUserId: vi.fn(),
 	findServerById: vi.fn(),
@@ -25,6 +27,11 @@ vi.mock("@dokploy/server/services/permission", () => ({
 
 vi.mock("@dokploy/server/services/server", () => ({
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
+}));
+
+vi.mock("@/server/api/utils/local-docker-access", () => ({
+	assertLocalDockerContainerAccess: mocks.assertLocalDockerContainerAccess,
+	assertLocalDockerServiceAccess: mocks.assertLocalDockerServiceAccess,
 }));
 
 vi.mock("node-pty", () => ({
@@ -92,6 +99,9 @@ describe("Docker WebSocket permission gate", () => {
 		mocks.checkPermission.mockRejectedValue(new Error("Permission denied"));
 		mocks.findMemberByUserId.mockResolvedValue({ role: "admin" });
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
+		mocks.assertLocalDockerContainerAccess.mockResolvedValue({
+			Id: "container-1",
+		});
 	});
 
 	afterEach(async () => {
@@ -165,6 +175,46 @@ describe("Docker WebSocket permission gate", () => {
 			},
 			{ docker: ["execute"] },
 		);
+		expect(mocks.findServerById).not.toHaveBeenCalled();
+		expect(mocks.spawn).not.toHaveBeenCalled();
+	});
+
+	it("closes local logs sockets before Docker spawn when container binding fails", async () => {
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.assertLocalDockerContainerAccess.mockRejectedValue(
+			new Error("not bound"),
+		);
+		server = http.createServer();
+		setupDockerContainerLogsWebSocketServer(server);
+		const port = await listen(server);
+
+		await expect(
+			openAndWaitForClose(
+				port,
+				"/docker-container-logs?containerId=abc123def456",
+			),
+		).resolves.toEqual({ code: 1005, reason: "" });
+
+		expect(mocks.findServerById).not.toHaveBeenCalled();
+		expect(mocks.spawn).not.toHaveBeenCalled();
+	});
+
+	it("closes local terminal sockets before Docker spawn when container binding fails", async () => {
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.assertLocalDockerContainerAccess.mockRejectedValue(
+			new Error("not bound"),
+		);
+		server = http.createServer();
+		setupDockerContainerTerminalWebSocketServer(server);
+		const port = await listen(server);
+
+		await expect(
+			openAndWaitForClose(
+				port,
+				"/docker-container-terminal?containerId=abc123def456",
+			),
+		).resolves.toEqual({ code: 1005, reason: "" });
+
 		expect(mocks.findServerById).not.toHaveBeenCalled();
 		expect(mocks.spawn).not.toHaveBeenCalled();
 	});

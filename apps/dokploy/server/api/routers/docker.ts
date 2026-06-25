@@ -17,6 +17,10 @@ import { findMemberByUserId } from "@dokploy/server/services/permission";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
+import {
+	assertLocalDockerContainerAccess,
+	type LocalDockerPermission,
+} from "@/server/api/utils/local-docker-access";
 import { uploadFileToContainerSchema } from "@/utils/schema";
 import { createTRPCRouter, withPermission } from "../trpc";
 
@@ -55,6 +59,32 @@ const assertDockerServerAccess = async (
 	}
 };
 
+const resolveAuthorizedContainerId = async (
+	ctx: {
+		session: {
+			activeOrganizationId: string;
+		};
+		user: {
+			id: string;
+		};
+	},
+	containerId: string,
+	serverId: string | undefined,
+	permission: LocalDockerPermission,
+) => {
+	if (serverId) {
+		return containerId;
+	}
+
+	const config = await assertLocalDockerContainerAccess(
+		ctx,
+		containerId,
+		permission,
+	);
+
+	return config?.Id || containerId;
+};
+
 export const dockerRouter = createTRPCRouter({
 	getContainers: withPermission("docker", "read")
 		.input(
@@ -79,12 +109,18 @@ export const dockerRouter = createTRPCRouter({
 		)
 		.mutation(async ({ input, ctx }) => {
 			await assertDockerServerAccess(ctx, input.serverId);
-			await containerRestart(input.containerId, input.serverId);
+			const containerId = await resolveAuthorizedContainerId(
+				ctx,
+				input.containerId,
+				input.serverId,
+				"execute",
+			);
+			await containerRestart(containerId, input.serverId);
 			await audit(ctx, {
 				action: "start",
 				resourceType: "docker",
-				resourceId: input.containerId,
-				resourceName: input.containerId,
+				resourceId: containerId,
+				resourceName: containerId,
 			});
 		}),
 
@@ -100,12 +136,18 @@ export const dockerRouter = createTRPCRouter({
 		)
 		.mutation(async ({ input, ctx }) => {
 			await assertDockerServerAccess(ctx, input.serverId);
-			await containerStart(input.containerId, input.serverId);
+			const containerId = await resolveAuthorizedContainerId(
+				ctx,
+				input.containerId,
+				input.serverId,
+				"execute",
+			);
+			await containerStart(containerId, input.serverId);
 			await audit(ctx, {
 				action: "start",
 				resourceType: "docker",
-				resourceId: input.containerId,
-				resourceName: input.containerId,
+				resourceId: containerId,
+				resourceName: containerId,
 			});
 		}),
 
@@ -121,12 +163,18 @@ export const dockerRouter = createTRPCRouter({
 		)
 		.mutation(async ({ input, ctx }) => {
 			await assertDockerServerAccess(ctx, input.serverId);
-			await containerStop(input.containerId, input.serverId);
+			const containerId = await resolveAuthorizedContainerId(
+				ctx,
+				input.containerId,
+				input.serverId,
+				"execute",
+			);
+			await containerStop(containerId, input.serverId);
 			await audit(ctx, {
 				action: "stop",
 				resourceType: "docker",
-				resourceId: input.containerId,
-				resourceName: input.containerId,
+				resourceId: containerId,
+				resourceName: containerId,
 			});
 		}),
 
@@ -142,12 +190,18 @@ export const dockerRouter = createTRPCRouter({
 		)
 		.mutation(async ({ input, ctx }) => {
 			await assertDockerServerAccess(ctx, input.serverId);
-			await containerKill(input.containerId, input.serverId);
+			const containerId = await resolveAuthorizedContainerId(
+				ctx,
+				input.containerId,
+				input.serverId,
+				"execute",
+			);
+			await containerKill(containerId, input.serverId);
 			await audit(ctx, {
 				action: "stop",
 				resourceType: "docker",
-				resourceId: input.containerId,
-				resourceName: input.containerId,
+				resourceId: containerId,
+				resourceName: containerId,
 			});
 		}),
 
@@ -163,12 +217,18 @@ export const dockerRouter = createTRPCRouter({
 		)
 		.mutation(async ({ input, ctx }) => {
 			await assertDockerServerAccess(ctx, input.serverId);
-			await containerRemove(input.containerId, input.serverId);
+			const containerId = await resolveAuthorizedContainerId(
+				ctx,
+				input.containerId,
+				input.serverId,
+				"delete",
+			);
+			await containerRemove(containerId, input.serverId);
 			await audit(ctx, {
 				action: "delete",
 				resourceType: "docker",
-				resourceId: input.containerId,
-				resourceName: input.containerId,
+				resourceId: containerId,
+				resourceName: containerId,
 			});
 		}),
 
@@ -184,6 +244,13 @@ export const dockerRouter = createTRPCRouter({
 		)
 		.query(async ({ input, ctx }) => {
 			await assertDockerServerAccess(ctx, input.serverId);
+			if (!input.serverId) {
+				return await assertLocalDockerContainerAccess(
+					ctx,
+					input.containerId,
+					"inspect",
+				);
+			}
 			return await getConfig(input.containerId, input.serverId);
 		}),
 
@@ -249,6 +316,12 @@ export const dockerRouter = createTRPCRouter({
 		.input(uploadFileToContainerSchema)
 		.mutation(async ({ input, ctx }) => {
 			await assertDockerServerAccess(ctx, input.serverId);
+			const containerId = await resolveAuthorizedContainerId(
+				ctx,
+				input.containerId,
+				input.serverId,
+				"write",
+			);
 
 			const file = input.file;
 			if (!(file instanceof File)) {
@@ -263,7 +336,7 @@ export const dockerRouter = createTRPCRouter({
 			const fileBuffer = Buffer.from(arrayBuffer);
 
 			await uploadFileToContainer(
-				input.containerId,
+				containerId,
 				fileBuffer,
 				file.name,
 				input.destinationPath,

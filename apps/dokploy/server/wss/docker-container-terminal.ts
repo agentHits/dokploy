@@ -56,7 +56,12 @@ export const setupDockerContainerTerminalWebSocketServer = (
 		const shell = activeWay || "sh";
 
 		if (
-			!(await canAccessDockerTerminalWebSocket({ user, session, serverId }))
+			!(await canAccessDockerTerminalWebSocket({
+				user,
+				session,
+				serverId,
+				containerId,
+			}))
 		) {
 			ws.close();
 			return;

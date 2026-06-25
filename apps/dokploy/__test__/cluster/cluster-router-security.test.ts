@@ -8,6 +8,7 @@ const dockerClient = {
 };
 
 const mocks = vi.hoisted(() => ({
+	assertLocalHostAccess: vi.fn(),
 	audit: vi.fn(),
 	checkPermission: vi.fn(),
 	execAsync: vi.fn(),
@@ -32,6 +33,10 @@ vi.mock("@dokploy/server/services/permission", () => ({
 
 vi.mock("@/server/api/utils/audit", () => ({
 	audit: mocks.audit,
+}));
+
+vi.mock("@/server/api/utils/local-host-access", () => ({
+	assertLocalHostAccess: mocks.assertLocalHostAccess,
 }));
 
 vi.mock("@/server/wss/terminal", () => ({
@@ -59,6 +64,7 @@ describe("cluster router assigned-server boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.assertLocalHostAccess.mockResolvedValue(undefined);
 		mocks.findServerById.mockResolvedValue({
 			serverId: "server-1",
 			organizationId: "org-1",
@@ -101,6 +107,20 @@ describe("cluster router assigned-server boundary", () => {
 
 		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
 		expect(mocks.execAsync).not.toHaveBeenCalled();
+		expect(mocks.audit).not.toHaveBeenCalled();
+	});
+
+	it("denies local worker removal before Docker commands when local host access is denied", async () => {
+		mocks.assertLocalHostAccess.mockRejectedValue(new Error("denied"));
+
+		await expect(
+			createCaller().removeWorker({
+				nodeId: "node-1",
+			}),
+		).rejects.toThrow("denied");
+
+		expect(mocks.execAsync).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
 		expect(mocks.audit).not.toHaveBeenCalled();
 	});
 

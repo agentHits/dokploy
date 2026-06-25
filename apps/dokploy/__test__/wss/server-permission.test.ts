@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+	assertLocalHostAccess: vi.fn(),
 	checkPermission: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
 }));
@@ -13,6 +14,10 @@ vi.mock("@dokploy/server/services/server", () => ({
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
 }));
 
+vi.mock("@/server/api/utils/local-host-access", () => ({
+	assertLocalHostAccess: mocks.assertLocalHostAccess,
+}));
+
 const { canAccessMonitoringWebSocket, canAccessServerTerminalWebSocket } =
 	await import("../../server/wss/server-permission");
 
@@ -21,6 +26,7 @@ describe("canAccessServerTerminalWebSocket", () => {
 		vi.clearAllMocks();
 		mocks.checkPermission.mockReset();
 		mocks.getAccessibleServerIds.mockReset();
+		mocks.assertLocalHostAccess.mockResolvedValue(undefined);
 	});
 
 	it("rejects unauthenticated terminal websocket requests", async () => {
@@ -36,7 +42,7 @@ describe("canAccessServerTerminalWebSocket", () => {
 		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
 	});
 
-	it("allows local terminal access with server.execute permission", async () => {
+	it("allows local terminal access only after local host access passes", async () => {
 		mocks.checkPermission.mockResolvedValue(undefined);
 
 		await expect(
@@ -54,6 +60,25 @@ describe("canAccessServerTerminalWebSocket", () => {
 			},
 			{ server: ["execute"] },
 		);
+		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
+		expect(mocks.assertLocalHostAccess).toHaveBeenCalledWith({
+			user: { id: "user-1" },
+			session: { activeOrganizationId: "org-1" },
+		});
+	});
+
+	it("rejects local terminal access when local host access is denied", async () => {
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.assertLocalHostAccess.mockRejectedValue(new Error("denied"));
+
+		await expect(
+			canAccessServerTerminalWebSocket({
+				user: { id: "user-1" },
+				session: { activeOrganizationId: "org-1" },
+				serverId: "local",
+			}),
+		).resolves.toBe(false);
+
 		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
 	});
 

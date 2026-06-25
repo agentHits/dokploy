@@ -70,7 +70,15 @@ export const setupDockerContainerLogsWebSocketServer = (
 			return;
 		}
 
-		if (!(await canAccessDockerLogsWebSocket({ user, session, serverId }))) {
+		if (
+			!(await canAccessDockerLogsWebSocket({
+				user,
+				session,
+				serverId,
+				containerId,
+				runType,
+			}))
+		) {
 			ws.close();
 			return;
 		}

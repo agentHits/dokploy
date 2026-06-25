@@ -1,5 +1,6 @@
 import { checkPermission } from "@dokploy/server/services/permission";
 import { getAccessibleServerIds } from "@dokploy/server/services/server";
+import { assertLocalHostAccess } from "@/server/api/utils/local-host-access";
 
 type WebSocketAuthContext = {
 	user: { id: string } | null;
@@ -32,6 +33,10 @@ export const canAccessServerTerminalWebSocket = async ({
 		});
 
 		if (serverId === "local") {
+			await assertLocalHostAccess({
+				user: { id: user.id },
+				session: { activeOrganizationId: session.activeOrganizationId },
+			});
 			return true;
 		}
 

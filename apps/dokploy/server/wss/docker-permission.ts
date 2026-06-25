@@ -3,17 +3,25 @@ import {
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
 import { getAccessibleServerIds } from "@dokploy/server/services/server";
+import {
+	assertLocalDockerContainerAccess,
+	assertLocalDockerServiceAccess,
+} from "@/server/api/utils/local-docker-access";
 
 type DockerWebSocketAuthContext = {
 	user: { id: string } | null;
 	session: { activeOrganizationId: string } | null;
 	serverId?: string | null;
+	containerId?: string | null;
+	runType?: string | null;
 };
 
 const canAccessDockerByPermission = async ({
 	user,
 	session,
 	serverId,
+	containerId,
+	runType,
 	permission,
 }: DockerWebSocketAuthContext & {
 	permission: "read" | "execute";
@@ -44,6 +52,21 @@ const canAccessDockerByPermission = async ({
 			});
 			return accessibleIds.has(serverId);
 		}
+
+		if (!containerId) {
+			return false;
+		}
+
+		const ctx = {
+			user: { id: user.id },
+			session: { activeOrganizationId: session.activeOrganizationId },
+		};
+		if (runType === "swarm" && permission === "read") {
+			await assertLocalDockerServiceAccess(ctx, containerId, permission);
+			return true;
+		}
+
+		await assertLocalDockerContainerAccess(ctx, containerId, permission);
 		return true;
 	} catch {
 		return false;

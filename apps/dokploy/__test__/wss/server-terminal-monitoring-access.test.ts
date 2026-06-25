@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 
 const mocks = vi.hoisted(() => ({
+	assertLocalHostAccess: vi.fn(),
 	checkPermission: vi.fn(),
 	execAsync: vi.fn(),
 	findServerById: vi.fn(),
@@ -35,6 +36,10 @@ vi.mock("@dokploy/server/services/permission", () => ({
 
 vi.mock("@dokploy/server/services/server", () => ({
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
+}));
+
+vi.mock("@/server/api/utils/local-host-access", () => ({
+	assertLocalHostAccess: mocks.assertLocalHostAccess,
 }));
 
 vi.mock("ssh2", () => ({
@@ -99,6 +104,7 @@ describe("terminal WebSocket server permission gate", () => {
 			user: { id: "user-1" },
 			session: { activeOrganizationId: "org-1" },
 		});
+		mocks.assertLocalHostAccess.mockResolvedValue(undefined);
 	});
 
 	afterEach(async () => {
@@ -129,6 +135,25 @@ describe("terminal WebSocket server permission gate", () => {
 			},
 			{ server: ["execute"] },
 		);
+		expect(mocks.setupLocalServerSSHKey).not.toHaveBeenCalled();
+		expect(mocks.findServerById).not.toHaveBeenCalled();
+	});
+
+	it("closes local terminal sockets before SSH key setup when local host access is denied", async () => {
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.assertLocalHostAccess.mockRejectedValue(new Error("denied"));
+
+		server = http.createServer();
+		setupTerminalWebSocketServer(server);
+		const port = await listen(server);
+
+		await expect(
+			openAndWaitForClose(
+				port,
+				"/terminal?serverId=local&port=22&username=root",
+			),
+		).resolves.toEqual({ code: 1005, reason: "" });
+
 		expect(mocks.setupLocalServerSSHKey).not.toHaveBeenCalled();
 		expect(mocks.findServerById).not.toHaveBeenCalled();
 	});
