@@ -39,6 +39,7 @@ describe("shared secret redaction helpers", () => {
 			env: "TOKEN=secret",
 			refreshToken: "refresh-token",
 			buildSecrets: "NPM_TOKEN=secret",
+			password: "docker-password",
 			name: "app-one",
 		});
 
@@ -46,6 +47,7 @@ describe("shared secret redaction helpers", () => {
 			env: REDACTED_SECRET_VALUE,
 			refreshToken: REDACTED_SECRET_VALUE,
 			buildSecrets: REDACTED_SECRET_VALUE,
+			password: REDACTED_SECRET_VALUE,
 			name: "app-one",
 		});
 	});

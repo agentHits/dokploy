@@ -52,6 +52,7 @@ export const redactDeployableServiceSecrets = <
 		"buildSecrets",
 		"previewBuildArgs",
 		"previewBuildSecrets",
+		"password",
 		"refreshToken",
 	]);
 
