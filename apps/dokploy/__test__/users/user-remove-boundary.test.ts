@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
 	checkPermission: vi.fn(),
 	createApiKey: vi.fn(),
 	createOrganizationUserWithCredentials: vi.fn(),
+	apiKeyFindFirst: vi.fn(),
 	deleteApiKeyWhere: vi.fn(),
 	findNotificationById: vi.fn(),
 	findOrganizationById: vi.fn(),
@@ -52,13 +53,7 @@ vi.mock("@dokploy/server/db", () => ({
 				findFirst: mocks.invitationFindFirst,
 			},
 			apikey: {
-				findFirst: vi.fn(() =>
-					Promise.resolve({
-						id: "api-key-1",
-						name: "CI key",
-						referenceId: "actor-1",
-					}),
-				),
+				findFirst: mocks.apiKeyFindFirst,
 			},
 		},
 		delete: vi.fn(() => ({
@@ -144,6 +139,12 @@ describe("user.remove membership boundary", () => {
 		mocks.renderInvitationEmail.mockResolvedValue("<p>invite</p>");
 		mocks.sendEmailNotification.mockResolvedValue(undefined);
 		mocks.createApiKey.mockResolvedValue({ id: "api-key-1" });
+		mocks.apiKeyFindFirst.mockResolvedValue({
+			id: "api-key-1",
+			name: "CI key",
+			referenceId: "actor-1",
+			metadata: JSON.stringify({ organizationId: "org-1" }),
+		});
 		mocks.deleteApiKeyWhere.mockResolvedValue(undefined);
 	});
 
@@ -304,6 +305,62 @@ describe("user.remove membership boundary", () => {
 			api: ["read"],
 		});
 		expect(mocks.deleteApiKeyWhere).toHaveBeenCalled();
+	});
+
+	it("only returns API keys for the active organization", async () => {
+		mocks.memberFindFirst.mockResolvedValue({
+			id: "member-active",
+			userId: "actor-1",
+			organizationId: "org-1",
+			role: "owner",
+			user: {
+				id: "actor-1",
+				apiKeys: [
+					{
+						id: "api-key-org-1",
+						name: "Org 1 key",
+						metadata: JSON.stringify({ organizationId: "org-1" }),
+					},
+					{
+						id: "api-key-org-2",
+						name: "Org 2 key",
+						metadata: JSON.stringify({ organizationId: "org-2" }),
+					},
+				],
+			},
+		});
+
+		await expect(createCaller().get()).resolves.toMatchObject({
+			user: {
+				apiKeys: [
+					expect.objectContaining({
+						id: "api-key-org-1",
+					}),
+				],
+			},
+		});
+
+		const result = await createCaller().get();
+		expect(result?.user.apiKeys).toHaveLength(1);
+		expect(result?.user.apiKeys[0]?.id).toBe("api-key-org-1");
+	});
+
+	it("rejects deleting a user's API key from another organization", async () => {
+		mocks.apiKeyFindFirst.mockResolvedValue({
+			id: "api-key-org-2",
+			name: "Org 2 key",
+			referenceId: "actor-1",
+			metadata: JSON.stringify({ organizationId: "org-2" }),
+		});
+
+		await expect(
+			createCaller().deleteApiKey({ apiKeyId: "api-key-org-2" }),
+		).rejects.toMatchObject({
+			code: "UNAUTHORIZED",
+		});
+
+		expect(mocks.deleteApiKeyWhere).not.toHaveBeenCalled();
+		expect(mocks.audit).not.toHaveBeenCalled();
 	});
 
 	it("rejects self-host credential creation for static admin role", async () => {

@@ -68,6 +68,23 @@ const apiCreateApiKey = z.object({
 	refillInterval: z.number().optional(),
 });
 
+const getApiKeyOrganizationId = (apiKey: { metadata?: string | null }) => {
+	if (!apiKey.metadata) {
+		return null;
+	}
+
+	try {
+		const metadata = JSON.parse(apiKey.metadata) as {
+			organizationId?: unknown;
+		};
+		return typeof metadata.organizationId === "string"
+			? metadata.organizationId
+			: null;
+	} catch {
+		return null;
+	}
+};
+
 const getContainerMetricsTarget = async (
 	input: { serverId?: string },
 	ctx: { session: Parameters<typeof getAccessibleServerIds>[0] },
@@ -258,7 +275,21 @@ export const userRouter = createTRPCRouter({
 			},
 		});
 
-		return memberResult;
+		if (!memberResult) {
+			return memberResult;
+		}
+
+		return {
+			...memberResult,
+			user: {
+				...memberResult.user,
+				apiKeys: memberResult.user.apiKeys.filter(
+					(apiKey) =>
+						getApiKeyOrganizationId(apiKey) ===
+						ctx.session.activeOrganizationId,
+				),
+			},
+		};
 	}),
 	getPermissions: protectedProcedure.query(async ({ ctx }) => {
 		return resolvePermissions(ctx);
@@ -290,7 +321,6 @@ export const userRouter = createTRPCRouter({
 								deployments: true,
 							},
 						},
-						apiKeys: true,
 					},
 				},
 			},
@@ -647,6 +677,16 @@ export const userRouter = createTRPCRouter({
 				}
 
 				if (apiKeyToDelete.referenceId !== ctx.user.id) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You are not authorized to delete this API key",
+					});
+				}
+
+				if (
+					getApiKeyOrganizationId(apiKeyToDelete) !==
+					ctx.session.activeOrganizationId
+				) {
 					throw new TRPCError({
 						code: "UNAUTHORIZED",
 						message: "You are not authorized to delete this API key",
