@@ -198,6 +198,7 @@ vi.mock("@/server/utils/deploy", () => ({
 const { applicationRouter } = await import(
 	"../../server/api/routers/application"
 );
+const { domainRouter } = await import("../../server/api/routers/domain");
 const { environmentRouter } = await import(
 	"../../server/api/routers/environment"
 );
@@ -419,6 +420,78 @@ describe("project/environment placement ownership boundary", () => {
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
 		expect(dbMocks.update).not.toHaveBeenCalled();
+	});
+
+	it("denies application domain creation when domainType is omitted before persistence", async () => {
+		permissionMocks.checkServicePermissionAndAccess.mockRejectedValueOnce(
+			new Error("service access denied"),
+		);
+
+		await expect(
+			domainRouter.createCaller(createContext()).create({
+				applicationId: "app-1",
+				host: "app.example.com",
+				https: false,
+				path: "/",
+				port: 3000,
+			}),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(
+			permissionMocks.checkServicePermissionAndAccess,
+		).toHaveBeenCalledWith(expect.anything(), "app-1", { domain: ["create"] });
+		expect(serverMocks.createDomain).not.toHaveBeenCalled();
+	});
+
+	it("denies compose domain creation when domainType is omitted before persistence", async () => {
+		permissionMocks.checkServicePermissionAndAccess.mockRejectedValueOnce(
+			new Error("service access denied"),
+		);
+
+		await expect(
+			domainRouter.createCaller(createContext()).create({
+				composeId: "compose-1",
+				host: "compose.example.com",
+				https: false,
+				path: "/",
+				port: 3000,
+				serviceName: "web",
+			}),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(
+			permissionMocks.checkServicePermissionAndAccess,
+		).toHaveBeenCalledWith(expect.anything(), "compose-1", {
+			domain: ["create"],
+		});
+		expect(serverMocks.createDomain).not.toHaveBeenCalled();
+	});
+
+	it("keeps application domain creation available when domainType is omitted after access check", async () => {
+		serverMocks.createDomain.mockResolvedValueOnce({
+			domainId: "domain-1",
+			host: "app.example.com",
+		});
+
+		await expect(
+			domainRouter.createCaller(createContext()).create({
+				applicationId: "app-1",
+				host: "app.example.com",
+				https: false,
+				path: "/",
+				port: 3000,
+			}),
+		).resolves.toMatchObject({ domainId: "domain-1" });
+
+		expect(
+			permissionMocks.checkServicePermissionAndAccess,
+		).toHaveBeenCalledWith(expect.anything(), "app-1", { domain: ["create"] });
+		expect(serverMocks.createDomain).toHaveBeenCalledWith(
+			expect.objectContaining({
+				applicationId: "app-1",
+				host: "app.example.com",
+			}),
+		);
 	});
 
 	it("denies project duplicate selected services outside the source environment before clone persistence", async () => {

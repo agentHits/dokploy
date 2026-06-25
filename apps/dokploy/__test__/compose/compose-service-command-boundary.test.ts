@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const updateChain = () => ({
@@ -37,6 +41,9 @@ vi.mock("@dokploy/server/utils/process/execAsync", () => ({
 	execAsyncRemote: mocks.execAsyncRemote,
 }));
 
+const { writeDomainsToCompose } = await import(
+	"@dokploy/server/utils/docker/domain"
+);
 const { removeCompose, startCompose, stopCompose } = await import(
 	"@dokploy/server/services/compose"
 );
@@ -114,5 +121,40 @@ describe("compose service command boundary", () => {
 		expect(command).toContain("docker network disconnect compose\\;id");
 		expect(command).toContain("docker compose -p compose\\;id down --volumes");
 		expect(command).toContain("rm -rf -- /srv/dokploy/compose/compose\\;id");
+	});
+
+	it("quotes compose domain error messages before returning shell commands", async () => {
+		mocks.execAsyncRemote.mockResolvedValueOnce({
+			stdout: "services: {}\n",
+			stderr: "",
+		});
+		const tempDir = mkdtempSync(join(tmpdir(), "dokploy-domain-error-"));
+		const hostMarker = join(tempDir, "host-pwn");
+		const serviceMarker = join(tempDir, "service-pwn");
+
+		const command = await writeDomainsToCompose(
+			composeFixture as never,
+			[
+				{
+					host: `app"; touch ${hostMarker}; echo "'`,
+					serviceName: `web"; touch ${serviceMarker}; echo "'`,
+				},
+			] as never,
+		);
+
+		try {
+			execFileSync("sh", ["-c", command], { stdio: "ignore" });
+		} catch {
+			// The generated command intentionally exits 1 after printing the error.
+		}
+
+		try {
+			expect(command).toContain("Has occurred an error:");
+			expect(command).toContain("touch");
+			expect(existsSync(hostMarker)).toBe(false);
+			expect(existsSync(serviceMarker)).toBe(false);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
 	});
 });

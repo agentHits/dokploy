@@ -129,10 +129,10 @@ exit 1;
 		const encodedContent = encodeBase64(composeString);
 		return `printf %s ${quoteShellArg(encodedContent)} | base64 -d > ${quoteShellArg(path)};`;
 	} catch (error) {
-		// @ts-expect-error
-		return `echo "❌ Has occurred an error: ${error?.message || error}";
+		const message = error instanceof Error ? error.message : String(error);
+		return `echo ${quoteShellArg(`❌ Has occurred an error: ${message}`)};
 exit 1;
-		`;
+			`;
 	}
 };
 export const addDomainToCompose = async (
