@@ -40,11 +40,19 @@ describe("high-severity schema security boundaries", () => {
 		const cases = [
 			{
 				schema: apiUpdateApplication,
-				payload: { applicationId: "app-1", environmentId: "env-2" },
+				payload: {
+					applicationId: "app-1",
+					environmentId: "env-2",
+					refreshToken: "caller-chosen-token",
+				},
 			},
 			{
 				schema: apiUpdateCompose,
-				payload: { composeId: "compose-1", environmentId: "env-2" },
+				payload: {
+					composeId: "compose-1",
+					environmentId: "env-2",
+					refreshToken: "caller-chosen-token",
+				},
 			},
 			{
 				schema: apiUpdatePostgres,
@@ -77,6 +85,7 @@ describe("high-severity schema security boundaries", () => {
 			expect(parsed.success).toBe(true);
 			if (parsed.success) {
 				expect(parsed.data).not.toHaveProperty("environmentId");
+				expect(parsed.data).not.toHaveProperty("refreshToken");
 			}
 		}
 	});

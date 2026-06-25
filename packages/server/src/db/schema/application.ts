@@ -593,4 +593,4 @@ export const apiUpdateApplication = createSchema
 	.extend({
 		applicationId: z.string().min(1),
 	})
-	.omit({ serverId: true, environmentId: true });
+	.omit({ serverId: true, environmentId: true, refreshToken: true });
