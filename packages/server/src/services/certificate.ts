@@ -17,7 +17,7 @@ import { execAsyncRemote } from "../utils/process/execAsync";
 
 export type Certificate = typeof certificates.$inferSelect;
 
-const certificatePathRegex = /^[a-zA-Z0-9._-]+$/;
+const certificatePathRegex = /^(?!\.{1,2}$)[a-zA-Z0-9._-]+$/;
 
 const normalizeCertificatePath = (certificatePath: string) => {
 	const normalizedCertificatePath = certificatePath.trim();
@@ -51,12 +51,18 @@ export const createCertificate = async (
 	certificateData: z.infer<typeof apiCreateCertificate>,
 	organizationId: string,
 ) => {
+	const normalizedCertificateData = {
+		...certificateData,
+		...(certificateData.certificatePath && {
+			certificatePath: normalizeCertificatePath(
+				certificateData.certificatePath,
+			),
+		}),
+		organizationId,
+	};
 	const certificate = await db
 		.insert(certificates)
-		.values({
-			...certificateData,
-			organizationId: organizationId,
-		})
+		.values(normalizedCertificateData)
 		.returning();
 
 	if (!certificate || certificate[0] === undefined) {

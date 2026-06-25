@@ -24,9 +24,9 @@ import {
 	normalizeBindMountHostPath,
 } from "@dokploy/server/utils/filesystem/bind-mount-path";
 import {
+	assertNoSymlinkEscapeInsideDirectory,
 	normalizeRelativeFilePath,
 	quoteShellArg,
-	resolveFilePathInsideDirectory,
 } from "@dokploy/server/utils/filesystem/safe-path";
 import { execAsyncRemote } from "@dokploy/server/utils/process/execAsync";
 import { TRPCError } from "@trpc/server";
@@ -62,6 +62,23 @@ const normalizeMountInput = <T extends Partial<Mount>>(input: T) => {
 	}
 
 	return input;
+};
+
+const stripMountUpdateOwnershipFields = (mountData: Partial<Mount>) => {
+	const safeMountData = { ...mountData };
+
+	delete safeMountData.applicationId;
+	delete safeMountData.composeId;
+	delete safeMountData.libsqlId;
+	delete safeMountData.mariadbId;
+	delete safeMountData.mongoId;
+	delete safeMountData.mountId;
+	delete safeMountData.mysqlId;
+	delete safeMountData.postgresId;
+	delete safeMountData.redisId;
+	delete safeMountData.serviceType;
+
+	return safeMountData;
 };
 
 const findBindMountServiceContext = async (
@@ -234,7 +251,9 @@ const normalizeUpdateMountInput = async (
 	mountData: Partial<Mount>,
 ) => {
 	const existingMount = await findMountById(mountId);
-	const normalizedMountData = normalizeMountInput(mountData);
+	const normalizedMountData = normalizeMountInput(
+		stripMountUpdateOwnershipFields(mountData),
+	);
 	const nextType = normalizedMountData.type ?? existingMount.type;
 
 	if (nextType !== "bind") {
@@ -568,7 +587,10 @@ export const deleteFileMount = async (mountId: string) => {
 	if (!mount.filePath) return;
 	const basePath = await getBaseFilesPath(mountId);
 
-	const { fullPath } = resolveFilePathInsideDirectory(basePath, mount.filePath);
+	const { fullPath } = assertNoSymlinkEscapeInsideDirectory(
+		basePath,
+		mount.filePath,
+	);
 	try {
 		const serverId = await getServerId(mount);
 		if (serverId) {

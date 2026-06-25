@@ -18,6 +18,8 @@ import {
 	normalizeBindMountHostPath,
 } from "../filesystem/bind-mount-path";
 import {
+	assertNoSymlinkEscapeInsideDirectory,
+	getNoSymlinkFilePathGuardCommand,
 	quoteShellArg,
 	resolveFilePathInsideDirectory,
 } from "../filesystem/safe-path";
@@ -692,7 +694,7 @@ export const generateFileMounts = (
 		.map((mount) => {
 			const absoluteBasePath = path.resolve(APPLICATIONS_PATH);
 			const directory = path.join(absoluteBasePath, appName, "files");
-			const { fullPath: sourcePath } = resolveFilePathInsideDirectory(
+			const { fullPath: sourcePath } = assertNoSymlinkEscapeInsideDirectory(
 				directory,
 				mount.filePath || "",
 			);
@@ -710,7 +712,7 @@ export const createFile = async (
 	content: string,
 ) => {
 	try {
-		const { fullPath, isDirectory } = resolveFilePathInsideDirectory(
+		const { fullPath, isDirectory } = assertNoSymlinkEscapeInsideDirectory(
 			outputPath,
 			filePath,
 		);
@@ -721,7 +723,19 @@ export const createFile = async (
 
 		const directory = path.dirname(fullPath);
 		fs.mkdirSync(directory, { recursive: true });
-		fs.writeFileSync(fullPath, content || "");
+		const fd = fs.openSync(
+			fullPath,
+			fs.constants.O_WRONLY |
+				fs.constants.O_CREAT |
+				fs.constants.O_TRUNC |
+				(fs.constants.O_NOFOLLOW ?? 0),
+			0o666,
+		);
+		try {
+			fs.writeFileSync(fd, content || "");
+		} finally {
+			fs.closeSync(fd);
+		}
 	} catch (error) {
 		throw error;
 	}
@@ -739,16 +753,22 @@ export const getCreateFileCommand = (
 		filePath,
 	);
 	const quotedFullPath = quoteShellArg(fullPath);
+	const symlinkGuard = getNoSymlinkFilePathGuardCommand(outputPath, fullPath);
 	if (isDirectory) {
-		return `mkdir -p ${quotedFullPath};`;
+		return `
+		${symlinkGuard}
+		mkdir -p ${quotedFullPath};
+		`;
 	}
 
-	const directory = path.dirname(fullPath);
 	const encodedContent = encodeBase64(content);
-	const quotedDirectory = quoteShellArg(directory);
 	return `
-		mkdir -p ${quotedDirectory};
-		echo "${encodedContent}" | base64 -d > ${quotedFullPath};
+		${symlinkGuard}
+		dir="$(dirname "$file")";
+		mkdir -p "$dir";
+		tmp="$(mktemp "$dir/.dokploy-write.XXXXXX")";
+		echo "${encodedContent}" | base64 -d > "$tmp";
+		mv -f "$tmp" "$file";
 	`;
 };
 

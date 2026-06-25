@@ -1,4 +1,11 @@
+import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const execFileAsync = promisify(execFile);
 
 const mocks = vi.hoisted(() => ({
 	execAsync: vi.fn(),
@@ -6,14 +13,11 @@ const mocks = vi.hoisted(() => ({
 	findApplicationById: vi.fn(),
 	findComposeById: vi.fn(),
 	findManyPatches: vi.fn(),
+	paths: vi.fn(),
 }));
 
 vi.mock("@dokploy/server/constants", () => ({
-	paths: () => ({
-		APPLICATIONS_PATH: "/srv/dokploy/applications",
-		COMPOSE_PATH: "/srv/dokploy/compose",
-		PATCH_REPOS_PATH: "/srv/dokploy/patch-repos",
-	}),
+	paths: mocks.paths,
 }));
 
 vi.mock("@dokploy/server/db", () => ({
@@ -51,6 +55,11 @@ const { readPatchRepoFile } = await import(
 describe("generateApplyPatchesCommand path safety", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mocks.paths.mockReturnValue({
+			APPLICATIONS_PATH: "/srv/dokploy/applications",
+			COMPOSE_PATH: "/srv/dokploy/compose",
+			PATCH_REPOS_PATH: "/srv/dokploy/patch-repos",
+		});
 		mocks.findApplicationById.mockResolvedValue({
 			appName: "app",
 			buildServerId: null,
@@ -121,6 +130,124 @@ describe("generateApplyPatchesCommand path safety", () => {
 		expect(command).not.toContain("$(id)");
 		expect(command).not.toContain("../");
 	});
+
+	it("blocks patch writes through repository symlink parents", async () => {
+		const rootPath = await fs.mkdtemp(
+			path.join(os.tmpdir(), "dokploy-patch-path-"),
+		);
+
+		try {
+			mocks.paths.mockReturnValue({
+				APPLICATIONS_PATH: path.join(rootPath, "applications"),
+				COMPOSE_PATH: path.join(rootPath, "compose"),
+				PATCH_REPOS_PATH: path.join(rootPath, "patch-repos"),
+			});
+			const codePath = path.join(rootPath, "applications", "app", "code");
+			const outsidePath = path.join(rootPath, "outside");
+			await fs.mkdir(codePath, { recursive: true });
+			await fs.mkdir(outsidePath);
+			await fs.symlink(outsidePath, path.join(codePath, "escape"));
+			mocks.findApplicationById.mockResolvedValue({
+				appName: "app",
+				buildServerId: null,
+				serverId: null,
+			});
+			mocks.findManyPatches.mockResolvedValue([
+				{
+					enabled: true,
+					filePath: "escape/pwned.txt",
+					type: "update",
+					content: "SECRET=value",
+				},
+			]);
+
+			const command = await generateApplyPatchesCommand({
+				id: "app-1",
+				type: "application",
+				serverId: null,
+			});
+
+			await expect(execFileAsync("sh", ["-c", command])).rejects.toThrow();
+			await expect(
+				fs.readFile(path.join(outsidePath, "pwned.txt"), "utf8"),
+			).rejects.toThrow();
+		} finally {
+			await fs.rm(rootPath, { force: true, recursive: true });
+		}
+	});
+
+	it("blocks patch deletes through repository symlink parents", async () => {
+		const rootPath = await fs.mkdtemp(
+			path.join(os.tmpdir(), "dokploy-patch-delete-"),
+		);
+
+		try {
+			mocks.paths.mockReturnValue({
+				APPLICATIONS_PATH: path.join(rootPath, "applications"),
+				COMPOSE_PATH: path.join(rootPath, "compose"),
+				PATCH_REPOS_PATH: path.join(rootPath, "patch-repos"),
+			});
+			const codePath = path.join(rootPath, "applications", "app", "code");
+			const outsidePath = path.join(rootPath, "outside");
+			const outsideFile = path.join(outsidePath, "victim.txt");
+			await fs.mkdir(codePath, { recursive: true });
+			await fs.mkdir(outsidePath);
+			await fs.writeFile(outsideFile, "do-not-delete");
+			await fs.symlink(outsidePath, path.join(codePath, "escape"));
+			mocks.findApplicationById.mockResolvedValue({
+				appName: "app",
+				buildServerId: null,
+				serverId: null,
+			});
+			mocks.findManyPatches.mockResolvedValue([
+				{
+					enabled: true,
+					filePath: "escape/victim.txt",
+					type: "delete",
+					content: "",
+				},
+			]);
+
+			const command = await generateApplyPatchesCommand({
+				id: "app-1",
+				type: "application",
+				serverId: null,
+			});
+
+			await expect(execFileAsync("sh", ["-c", command])).rejects.toThrow();
+			await expect(fs.readFile(outsideFile, "utf8")).resolves.toBe(
+				"do-not-delete",
+			);
+		} finally {
+			await fs.rm(rootPath, { force: true, recursive: true });
+		}
+	});
+
+	it("adds the same symlink guard to remote patch commands", async () => {
+		mocks.findApplicationById.mockResolvedValue({
+			appName: "app",
+			buildServerId: "server-1",
+			serverId: "server-1",
+		});
+		mocks.findManyPatches.mockResolvedValue([
+			{
+				enabled: true,
+				filePath: "src/index.ts",
+				type: "delete",
+				content: "",
+			},
+		]);
+
+		const command = await generateApplyPatchesCommand({
+			id: "app-1",
+			type: "application",
+			serverId: "server-1",
+		});
+
+		expect(command).toContain('real_parent="$(cd "$parent" && pwd -P)"');
+		expect(command).toContain('if [ -L "$file" ]; then');
+		expect(command).toContain("rm -f --");
+	});
 });
 
 describe("patch service ownership boundary", () => {
@@ -143,6 +270,11 @@ describe("patch service ownership boundary", () => {
 describe("readPatchRepoFile path safety", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mocks.paths.mockReturnValue({
+			APPLICATIONS_PATH: "/srv/dokploy/applications",
+			COMPOSE_PATH: "/srv/dokploy/compose",
+			PATCH_REPOS_PATH: "/srv/dokploy/patch-repos",
+		});
 		mocks.findApplicationById.mockResolvedValue({
 			appName: "app",
 			buildServerId: null,

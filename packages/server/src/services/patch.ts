@@ -3,6 +3,7 @@ import { paths } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
 import { type apiCreatePatch, patch } from "@dokploy/server/db/schema";
 import {
+	getNoSymlinkFilePathGuardCommand,
 	normalizeRelativeFilePath,
 	quoteShellArg,
 	resolveFilePathInsideDirectory,
@@ -193,15 +194,27 @@ export const generateApplyPatchesCommand = async ({
 		const quotedFilePath = quoteShellArg(filePath);
 
 		if (p.type === "delete") {
+			const symlinkGuard = getNoSymlinkFilePathGuardCommand(
+				codePath,
+				filePath,
+				{
+					createParent: false,
+				},
+			);
 			command += `
+			${symlinkGuard}
 			rm -f -- ${quotedFilePath};
 			`;
 		} else {
+			const symlinkGuard = getNoSymlinkFilePathGuardCommand(codePath, filePath);
 			command += `
+${symlinkGuard}
 file=${quotedFilePath}
 dir="$(dirname "$file")"
 mkdir -p "$dir"
-echo "${encodeBase64(p.content)}" | base64 -d > "$file"
+tmp="$(mktemp "$dir/.dokploy-patch.XXXXXX")"
+echo "${encodeBase64(p.content)}" | base64 -d > "$tmp"
+mv -f "$tmp" "$file"
 `;
 		}
 	}

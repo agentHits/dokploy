@@ -168,12 +168,14 @@ describe("certificate router assigned-server boundary", () => {
 	});
 
 	it("rejects unsafe certificate paths before file writes", async () => {
-		await expect(
-			createCaller().create({
-				...certificateInput,
-				certificatePath: "cert;id",
-			}),
-		).rejects.toThrow();
+		for (const certificatePath of ["cert;id", ".", ".."]) {
+			await expect(
+				createCaller().create({
+					...certificateInput,
+					certificatePath,
+				}),
+			).rejects.toThrow();
+		}
 
 		expect(mocks.createCertificate).not.toHaveBeenCalled();
 	});

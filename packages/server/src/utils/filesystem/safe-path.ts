@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { quote } from "shell-quote";
 
@@ -8,6 +9,52 @@ const isWindowsAbsolutePath = (filePath: string) =>
 
 const hasReservedGitDirectorySegment = (filePath: string) =>
 	filePath.split("/").includes(".git");
+
+const isPathInsideDirectory = (basePath: string, candidatePath: string) => {
+	const relativePath = path.relative(basePath, candidatePath);
+	return (
+		relativePath !== "" &&
+		!relativePath.startsWith("..") &&
+		!path.isAbsolute(relativePath)
+	);
+};
+
+const isPathInsideOrEqualDirectory = (
+	basePath: string,
+	candidatePath: string,
+) =>
+	candidatePath === basePath || isPathInsideDirectory(basePath, candidatePath);
+
+const pathExists = (candidatePath: string) => {
+	try {
+		fs.lstatSync(candidatePath);
+		return true;
+	} catch {
+		return false;
+	}
+};
+
+const collectExistingPathComponentsInsideDirectory = (
+	basePath: string,
+	candidatePath: string,
+) => {
+	const components: string[] = [];
+	let currentPath = candidatePath;
+
+	while (isPathInsideOrEqualDirectory(basePath, currentPath)) {
+		if (pathExists(currentPath)) {
+			components.push(currentPath);
+		}
+
+		if (currentPath === basePath) {
+			break;
+		}
+
+		currentPath = path.dirname(currentPath);
+	}
+
+	return components;
+};
 
 export const normalizeRelativeFilePath = (filePath: string) => {
 	if (typeof filePath !== "string") {
@@ -70,3 +117,87 @@ export const resolveFilePathInsideDirectory = (
 };
 
 export const quoteShellArg = (value: string) => quote([value]);
+
+export const assertNoSymlinkEscapeInsideDirectory = (
+	basePath: string,
+	filePath: string,
+) => {
+	const resolvedPath = resolveFilePathInsideDirectory(basePath, filePath);
+	const absoluteBasePath = path.resolve(basePath);
+	const existingComponents = collectExistingPathComponentsInsideDirectory(
+		absoluteBasePath,
+		resolvedPath.fullPath,
+	);
+
+	try {
+		for (const component of existingComponents) {
+			if (fs.lstatSync(component).isSymbolicLink()) {
+				throw new Error("Invalid file path");
+			}
+		}
+
+		const nearestExistingPath = existingComponents[0];
+		if (nearestExistingPath) {
+			const realBasePath = pathExists(absoluteBasePath)
+				? fs.realpathSync.native(absoluteBasePath)
+				: absoluteBasePath;
+			const realNearestExistingPath =
+				fs.realpathSync.native(nearestExistingPath);
+
+			if (
+				!isPathInsideOrEqualDirectory(realBasePath, realNearestExistingPath)
+			) {
+				throw new Error("Invalid file path");
+			}
+		}
+	} catch {
+		throw new Error("Invalid file path");
+	}
+
+	return resolvedPath;
+};
+
+export const getNoSymlinkFilePathGuardCommand = (
+	basePath: string,
+	fullPath: string,
+	options: { createParent?: boolean } = {},
+) => {
+	const quotedBasePath = quoteShellArg(path.resolve(basePath));
+	const quotedFullPath = quoteShellArg(fullPath);
+	const createParent = options.createParent ?? true;
+	const parentCommand = createParent
+		? `
+mkdir -p "$parent"
+real_parent="$(cd "$parent" && pwd -P)" || exit 1
+case "$real_parent" in "$real_base"|"$real_base"/*) ;; *) echo "Invalid file path" >&2; exit 1;; esac
+`
+		: `
+if [ -e "$parent" ] || [ -L "$parent" ]; then
+	if [ -L "$parent" ] || [ ! -d "$parent" ]; then echo "Invalid file path" >&2; exit 1; fi
+	real_parent="$(cd "$parent" && pwd -P)" || exit 1
+	case "$real_parent" in "$real_base"|"$real_base"/*) ;; *) echo "Invalid file path" >&2; exit 1;; esac
+fi
+`;
+
+	return `
+base=${quotedBasePath}
+file=${quotedFullPath}
+case "$file" in "$base"/*) ;; *) echo "Invalid file path" >&2; exit 1;; esac
+if [ -L "$base" ]; then echo "Invalid file path" >&2; exit 1; fi
+mkdir -p "$base"
+parent="$(dirname "$file")"
+real_base="$(cd "$base" && pwd -P)" || exit 1
+probe="$parent"
+while [ ! -e "$probe" ] && [ ! -L "$probe" ]; do
+	next="$(dirname "$probe")"
+	if [ "$next" = "$probe" ]; then echo "Invalid file path" >&2; exit 1; fi
+	case "$next" in "$base"|"$base"/*) ;; *) echo "Invalid file path" >&2; exit 1;; esac
+	probe="$next"
+done
+if [ -L "$probe" ] || [ ! -d "$probe" ]; then echo "Invalid file path" >&2; exit 1; fi
+real_probe="$(cd "$probe" && pwd -P)" || exit 1
+case "$real_probe" in "$real_base"|"$real_base"/*) ;; *) echo "Invalid file path" >&2; exit 1;; esac
+${parentCommand}
+if [ -L "$file" ]; then echo "Invalid file path" >&2; exit 1; fi
+`;
+};

@@ -166,6 +166,16 @@ export const apiFindMountByApplicationId = z.object({
 	serviceId: z.string().min(1),
 });
 
-export const apiUpdateMount = createSchema.partial().extend({
-	mountId: z.string().min(1),
-});
+export const apiUpdateMount = createSchema
+	.pick({
+		type: true,
+		hostPath: true,
+		volumeName: true,
+		content: true,
+		mountPath: true,
+		filePath: true,
+	})
+	.partial()
+	.extend({
+		mountId: z.string().min(1),
+	});

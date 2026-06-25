@@ -95,6 +95,40 @@ describe("certificate service command boundary", () => {
 		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
 	});
 
+	it("rejects dot-segment certificate paths before persistence", async () => {
+		await expect(
+			createCertificate(
+				{
+					autoRenew: false,
+					certificateData: certificate.certificateData,
+					certificatePath: "..",
+					organizationId: "org-1",
+					privateKey: certificate.privateKey,
+					name: "certificate",
+					serverId: "server-1",
+				},
+				"org-1",
+			),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(mocks.dbInsert).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+	});
+
+	it("rejects unsafe stored certificate paths before removal commands", async () => {
+		mocks.certificateFindFirst.mockResolvedValue({
+			...certificate,
+			certificatePath: ".",
+		});
+
+		await expect(removeCertificateById("certificate-1")).rejects.toMatchObject({
+			code: "BAD_REQUEST",
+		});
+
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+		expect(mocks.dbDelete).not.toHaveBeenCalled();
+	});
+
 	it("quotes remote certificate file paths and content writes", async () => {
 		await expect(
 			createCertificate(

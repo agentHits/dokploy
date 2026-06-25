@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { paths } from "@dokploy/server/constants";
+import { apiUpdateMount } from "@dokploy/server/db/schema";
 import { createMount, updateMount } from "@dokploy/server/services/mount";
 import { generateBindMounts } from "@dokploy/server/utils/docker/utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,9 +9,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mockDb = vi.hoisted(() => {
 	const insertReturning = vi.fn();
 	const updateReturning = vi.fn();
+	const updateSet = vi.fn(() => ({
+		where: vi.fn(() => ({
+			returning: updateReturning,
+		})),
+	}));
 
 	return {
 		insertReturning,
+		updateSet,
 		updateReturning,
 		db: {
 			insert: vi.fn(() => ({
@@ -21,11 +28,7 @@ const mockDb = vi.hoisted(() => {
 			transaction: vi.fn(async (callback) =>
 				callback({
 					update: vi.fn(() => ({
-						set: vi.fn(() => ({
-							where: vi.fn(() => ({
-								returning: updateReturning,
-							})),
-						})),
+						set: updateSet,
 					})),
 				}),
 			),
@@ -168,6 +171,43 @@ describe("bind mount host path boundary", () => {
 		).rejects.toThrow("Invalid bind mount host path");
 
 		expect(mockDb.db.transaction).not.toHaveBeenCalled();
+	});
+
+	it("strips service ownership fields from mount updates before persistence", async () => {
+		await expect(
+			updateMount("mount-1", {
+				applicationId: "victim-app",
+				composeId: "victim-compose",
+				mountId: "other-mount",
+				mountPath: "/data",
+				serviceType: "compose",
+			} as any),
+		).resolves.toMatchObject({ mountId: "mount-1" });
+
+		const persistedData = (mockDb.updateSet.mock.calls as unknown[][])[0]?.[0];
+		expect(persistedData).toMatchObject({
+			hostPath: safeHostPath,
+			mountPath: "/data",
+		});
+		expect(persistedData).not.toHaveProperty("applicationId");
+		expect(persistedData).not.toHaveProperty("composeId");
+		expect(persistedData).not.toHaveProperty("mountId");
+		expect(persistedData).not.toHaveProperty("serviceType");
+	});
+
+	it("strips service ownership fields from mount update API payloads", () => {
+		expect(
+			apiUpdateMount.parse({
+				applicationId: "victim-app",
+				composeId: "victim-compose",
+				mountId: "mount-1",
+				mountPath: "/data",
+				serviceType: "compose",
+			}),
+		).toEqual({
+			mountId: "mount-1",
+			mountPath: "/data",
+		});
 	});
 
 	it("rejects unsafe persisted bind sources before Docker mount generation", () => {

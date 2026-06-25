@@ -48,6 +48,9 @@ export const apiCreateCertificate = createInsertSchema(certificates, {
 		.min(1)
 		.max(63)
 		.regex(APP_NAME_REGEX, APP_NAME_MESSAGE)
+		.refine((value) => value !== "." && value !== "..", {
+			message: "Invalid certificate path",
+		})
 		.optional(),
 	autoRenew: z.boolean().optional(),
 	serverId: z.string().optional(),
