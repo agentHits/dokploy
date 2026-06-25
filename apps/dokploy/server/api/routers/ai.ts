@@ -4,7 +4,11 @@ import {
 	apiUpdateAi,
 	deploySuggestionSchema,
 } from "@dokploy/server/db/schema/ai";
-import { createDomain, createMount } from "@dokploy/server/index";
+import {
+	createDomain,
+	createMount,
+	getWebServerSettings,
+} from "@dokploy/server/index";
 import {
 	deleteAiSettings,
 	getAiSettingById,
@@ -15,6 +19,7 @@ import {
 import { createComposeByTemplate } from "@dokploy/server/services/compose";
 import {
 	addNewService,
+	checkPermission,
 	checkServiceAccess,
 } from "@dokploy/server/services/permission";
 import {
@@ -248,7 +253,7 @@ export const aiRouter = createTRPCRouter({
 			.map((s) => ({ aiId: s.aiId, name: s.name, model: s.model }));
 	}),
 
-	analyzeLogs: protectedProcedure
+	analyzeLogs: adminProcedure
 		.input(
 			z.object({
 				aiId: z.string().min(1),
@@ -338,7 +343,7 @@ ${input.logs}`,
 			}
 		}),
 
-	suggest: protectedProcedure
+	suggest: adminProcedure
 		.input(
 			z.object({
 				aiId: z.string(),
@@ -374,7 +379,18 @@ ${input.logs}`,
 			);
 			await checkServiceAccess(ctx, environment.projectId, "create");
 
-			if (IS_CLOUD && !input.serverId) {
+			if (input.domains?.length) {
+				await checkPermission(ctx, { domain: ["create"] });
+			}
+			if (input.configFiles?.length) {
+				await checkPermission(ctx, { volume: ["create"] });
+			}
+
+			const webServerSettings = await getWebServerSettings();
+			if (
+				(IS_CLOUD || webServerSettings?.remoteServersOnly) &&
+				!input.serverId
+			) {
 				throw new TRPCError({
 					code: "UNAUTHORIZED",
 					message: "You need to use a server to create a compose",

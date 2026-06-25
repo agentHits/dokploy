@@ -44,6 +44,7 @@ const serverMocks = vi.hoisted(() => ({
 
 const permissionMocks = vi.hoisted(() => ({
 	addNewService: vi.fn(),
+	checkPermission: vi.fn(),
 	checkServiceAccess: vi.fn(),
 	checkServicePermissionAndAccess: vi.fn(),
 	findMemberByUserId: vi.fn(),
@@ -171,6 +172,7 @@ vi.mock("@dokploy/server/services/compose", () => ({
 
 vi.mock("@dokploy/server/services/permission", () => ({
 	addNewService: permissionMocks.addNewService,
+	checkPermission: permissionMocks.checkPermission,
 	checkServiceAccess: permissionMocks.checkServiceAccess,
 	checkServicePermissionAndAccess:
 		permissionMocks.checkServicePermissionAndAccess,
@@ -191,6 +193,7 @@ vi.mock("@dokploy/server/templates/processors", () => ({
 }));
 
 vi.mock("@dokploy/server/utils/ai/select-ai-provider", () => ({
+	assertAIProviderApiUrlAllowed: vi.fn(async (value: string) => value),
 	getProviderHeaders: vi.fn(() => ({})),
 	getProviderName: vi.fn(() => "openai"),
 	normalizeAIProviderApiUrl: vi.fn((value: string) => value),
@@ -233,6 +236,10 @@ vi.mock("@/server/utils/deploy", () => ({
 
 const { aiRouter } = await import("../../server/api/routers/ai");
 const { composeRouter } = await import("../../server/api/routers/compose");
+const { generateText } = await import("ai");
+const { selectAIProvider } = await import(
+	"@dokploy/server/utils/ai/select-ai-provider"
+);
 
 const project = (projectId: string, organizationId = "org-1") => ({
 	projectId,
@@ -252,7 +259,7 @@ const environment = (
 	project: project(projectId, organizationId),
 });
 
-const createContext = () =>
+const createContext = (role = "owner") =>
 	({
 		db: {},
 		req: {},
@@ -265,7 +272,7 @@ const createContext = () =>
 		user: {
 			id: "user-1",
 			ownerId: "user-1",
-			role: "owner",
+			role,
 		},
 	}) as never;
 
@@ -282,6 +289,7 @@ const aiDeployInput = {
 describe("deploy target placement ownership boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		permissionMocks.checkPermission.mockResolvedValue(undefined);
 		permissionMocks.checkServiceAccess.mockResolvedValue(undefined);
 		permissionMocks.checkServicePermissionAndAccess.mockResolvedValue(
 			undefined,
@@ -356,6 +364,176 @@ describe("deploy target placement ownership boundary", () => {
 			expect.objectContaining({
 				environmentId: "env-1",
 				serverId: "server-1",
+			}),
+		);
+	});
+
+	it("denies AI suggestion deploy domains without domain permission before compose persistence", async () => {
+		permissionMocks.checkPermission.mockImplementation(async (_ctx, input) => {
+			if (Object.hasOwn(input, "domain")) {
+				throw new Error("Permission denied");
+			}
+		});
+
+		await expect(
+			aiRouter.createCaller(createContext()).deploy({
+				...aiDeployInput,
+				domains: [
+					{
+						host: "app.example.com",
+						port: 3000,
+						serviceName: "app",
+					},
+				],
+				serverId: "server-1",
+			}),
+		).rejects.toThrow("Permission denied");
+
+		expect(serverMocks.createComposeByTemplate).not.toHaveBeenCalled();
+		expect(serverMocks.createDomain).not.toHaveBeenCalled();
+		expect(permissionMocks.addNewService).not.toHaveBeenCalled();
+	});
+
+	it("denies AI suggestion deploy config files without volume permission before compose persistence", async () => {
+		permissionMocks.checkPermission.mockImplementation(async (_ctx, input) => {
+			if (Object.hasOwn(input, "volume")) {
+				throw new Error("Permission denied");
+			}
+		});
+
+		await expect(
+			aiRouter.createCaller(createContext()).deploy({
+				...aiDeployInput,
+				configFiles: [
+					{
+						filePath: "/etc/app/config.yaml",
+						content: "debug: false",
+					},
+				],
+				serverId: "server-1",
+			}),
+		).rejects.toThrow("Permission denied");
+
+		expect(serverMocks.createComposeByTemplate).not.toHaveBeenCalled();
+		expect(serverMocks.createMount).not.toHaveBeenCalled();
+		expect(permissionMocks.addNewService).not.toHaveBeenCalled();
+	});
+
+	it("keeps AI suggestion deploy domains and config files available with side-effect permissions", async () => {
+		await expect(
+			aiRouter.createCaller(createContext()).deploy({
+				...aiDeployInput,
+				configFiles: [
+					{
+						filePath: "/etc/app/config.yaml",
+						content: "debug: false",
+					},
+				],
+				domains: [
+					{
+						host: "app.example.com",
+						port: 3000,
+						serviceName: "app",
+					},
+				],
+				serverId: "server-1",
+			}),
+		).resolves.toBeNull();
+
+		expect(permissionMocks.checkPermission).toHaveBeenCalledWith(
+			expect.anything(),
+			{ domain: ["create"] },
+		);
+		expect(permissionMocks.checkPermission).toHaveBeenCalledWith(
+			expect.anything(),
+			{ volume: ["create"] },
+		);
+		expect(serverMocks.createDomain).toHaveBeenCalledWith(
+			expect.objectContaining({
+				composeId: "compose-1",
+				domainType: "compose",
+				host: "app.example.com",
+			}),
+		);
+		expect(serverMocks.createMount).toHaveBeenCalledWith(
+			expect.objectContaining({
+				content: "debug: false",
+				filePath: "/etc/app/config.yaml",
+				serviceId: "compose-1",
+				serviceType: "compose",
+				type: "file",
+			}),
+		);
+	});
+
+	it("denies local AI suggestion deploy when remote servers only is enabled", async () => {
+		serverMocks.getWebServerSettings.mockResolvedValueOnce({
+			remoteServersOnly: true,
+		});
+
+		await expect(
+			aiRouter.createCaller(createContext()).deploy({
+				...aiDeployInput,
+				serverId: undefined,
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(serverMocks.createComposeByTemplate).not.toHaveBeenCalled();
+		expect(permissionMocks.addNewService).not.toHaveBeenCalled();
+	});
+
+	it("requires admin boundary before AI suggestions can spend provider credentials", async () => {
+		await expect(
+			aiRouter.createCaller(createContext("member")).suggest({
+				aiId: "ai-1",
+				input: "deploy postgres",
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(aiServiceMocks.suggestVariants).not.toHaveBeenCalled();
+	});
+
+	it("requires admin boundary before log analysis can spend provider credentials", async () => {
+		await expect(
+			aiRouter.createCaller(createContext("member")).analyzeLogs({
+				aiId: "ai-1",
+				context: "build",
+				logs: "npm ERR! secret=value",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(aiServiceMocks.getAiSettingById).not.toHaveBeenCalled();
+	});
+
+	it("keeps log analysis available for admins after the credential-spend gate", async () => {
+		const provider = vi.fn(() => "model");
+		vi.mocked(selectAIProvider).mockReturnValueOnce(provider as never);
+		vi.mocked(generateText).mockResolvedValueOnce({
+			text: "Use the production build log",
+		} as Awaited<ReturnType<typeof generateText>>);
+		aiServiceMocks.getAiSettingById.mockResolvedValueOnce({
+			aiId: "ai-1",
+			apiKey: "secret",
+			apiUrl: "https://api.openai.com/v1",
+			isEnabled: true,
+			model: "gpt-4o-mini",
+			name: "OpenAI",
+			organizationId: "org-1",
+		});
+
+		await expect(
+			aiRouter.createCaller(createContext("admin")).analyzeLogs({
+				aiId: "ai-1",
+				context: "build",
+				logs: "npm ERR! dependency failure",
+			}),
+		).resolves.toEqual({ analysis: "Use the production build log" });
+
+		expect(provider).toHaveBeenCalledWith("gpt-4o-mini");
+		expect(generateText).toHaveBeenCalledWith(
+			expect.objectContaining({
+				model: "model",
 			}),
 		);
 	});
