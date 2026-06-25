@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
 	findGithubById: vi.fn(),
 	findGitlabById: vi.fn(),
 	findSSHKeyById: vi.fn(),
+	fetchWithPublicEgress: vi.fn(),
 	updateGitea: vi.fn(),
 	updateGitlab: vi.fn(),
 	updateSSHKeyById: vi.fn(),
@@ -65,7 +66,17 @@ vi.mock("@dokploy/server/services/ssh-key", () => ({
 	updateSSHKeyById: mocks.updateSSHKeyById,
 }));
 
-const { cloneBitbucketRepository } = await import(
+vi.mock("@dokploy/server/utils/url/network", async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import("@dokploy/server/utils/url/network")>();
+
+	return {
+		...actual,
+		fetchWithPublicEgress: mocks.fetchWithPublicEgress,
+	};
+});
+
+const { cloneBitbucketRepository, getBitbucketBranches } = await import(
 	"@dokploy/server/utils/providers/bitbucket"
 );
 const { assertCustomGitUrlAllowed, cloneGitRepository } = await import(
@@ -77,9 +88,8 @@ const { cloneGiteaRepository } = await import(
 const { cloneGithubRepository } = await import(
 	"@dokploy/server/utils/providers/github"
 );
-const { cloneGitlabRepository } = await import(
-	"@dokploy/server/utils/providers/gitlab"
-);
+const { assertGitlabProjectScope, cloneGitlabRepository, getGitlabBranches } =
+	await import("@dokploy/server/utils/providers/gitlab");
 
 const parseShellArgs = (command: string) =>
 	parse(command).filter((part): part is string => typeof part === "string");
@@ -133,6 +143,7 @@ describe("Git provider clone command boundary", () => {
 		mocks.findGitlabById.mockResolvedValue({
 			accessToken: fixtures.gitlabToken,
 			expiresAt: 4_102_444_800,
+			groupName: null,
 			gitlabInternalUrl: null,
 			gitlabUrl: fixtures.gitlabBaseUrl,
 			refreshToken: "refresh-token",
@@ -140,6 +151,8 @@ describe("Git provider clone command boundary", () => {
 		mocks.findBitbucketById.mockResolvedValue({
 			apiToken: fixtures.bitbucketToken,
 			bitbucketEmail: "user@example.com",
+			bitbucketUsername: fixtures.bitbucketOwner,
+			bitbucketWorkspaceName: fixtures.bitbucketOwner,
 		});
 		mocks.findGiteaById.mockResolvedValue({
 			accessToken: fixtures.giteaToken,
@@ -152,6 +165,25 @@ describe("Git provider clone command boundary", () => {
 		mocks.updateGitea.mockResolvedValue(undefined);
 		mocks.updateGitlab.mockResolvedValue(undefined);
 		mocks.updateSSHKeyById.mockResolvedValue(undefined);
+		mocks.fetchWithPublicEgress.mockResolvedValue(
+			new Response(
+				JSON.stringify([
+					{
+						commit: {
+							id: "commit-1",
+						},
+						id: "branch-1",
+						name: "main",
+					},
+				]),
+				{
+					headers: {
+						"x-total": "1",
+					},
+					status: 200,
+				},
+			),
+		);
 	});
 
 	it("quotes custom Git clone arguments and log messages", async () => {
@@ -286,6 +318,121 @@ describe("Git provider clone command boundary", () => {
 			cloneUrl: expectedCloneUrl,
 			outputPath: fixtures.outputPath,
 		});
+	});
+
+	it("rejects Bitbucket clone metadata outside the configured workspace", async () => {
+		await expect(
+			cloneBitbucketRepository({
+				appName: "app",
+				bitbucketBranch: "main",
+				bitbucketId: "bitbucket-1",
+				bitbucketOwner: "outside-workspace",
+				bitbucketRepository: "repo",
+				enableSubmodules: false,
+				outputPathOverride: fixtures.outputPath,
+				serverId: null,
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+	});
+
+	it("rejects Bitbucket branch lookup outside the configured workspace before fetching", async () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+		await expect(
+			getBitbucketBranches({
+				bitbucketId: "bitbucket-1",
+				owner: "outside-workspace",
+				repo: "repo",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	it("rejects GitLab clone metadata outside the configured group", async () => {
+		mocks.findGitlabById.mockResolvedValue({
+			accessToken: fixtures.gitlabToken,
+			expiresAt: 4_102_444_800,
+			groupName: "allowed/group",
+			gitlabInternalUrl: null,
+			gitlabUrl: fixtures.gitlabBaseUrl,
+			refreshToken: "refresh-token",
+		});
+
+		await expect(
+			cloneGitlabRepository({
+				appName: "app",
+				enableSubmodules: false,
+				gitlabBranch: "main",
+				gitlabId: "gitlab-1",
+				gitlabPathNamespace: "outside/group/repo",
+				outputPathOverride: fixtures.outputPath,
+				serverId: null,
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+	});
+
+	it("rejects GitLab branch lookup outside the configured group before fetching", async () => {
+		mocks.findGitlabById.mockResolvedValue({
+			accessToken: fixtures.gitlabToken,
+			expiresAt: 4_102_444_800,
+			groupName: "allowed/group",
+			gitlabInternalUrl: null,
+			gitlabUrl: fixtures.gitlabBaseUrl,
+			refreshToken: "refresh-token",
+		});
+
+		await expect(
+			getGitlabBranches({
+				gitlabId: "gitlab-1",
+				id: 1,
+				gitlabPathNamespace: "outside/group/repo",
+				owner: "outside",
+				repo: "repo",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+	});
+
+	it("uses the scoped GitLab namespace instead of trusting a mismatched project id for branch lookup", async () => {
+		mocks.findGitlabById.mockResolvedValue({
+			accessToken: fixtures.gitlabToken,
+			expiresAt: 4_102_444_800,
+			groupName: "allowed/group",
+			gitlabInternalUrl: null,
+			gitlabUrl: fixtures.gitlabBaseUrl,
+			refreshToken: "refresh-token",
+		});
+
+		await expect(
+			getGitlabBranches({
+				gitlabId: "gitlab-1",
+				id: 999,
+				gitlabPathNamespace: "allowed/group/repo",
+				owner: "allowed",
+				repo: "repo",
+			}),
+		).resolves.toEqual([
+			{
+				commit: {
+					id: "commit-1",
+				},
+				id: "branch-1",
+				name: "main",
+			},
+		]);
+
+		const [url] = mocks.fetchWithPublicEgress.mock.calls[0] ?? [];
+		expect(String(url)).toContain("projects/allowed%2Fgroup%2Frepo/");
+		expect(String(url)).not.toContain("projects/999/");
+	});
+
+	it("allows nested GitLab project scope when the full namespace matches a configured group", () => {
+		expect(() =>
+			assertGitlabProjectScope(
+				{ groupName: "allowed/group" },
+				{ pathNamespace: "allowed/group/repo" },
+			),
+		).not.toThrow();
 	});
 
 	it("quotes Gitea clone metadata", async () => {

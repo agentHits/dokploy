@@ -86,6 +86,84 @@ import { audit } from "../utils/audit";
 import { assertDeploySourceCredentialAccess } from "../utils/deploy-source-access";
 import { assertTargetEnvironmentAccess } from "../utils/placement-access";
 
+const composeSourceUpdateFields = [
+	"bitbucketBranch",
+	"bitbucketId",
+	"bitbucketOwner",
+	"bitbucketRepository",
+	"bitbucketRepositorySlug",
+	"branch",
+	"composePath",
+	"customGitBranch",
+	"customGitSSHKeyId",
+	"customGitUrl",
+	"enableSubmodules",
+	"giteaBranch",
+	"giteaId",
+	"giteaOwner",
+	"giteaRepository",
+	"githubId",
+	"gitlabBranch",
+	"gitlabId",
+	"gitlabOwner",
+	"gitlabPathNamespace",
+	"gitlabProjectId",
+	"gitlabRepository",
+	"owner",
+	"repository",
+	"sourceType",
+	"triggerType",
+	"watchPaths",
+] as const;
+
+type ComposeSourceUpdateInput = {
+	composeId: string;
+	[key: string]: unknown;
+};
+
+const hasComposeSourceUpdate = (input: ComposeSourceUpdateInput) =>
+	composeSourceUpdateFields.some((field) => Object.hasOwn(input, field));
+
+const getCurrentComposeGitProviderId = (
+	compose: Awaited<ReturnType<typeof findComposeById>>,
+) => {
+	switch (compose.sourceType) {
+		case "github":
+			return compose.github?.gitProviderId;
+		case "gitlab":
+			return compose.gitlab?.gitProviderId;
+		case "bitbucket":
+			return compose.bitbucket?.gitProviderId;
+		case "gitea":
+			return compose.gitea?.gitProviderId;
+		default:
+			return null;
+	}
+};
+
+const assertCurrentComposeSourceEditAccess = async (
+	input: ComposeSourceUpdateInput,
+	session: { userId: string; activeOrganizationId: string },
+) => {
+	if (!hasComposeSourceUpdate(input)) {
+		return;
+	}
+
+	const compose = await findComposeById(input.composeId);
+	const gitProviderId = getCurrentComposeGitProviderId(compose);
+	if (!gitProviderId) {
+		return;
+	}
+
+	const canEdit = await canEditDeployGitSource(gitProviderId, session);
+	if (!canEdit) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not authorized to edit this compose source",
+		});
+	}
+};
+
 export const composeRouter = createTRPCRouter({
 	create: protectedProcedure
 		.input(apiCreateCompose)
@@ -201,7 +279,11 @@ export const composeRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.composeId, {
 				service: ["create"],
 			});
-			await assertDeploySourceCredentialAccess(input, ctx.session);
+			await assertCurrentComposeSourceEditAccess(input, ctx.session);
+			await assertDeploySourceCredentialAccess(input, ctx.session, {
+				permissionCtx: ctx,
+				requireSshKeyRead: true,
+			});
 			if (input.customGitUrl) {
 				await assertCustomGitUrlAllowed(input.customGitUrl);
 			}
@@ -730,6 +812,10 @@ export const composeRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.composeId, {
 				service: ["create"],
 			});
+			await assertCurrentComposeSourceEditAccess(
+				{ composeId: input.composeId, sourceType: "github" },
+				ctx.session,
+			);
 
 			await updateCompose(input.composeId, {
 				repository: null,

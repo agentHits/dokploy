@@ -12,11 +12,7 @@ import {
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { desc, eq } from "drizzle-orm";
-import {
-	createTRPCRouter,
-	protectedProcedure,
-	withPermission,
-} from "@/server/api/trpc";
+import { createTRPCRouter, withPermission } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import {
 	apiCreateSshKey,
@@ -92,7 +88,7 @@ export const sshRouter = createTRPCRouter({
 		});
 		return redactSecretFieldsList(sshKeyList, ["privateKey"]);
 	}),
-	allForApps: protectedProcedure.query(async ({ ctx }) => {
+	allForApps: withPermission("sshKeys", "read").query(async ({ ctx }) => {
 		return await db.query.sshKeys.findMany({
 			columns: {
 				sshKeyId: true,

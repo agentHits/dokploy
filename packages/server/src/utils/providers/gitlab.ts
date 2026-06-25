@@ -29,6 +29,41 @@ const getGitlabProviderBaseUrl = (gitlabProvider: GitlabProviderBaseUrl) =>
 		{ fieldName: "GitLab provider URL" },
 	);
 
+export const assertGitlabProjectScope = (
+	gitlabProvider: Pick<Gitlab, "groupName">,
+	input: {
+		owner?: string | null;
+		pathNamespace?: string | null;
+		repo?: string | null;
+	},
+) => {
+	const groupNames = gitlabProvider.groupName
+		?.split(",")
+		.map((name) => name.trim().toLowerCase())
+		.filter(Boolean);
+
+	if (!groupNames?.length) {
+		return;
+	}
+
+	const pathNamespace = getGitlabProjectPathNamespace(input);
+	const normalizedPathNamespace = pathNamespace.toLowerCase();
+
+	if (
+		!pathNamespace ||
+		!groupNames.some(
+			(groupName) =>
+				normalizedPathNamespace === groupName ||
+				normalizedPathNamespace.startsWith(`${groupName}/`),
+		)
+	) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "Repository is outside the configured GitLab group",
+		});
+	}
+};
+
 export const refreshGitlabToken = async (gitlabProviderId: string) => {
 	const gitlabProvider = await findGitlabById(gitlabProviderId);
 	const currentTime = Math.floor(Date.now() / 1000);
@@ -117,6 +152,13 @@ const getGitlabRepoClone = (
 	return repoClone;
 };
 
+const getGitlabProjectPathNamespace = (input: {
+	owner?: string | null;
+	pathNamespace?: string | null;
+	repo?: string | null;
+}) =>
+	input.pathNamespace || [input.owner, input.repo].filter(Boolean).join("/");
+
 const getGitlabCloneUrl = (
 	gitlab: GitlabInfo,
 	baseUrl: string,
@@ -161,6 +203,7 @@ export const cloneGitlabRepository = async ({
 
 	await refreshGitlabToken(gitlabId);
 	const gitlab = await findGitlabById(gitlabId);
+	assertGitlabProjectScope(gitlab, { pathNamespace: gitlabPathNamespace });
 
 	const requirements = getErrorCloneRequirements(entity);
 
@@ -243,12 +286,23 @@ export const getGitlabBranches = async (input: {
 	gitlabId?: string;
 	owner: string;
 	repo: string;
+	gitlabPathNamespace?: string;
 }) => {
 	if (!input.gitlabId || !input.id || input.id === 0) {
 		return [];
 	}
 
 	const gitlabProvider = await findGitlabById(input.gitlabId);
+	const pathNamespace = getGitlabProjectPathNamespace({
+		pathNamespace: input.gitlabPathNamespace,
+		owner: input.owner,
+		repo: input.repo,
+	});
+	assertGitlabProjectScope(gitlabProvider, {
+		pathNamespace,
+		owner: input.owner,
+		repo: input.repo,
+	});
 
 	const allBranches = [];
 	let page = 1;
@@ -256,9 +310,13 @@ export const getGitlabBranches = async (input: {
 	const baseUrl = await getGitlabProviderBaseUrl(gitlabProvider);
 
 	while (true) {
+		const projectIdentifier =
+			pathNamespace || input.id === undefined
+				? encodeURIComponent(pathNamespace)
+				: String(input.id);
 		const branchesResponse = await fetchWithPublicEgress(
 			new URL(
-				`api/v4/projects/${input.id}/repository/branches?page=${page}&per_page=${perPage}`,
+				`api/v4/projects/${projectIdentifier}/repository/branches?page=${page}&per_page=${perPage}`,
 				`${baseUrl}/`,
 			),
 			{
@@ -286,7 +344,7 @@ export const getGitlabBranches = async (input: {
 
 		// Check if we've reached the total using headers (optional optimization)
 		const total = branchesResponse.headers.get("x-total");
-		if (total && allBranches.length >= Number.parseInt(total)) {
+		if (total && allBranches.length >= Number.parseInt(total, 10)) {
 			break;
 		}
 	}
@@ -369,7 +427,7 @@ export const validateGitlabProvider = async (gitlabProvider: Gitlab) => {
 			page++;
 
 			const total = response.headers.get("x-total");
-			if (total && allProjects.length >= Number.parseInt(total)) {
+			if (total && allProjects.length >= Number.parseInt(total, 10)) {
 				break;
 			}
 		}

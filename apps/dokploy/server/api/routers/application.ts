@@ -426,6 +426,7 @@ export const applicationRouter = createTRPCRouter({
 			await assertDeploySourceCredentialAccess(
 				{ githubId: input.githubId },
 				ctx.session,
+				{ permissionCtx: ctx, requireSshKeyRead: true },
 			);
 			await updateApplication(input.applicationId, {
 				repository: input.repository,
@@ -455,8 +456,14 @@ export const applicationRouter = createTRPCRouter({
 				service: ["create"],
 			});
 			await assertDeploySourceCredentialAccess(
-				{ gitlabId: input.gitlabId },
+				{
+					gitlabId: input.gitlabId,
+					gitlabOwner: input.gitlabOwner,
+					gitlabPathNamespace: input.gitlabPathNamespace,
+					gitlabRepository: input.gitlabRepository,
+				},
 				ctx.session,
+				{ permissionCtx: ctx, requireSshKeyRead: true },
 			);
 			await updateApplication(input.applicationId, {
 				gitlabRepository: input.gitlabRepository,
@@ -487,8 +494,12 @@ export const applicationRouter = createTRPCRouter({
 				service: ["create"],
 			});
 			await assertDeploySourceCredentialAccess(
-				{ bitbucketId: input.bitbucketId },
+				{
+					bitbucketId: input.bitbucketId,
+					bitbucketOwner: input.bitbucketOwner,
+				},
 				ctx.session,
+				{ permissionCtx: ctx, requireSshKeyRead: true },
 			);
 			await updateApplication(input.applicationId, {
 				bitbucketRepository: input.bitbucketRepository,
@@ -520,6 +531,7 @@ export const applicationRouter = createTRPCRouter({
 			await assertDeploySourceCredentialAccess(
 				{ giteaId: input.giteaId },
 				ctx.session,
+				{ permissionCtx: ctx, requireSshKeyRead: true },
 			);
 			await updateApplication(input.applicationId, {
 				giteaRepository: input.giteaRepository,
@@ -573,6 +585,7 @@ export const applicationRouter = createTRPCRouter({
 			await assertDeploySourceCredentialAccess(
 				{ customGitSSHKeyId: input.customGitSSHKeyId },
 				ctx.session,
+				{ permissionCtx: ctx, requireSshKeyRead: true },
 			);
 			await assertCustomGitUrlAllowed(input.customGitUrl);
 			await updateApplication(input.applicationId, {
@@ -679,7 +692,10 @@ export const applicationRouter = createTRPCRouter({
 				}
 			}
 
-			await assertDeploySourceCredentialAccess(input, ctx.session);
+			await assertDeploySourceCredentialAccess(input, ctx.session, {
+				permissionCtx: ctx,
+				requireSshKeyRead: true,
+			});
 
 			const { applicationId, ...rest } = input;
 			const updateApp = await updateApplication(applicationId, {

@@ -5,6 +5,7 @@ const serverMocks = vi.hoisted(() => ({
 	addDomainToCompose: vi.fn(),
 	assertGitProviderAccess: vi.fn(),
 	assertSshKeyAccess: vi.fn(),
+	canEditDeployGitSource: vi.fn(),
 	clearOldDeployments: vi.fn(),
 	cloneCompose: vi.fn(),
 	createCommand: vi.fn(),
@@ -18,12 +19,14 @@ const serverMocks = vi.hoisted(() => ({
 	execAsync: vi.fn(),
 	execAsyncRemote: vi.fn(),
 	findApplicationById: vi.fn(),
+	findBitbucketById: vi.fn(),
 	findBitbucketGitProviderId: vi.fn(),
 	findComposeById: vi.fn(),
 	findDomainsByComposeId: vi.fn(),
 	findEnvironmentById: vi.fn(),
 	findGiteaGitProviderId: vi.fn(),
 	findGithubGitProviderId: vi.fn(),
+	findGitlabById: vi.fn(),
 	findGitlabGitProviderId: vi.fn(),
 	findLibsqlById: vi.fn(),
 	findMariadbById: vi.fn(),
@@ -70,6 +73,7 @@ const serverMocks = vi.hoisted(() => ({
 
 const permissionMocks = vi.hoisted(() => ({
 	addNewService: vi.fn(),
+	checkPermission: vi.fn(),
 	checkServiceAccess: vi.fn(),
 	checkServicePermissionAndAccess: vi.fn(),
 	findMemberByUserId: vi.fn(),
@@ -95,12 +99,14 @@ vi.mock("@dokploy/server", () => ({
 	execAsync: serverMocks.execAsync,
 	execAsyncRemote: serverMocks.execAsyncRemote,
 	findApplicationById: serverMocks.findApplicationById,
+	findBitbucketById: serverMocks.findBitbucketById,
 	findBitbucketGitProviderId: serverMocks.findBitbucketGitProviderId,
 	findComposeById: serverMocks.findComposeById,
 	findDomainsByComposeId: serverMocks.findDomainsByComposeId,
 	findEnvironmentById: serverMocks.findEnvironmentById,
 	findGiteaGitProviderId: serverMocks.findGiteaGitProviderId,
 	findGithubGitProviderId: serverMocks.findGithubGitProviderId,
+	findGitlabById: serverMocks.findGitlabById,
 	findGitlabGitProviderId: serverMocks.findGitlabGitProviderId,
 	findLibsqlById: serverMocks.findLibsqlById,
 	findMariadbById: serverMocks.findMariadbById,
@@ -152,12 +158,13 @@ vi.mock("@dokploy/server/db", () => ({
 
 vi.mock("@dokploy/server/services/git-provider", () => ({
 	assertGitProviderAccess: serverMocks.assertGitProviderAccess,
-	canEditDeployGitSource: vi.fn(() => true),
+	canEditDeployGitSource: serverMocks.canEditDeployGitSource,
 	redactGitProviderSecrets: vi.fn((value) => value),
 }));
 
 vi.mock("@dokploy/server/services/permission", () => ({
 	addNewService: permissionMocks.addNewService,
+	checkPermission: permissionMocks.checkPermission,
 	checkServiceAccess: permissionMocks.checkServiceAccess,
 	checkServicePermissionAndAccess:
 		permissionMocks.checkServicePermissionAndAccess,
@@ -245,7 +252,23 @@ describe("deploy source credential access", () => {
 		permissionMocks.checkServicePermissionAndAccess.mockResolvedValue(
 			undefined,
 		);
+		permissionMocks.checkPermission.mockResolvedValue(undefined);
+		serverMocks.canEditDeployGitSource.mockResolvedValue(true);
+		serverMocks.findBitbucketById.mockResolvedValue({
+			bitbucketUsername: "team-a",
+			bitbucketWorkspaceName: "team-a",
+		});
+		serverMocks.findBitbucketGitProviderId.mockResolvedValue("git-provider-1");
+		serverMocks.findComposeById.mockResolvedValue({
+			composeId: "compose-1",
+			sourceType: "raw",
+		});
+		serverMocks.findGiteaGitProviderId.mockResolvedValue("git-provider-1");
 		serverMocks.findGithubGitProviderId.mockResolvedValue("git-provider-1");
+		serverMocks.findGitlabById.mockResolvedValue({
+			groupName: "allowed/group",
+		});
+		serverMocks.findGitlabGitProviderId.mockResolvedValue("git-provider-1");
 		serverMocks.assertGitProviderAccess.mockResolvedValue(undefined);
 		serverMocks.assertSshKeyAccess.mockResolvedValue(undefined);
 		serverMocks.updateApplication.mockResolvedValue({});
@@ -296,6 +319,14 @@ describe("deploy source credential access", () => {
 				activeOrganizationId: "org-1",
 			}),
 		);
+		expect(permissionMocks.checkPermission).toHaveBeenCalledWith(
+			expect.objectContaining({
+				session: expect.objectContaining({
+					activeOrganizationId: "org-1",
+				}),
+			}),
+			{ sshKeys: ["read"] },
+		);
 		expect(serverMocks.updateApplication).not.toHaveBeenCalled();
 	});
 
@@ -342,6 +373,14 @@ describe("deploy source credential access", () => {
 			expect.objectContaining({
 				activeOrganizationId: "org-1",
 			}),
+		);
+		expect(permissionMocks.checkPermission).toHaveBeenCalledWith(
+			expect.objectContaining({
+				session: expect.objectContaining({
+					activeOrganizationId: "org-1",
+				}),
+			}),
+			{ sshKeys: ["read"] },
 		);
 		expect(serverMocks.updateApplication).not.toHaveBeenCalled();
 	});
@@ -390,6 +429,207 @@ describe("deploy source credential access", () => {
 				activeOrganizationId: "org-1",
 			}),
 		);
+		expect(permissionMocks.checkPermission).toHaveBeenCalledWith(
+			expect.objectContaining({
+				session: expect.objectContaining({
+					activeOrganizationId: "org-1",
+				}),
+			}),
+			{ sshKeys: ["read"] },
+		);
 		expect(serverMocks.updateCompose).not.toHaveBeenCalled();
+	});
+
+	it("rejects custom SSH keys before compose source persistence when sshKeys read is denied", async () => {
+		permissionMocks.checkPermission.mockRejectedValue(
+			new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "denied",
+			}),
+		);
+
+		await expect(
+			composeRouter.createCaller(createContext()).update({
+				composeId: "compose-1",
+				customGitSSHKeyId: "ssh-key-1",
+				sourceType: "git",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(permissionMocks.checkPermission).toHaveBeenCalledWith(
+			expect.anything(),
+			{ sshKeys: ["read"] },
+		);
+		expect(serverMocks.assertSshKeyAccess).not.toHaveBeenCalled();
+		expect(serverMocks.updateCompose).not.toHaveBeenCalled();
+	});
+
+	it("rejects compose source replacement when the current provider edit guard denies access", async () => {
+		serverMocks.findComposeById.mockResolvedValueOnce({
+			composeId: "compose-1",
+			sourceType: "gitlab",
+			gitlab: {
+				gitProviderId: "git-provider-current",
+			},
+		});
+		serverMocks.canEditDeployGitSource.mockResolvedValue(false);
+
+		await expect(
+			composeRouter.createCaller(createContext()).update({
+				composeId: "compose-1",
+				githubId: "github-1",
+				sourceType: "github",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(serverMocks.canEditDeployGitSource).toHaveBeenCalledWith(
+			"git-provider-current",
+			expect.objectContaining({
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(serverMocks.findGithubGitProviderId).not.toHaveBeenCalled();
+		expect(serverMocks.updateCompose).not.toHaveBeenCalled();
+	});
+
+	it("rejects compose source metadata updates when the current provider edit guard denies access", async () => {
+		serverMocks.findComposeById.mockResolvedValueOnce({
+			composeId: "compose-1",
+			sourceType: "gitlab",
+			gitlab: {
+				gitProviderId: "git-provider-current",
+			},
+		});
+		serverMocks.canEditDeployGitSource.mockResolvedValue(false);
+
+		await expect(
+			composeRouter.createCaller(createContext()).update({
+				composeId: "compose-1",
+				composePath: "deploy/docker-compose.yml",
+				enableSubmodules: true,
+				triggerType: "tag",
+				watchPaths: ["deploy/**"],
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(serverMocks.canEditDeployGitSource).toHaveBeenCalledWith(
+			"git-provider-current",
+			expect.objectContaining({
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(serverMocks.updateCompose).not.toHaveBeenCalled();
+	});
+
+	it("rejects compose source disconnect when the current provider edit guard denies access", async () => {
+		serverMocks.findComposeById.mockResolvedValueOnce({
+			composeId: "compose-1",
+			sourceType: "bitbucket",
+			bitbucket: {
+				gitProviderId: "git-provider-current",
+			},
+		});
+		serverMocks.canEditDeployGitSource.mockResolvedValue(false);
+
+		await expect(
+			composeRouter
+				.createCaller(createContext())
+				.disconnectGitProvider({ composeId: "compose-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(serverMocks.canEditDeployGitSource).toHaveBeenCalledWith(
+			"git-provider-current",
+			expect.objectContaining({
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(serverMocks.updateCompose).not.toHaveBeenCalled();
+	});
+
+	it("allows non-source compose updates without the current provider edit guard", async () => {
+		await expect(
+			composeRouter.createCaller(createContext()).update({
+				composeId: "compose-1",
+				name: "compose-renamed",
+			}),
+		).resolves.toEqual({ composeId: "compose-1" });
+
+		expect(serverMocks.findComposeById).not.toHaveBeenCalled();
+		expect(serverMocks.canEditDeployGitSource).not.toHaveBeenCalled();
+		expect(serverMocks.updateCompose).toHaveBeenCalled();
+	});
+
+	it("rejects Bitbucket owner outside the configured workspace before compose source persistence", async () => {
+		await expect(
+			composeRouter.createCaller(createContext()).update({
+				bitbucketBranch: "main",
+				bitbucketId: "bitbucket-1",
+				bitbucketOwner: "team-b",
+				bitbucketRepository: "repo",
+				bitbucketRepositorySlug: "repo",
+				composeId: "compose-1",
+				sourceType: "bitbucket",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(serverMocks.findBitbucketGitProviderId).toHaveBeenCalledWith(
+			"bitbucket-1",
+		);
+		expect(serverMocks.findBitbucketById).toHaveBeenCalledWith("bitbucket-1");
+		expect(serverMocks.updateCompose).not.toHaveBeenCalled();
+	});
+
+	it("allows Bitbucket owner inside the configured workspace before compose source persistence", async () => {
+		await expect(
+			composeRouter.createCaller(createContext()).update({
+				bitbucketBranch: "main",
+				bitbucketId: "bitbucket-1",
+				bitbucketOwner: "team-a",
+				bitbucketRepository: "repo",
+				bitbucketRepositorySlug: "repo",
+				composeId: "compose-1",
+				sourceType: "bitbucket",
+			}),
+		).resolves.toEqual({ composeId: "compose-1" });
+
+		expect(serverMocks.updateCompose).toHaveBeenCalled();
+	});
+
+	it("rejects GitLab paths outside the configured group before compose source persistence", async () => {
+		await expect(
+			composeRouter.createCaller(createContext()).update({
+				composeId: "compose-1",
+				gitlabBranch: "main",
+				gitlabId: "gitlab-1",
+				gitlabOwner: "other",
+				gitlabPathNamespace: "other/group/repo",
+				gitlabProjectId: 1,
+				gitlabRepository: "repo",
+				sourceType: "gitlab",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(serverMocks.findGitlabGitProviderId).toHaveBeenCalledWith(
+			"gitlab-1",
+		);
+		expect(serverMocks.findGitlabById).toHaveBeenCalledWith("gitlab-1");
+		expect(serverMocks.updateCompose).not.toHaveBeenCalled();
+	});
+
+	it("allows GitLab paths inside the configured group before compose source persistence", async () => {
+		await expect(
+			composeRouter.createCaller(createContext()).update({
+				composeId: "compose-1",
+				gitlabBranch: "main",
+				gitlabId: "gitlab-1",
+				gitlabOwner: "allowed",
+				gitlabPathNamespace: "allowed/group/repo",
+				gitlabProjectId: 1,
+				gitlabRepository: "repo",
+				sourceType: "gitlab",
+			}),
+		).resolves.toEqual({ composeId: "compose-1" });
+
+		expect(serverMocks.updateCompose).toHaveBeenCalled();
 	});
 });

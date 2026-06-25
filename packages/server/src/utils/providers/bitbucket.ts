@@ -83,6 +83,28 @@ export const getBitbucketHeaders = (bitbucketProvider: Bitbucket) => {
 	};
 };
 
+export const assertBitbucketRepositoryScope = (
+	bitbucketProvider: Pick<
+		Bitbucket,
+		"bitbucketWorkspaceName" | "bitbucketUsername"
+	>,
+	owner: string | null | undefined,
+) => {
+	const configuredWorkspace =
+		bitbucketProvider.bitbucketWorkspaceName ||
+		bitbucketProvider.bitbucketUsername;
+
+	if (
+		configuredWorkspace &&
+		(!owner || configuredWorkspace.toLowerCase() !== owner.toLowerCase())
+	) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "Repository is outside the configured Bitbucket workspace",
+		});
+	}
+};
+
 interface CloneBitbucketRepository {
 	appName: string;
 	bitbucketRepository: string | null;
@@ -123,6 +145,7 @@ export const cloneBitbucketRepository = async ({
 		command += `${buildProviderEchoCommand("Error: ❌ Bitbucket Provider not found")} exit 1;`;
 		return command;
 	}
+	assertBitbucketRepositoryScope(bitbucket, bitbucketOwner);
 	const basePath = type === "compose" ? COMPOSE_PATH : APPLICATIONS_PATH;
 	const outputPath = outputPathOverride ?? join(basePath, appName, "code");
 	command += buildRemovePathCommand(outputPath);
@@ -200,6 +223,7 @@ export const getBitbucketBranches = async (
 	}
 	const bitbucketProvider = await findBitbucketById(input.bitbucketId);
 	const { owner, repo } = input;
+	assertBitbucketRepositoryScope(bitbucketProvider, owner);
 	let url = `https://api.bitbucket.org/2.0/repositories/${owner}/${repo}/refs/branches?pagelen=1`;
 	let allBranches: {
 		name: string;
