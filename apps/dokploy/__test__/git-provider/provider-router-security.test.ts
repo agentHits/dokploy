@@ -8,8 +8,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	assertGitProviderAccess: vi.fn(),
+	assertGitProviderManagementAccess: vi.fn(),
 	createGitea: vi.fn(),
 	createGitlab: vi.fn(),
+	findBitbucketById: vi.fn(),
+	findBitbucketGitProviderId: vi.fn(),
 	findGithubById: vi.fn(),
 	findGithubGitProviderId: vi.fn(),
 	findGiteaById: vi.fn(),
@@ -26,8 +29,10 @@ const mocks = vi.hoisted(() => ({
 	haveGiteaRequirements: vi.fn(() => true),
 	haveGithubRequirements: vi.fn(() => true),
 	haveGitlabRequirements: vi.fn(() => true),
+	testBitbucketConnection: vi.fn(),
 	testGiteaConnection: vi.fn(),
 	testGitlabConnection: vi.fn(),
+	updateBitbucket: vi.fn(),
 	updateGitea: vi.fn(),
 	updateGithub: vi.fn(),
 	updateGitlab: vi.fn(),
@@ -48,8 +53,11 @@ const redactGithubProvider = <T extends object>(provider: T) => {
 
 vi.mock("@dokploy/server", () => ({
 	assertGitProviderAccess: mocks.assertGitProviderAccess,
+	assertGitProviderManagementAccess: mocks.assertGitProviderManagementAccess,
 	createGitea: mocks.createGitea,
 	createGitlab: mocks.createGitlab,
+	findBitbucketById: mocks.findBitbucketById,
+	findBitbucketGitProviderId: mocks.findBitbucketGitProviderId,
 	findGithubById: mocks.findGithubById,
 	findGithubGitProviderId: mocks.findGithubGitProviderId,
 	findGiteaById: mocks.findGiteaById,
@@ -69,8 +77,10 @@ vi.mock("@dokploy/server", () => ({
 	redactGiteaProvider: redactGithubProvider,
 	redactGithubProvider,
 	redactGitlabProvider: redactGithubProvider,
+	testBitbucketConnection: mocks.testBitbucketConnection,
 	testGiteaConnection: mocks.testGiteaConnection,
 	testGitlabConnection: mocks.testGitlabConnection,
+	updateBitbucket: mocks.updateBitbucket,
 	updateGitea: mocks.updateGitea,
 	updateGithub: mocks.updateGithub,
 	updateGitlab: mocks.updateGitlab,
@@ -88,6 +98,7 @@ vi.mock("@/server/api/utils/audit", () => ({
 const { giteaRouter } = await import("../../server/api/routers/gitea");
 const { githubRouter } = await import("../../server/api/routers/github");
 const { gitlabRouter } = await import("../../server/api/routers/gitlab");
+const { bitbucketRouter } = await import("../../server/api/routers/bitbucket");
 
 const createGithubCaller = () =>
 	githubRouter.createCaller({
@@ -140,13 +151,30 @@ const createGiteaCaller = () =>
 		},
 	} as never);
 
+const createBitbucketCaller = () =>
+	bitbucketRouter.createCaller({
+		db: {},
+		req: {},
+		res: {},
+		session: {
+			userId: "user-1",
+			activeOrganizationId: "org-1",
+		},
+		user: {
+			id: "user-1",
+			role: "member",
+		},
+	} as never);
+
 describe("github provider router security boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		permissionMocks.checkPermission.mockResolvedValue(undefined);
+		mocks.assertGitProviderManagementAccess.mockResolvedValue(undefined);
 		mocks.findGithubGitProviderId.mockResolvedValue("gp-1");
 		mocks.findGitlabGitProviderId.mockResolvedValue("gp-1");
 		mocks.findGiteaGitProviderId.mockResolvedValue("gp-1");
+		mocks.findBitbucketGitProviderId.mockResolvedValue("gp-1");
 		mocks.assertGitProviderAccess.mockResolvedValue(undefined);
 		mocks.findGithubById.mockResolvedValue({
 			githubId: "gh-1",
@@ -160,6 +188,10 @@ describe("github provider router security boundary", () => {
 				userId: "user-1",
 			},
 			gitProviderId: "gp-1",
+		});
+		mocks.testBitbucketConnection.mockResolvedValue(8);
+		mocks.updateBitbucket.mockResolvedValue({
+			bitbucketId: "bb-1",
 		});
 	});
 
@@ -356,5 +388,69 @@ describe("github provider router security boundary", () => {
 		expect(mocks.assertGitProviderAccess).not.toHaveBeenCalled();
 		expect(mocks.updateGitProvider).not.toHaveBeenCalled();
 		expect(mocks.updateGitea).not.toHaveBeenCalled();
+	});
+
+	it("rejects bitbucket testConnection for non-owners/admins", async () => {
+		mocks.assertGitProviderManagementAccess.mockRejectedValue(
+			new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You are not authorized to manage this Git provider",
+			}),
+		);
+
+		await expect(
+			createBitbucketCaller().testConnection({
+				bitbucketId: "bb-1",
+			}),
+		).rejects.toMatchObject({
+			code: "UNAUTHORIZED",
+		});
+
+		expect(mocks.assertGitProviderAccess).toHaveBeenCalledWith(
+			"gp-1",
+			expect.objectContaining({
+				userId: "user-1",
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(mocks.assertGitProviderManagementAccess).toHaveBeenCalledWith(
+			"gp-1",
+			expect.objectContaining({
+				userId: "user-1",
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(mocks.testBitbucketConnection).not.toHaveBeenCalled();
+	});
+
+	it("rejects bitbucket update when management authorization is missing", async () => {
+		mocks.assertGitProviderManagementAccess.mockRejectedValue(
+			new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You are not authorized to manage this Git provider",
+			}),
+		);
+
+		await expect(
+			createBitbucketCaller().update({
+				bitbucketId: "bb-1",
+				bitbucketWorkspaceName: "team-a",
+				bitbucketUsername: "workspace",
+				name: "bitbucket",
+				gitProviderId: "gp-1",
+			}),
+		).rejects.toMatchObject({
+			code: "UNAUTHORIZED",
+		});
+
+		expect(mocks.assertGitProviderManagementAccess).toHaveBeenCalledWith(
+			"gp-1",
+			expect.objectContaining({
+				userId: "user-1",
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(mocks.updateBitbucket).not.toHaveBeenCalled();
+		expect(mocks.updateGitProvider).not.toHaveBeenCalled();
 	});
 });

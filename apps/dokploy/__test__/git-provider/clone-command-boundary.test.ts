@@ -76,9 +76,11 @@ vi.mock("@dokploy/server/utils/url/network", async (importOriginal) => {
 	};
 });
 
-const { cloneBitbucketRepository, getBitbucketBranches } = await import(
-	"@dokploy/server/utils/providers/bitbucket"
-);
+const {
+	cloneBitbucketRepository,
+	getBitbucketBranches,
+	testBitbucketConnection,
+} = await import("@dokploy/server/utils/providers/bitbucket");
 const { assertCustomGitUrlAllowed, cloneGitRepository } = await import(
 	"@dokploy/server/utils/providers/git"
 );
@@ -343,6 +345,19 @@ describe("Git provider clone command boundary", () => {
 				bitbucketId: "bitbucket-1",
 				owner: "outside-workspace",
 				repo: "repo",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	it("rejects Bitbucket connection checks outside the configured workspace", async () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+		await expect(
+			testBitbucketConnection({
+				bitbucketId: "bitbucket-1",
+				workspaceName: "outside-workspace",
 			}),
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 

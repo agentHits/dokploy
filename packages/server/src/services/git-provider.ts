@@ -210,3 +210,48 @@ export const assertGitProviderAccess = async (
 		});
 	}
 };
+
+export const assertGitProviderManagementAccess = async (
+	gitProviderId: string | null | undefined,
+	session: GitProviderSession,
+) => {
+	if (!gitProviderId) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: "Git Provider not found",
+		});
+	}
+
+	const memberRecord = await db.query.member.findFirst({
+		where: and(
+			eq(member.userId, session.userId),
+			eq(member.organizationId, session.activeOrganizationId),
+		),
+		columns: {
+			role: true,
+		},
+	});
+
+	if (memberRecord?.role === "owner" || memberRecord?.role === "admin") {
+		return;
+	}
+
+	const gitProviderRecord = await db.query.gitProvider.findFirst({
+		where: eq(gitProvider.gitProviderId, gitProviderId),
+		columns: {
+			userId: true,
+			organizationId: true,
+		},
+	});
+
+	if (
+		!gitProviderRecord ||
+		gitProviderRecord.organizationId !== session.activeOrganizationId ||
+		gitProviderRecord.userId !== session.userId
+	) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not authorized to manage this Git provider",
+		});
+	}
+};

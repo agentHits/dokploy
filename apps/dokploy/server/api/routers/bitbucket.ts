@@ -1,5 +1,6 @@
 import {
 	assertGitProviderAccess,
+	assertGitProviderManagementAccess,
 	createBitbucket,
 	findBitbucketById,
 	findBitbucketGitProviderId,
@@ -109,6 +110,7 @@ export const bitbucketRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			const gitProviderId = await findBitbucketGitProviderId(input.bitbucketId);
 			await assertGitProviderAccess(gitProviderId, ctx.session);
+			await assertGitProviderManagementAccess(gitProviderId, ctx.session);
 
 			try {
 				const result = await testBitbucketConnection(input);
@@ -126,6 +128,7 @@ export const bitbucketRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			const gitProviderId = await findBitbucketGitProviderId(input.bitbucketId);
 			await assertGitProviderAccess(gitProviderId, ctx.session);
+			await assertGitProviderManagementAccess(gitProviderId, ctx.session);
 
 			const result = await updateBitbucket(input.bitbucketId, {
 				...input,

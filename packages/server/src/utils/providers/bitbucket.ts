@@ -280,9 +280,15 @@ export const testBitbucketConnection = async (
 		throw new Error("Bitbucket provider not found");
 	}
 
-	const { bitbucketUsername, workspaceName } = input;
+	const configuredWorkspace =
+		bitbucketProvider.bitbucketWorkspaceName ||
+		bitbucketProvider.bitbucketUsername;
+	const requestedWorkspace =
+		input.workspaceName || input.bitbucketUsername || configuredWorkspace;
 
-	const username = workspaceName || bitbucketUsername;
+	assertBitbucketRepositoryScope(bitbucketProvider, requestedWorkspace);
+
+	const username = requestedWorkspace;
 
 	const url = `https://api.bitbucket.org/2.0/repositories/${username}`;
 	try {
