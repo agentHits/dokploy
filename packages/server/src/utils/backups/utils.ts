@@ -471,7 +471,7 @@ export const getBackupCommand = (
 	# Run the backup command and capture the exit status
 	BACKUP_OUTPUT=$(${backupCommand} 2>&1 >/dev/null) || {
 		echo "[$(date)] ❌ Error: Backup failed" >> ${logPath};
-		echo "Error: $BACKUP_OUTPUT" >> ${logPath};
+		echo "Error: Backup command failed. Check server logs for details." >> ${logPath};
 		exit 1;
 	}
 
@@ -481,7 +481,7 @@ export const getBackupCommand = (
 	# Run the upload command and capture the exit status
 	UPLOAD_OUTPUT=$(${backupCommand} | ${rcloneCommand} 2>&1 >/dev/null) || {
 		echo "[$(date)] ❌ Error: Upload to S3 failed" >> ${logPath};
-		echo "Error: $UPLOAD_OUTPUT" >> ${logPath};
+		echo "Error: Upload command failed. Check server logs for details." >> ${logPath};
 		exit 1;
 	}
 

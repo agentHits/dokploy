@@ -273,6 +273,43 @@ describe("destination rclone command boundary", () => {
 		);
 	});
 
+	it("does not append raw backup command output to deployment logs on failure", async () => {
+		await runPostgresBackup(
+			{
+				appName: "postgres-app",
+				environmentId: "environment-1",
+				name: "Postgres",
+				serverId: "server-1",
+			} as never,
+			{
+				backupId: "backup-1",
+				backupType: "database",
+				database: "appdb",
+				databaseType: "postgres",
+				destinationId: "destination-1",
+				prefix: "prefix",
+				postgresId: "postgres-1",
+				postgres: {
+					appName: "postgres-app",
+					databaseUser: "postgres",
+				},
+			} as never,
+		);
+
+		const command = mocks.execAsyncRemote.mock.calls[0]?.[1] as string;
+
+		expect(command).toContain("BACKUP_OUTPUT=");
+		expect(command).toContain("UPLOAD_OUTPUT=");
+		expect(command).toContain(
+			"Error: Backup command failed. Check server logs for details.",
+		);
+		expect(command).toContain(
+			"Error: Upload command failed. Check server logs for details.",
+		);
+		expect(command).not.toContain('echo "Error: $BACKUP_OUTPUT"');
+		expect(command).not.toContain('echo "Error: $UPLOAD_OUTPUT"');
+	});
+
 	it("wraps retention rclone delete commands after xargs", async () => {
 		await keepLatestNBackups({
 			backupId: "backup-1",
