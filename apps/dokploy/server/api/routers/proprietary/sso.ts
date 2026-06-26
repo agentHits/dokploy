@@ -13,6 +13,10 @@ import {
 	REDACTED_SECRET_VALUE,
 	redactSensitiveText,
 } from "@dokploy/server/utils/security/redaction";
+import {
+	assertTenantTrustedOriginAllowed,
+	filterTenantTrustedOrigins,
+} from "@dokploy/server/utils/security/trusted-origin";
 import { TRPCError } from "@trpc/server";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -199,6 +203,20 @@ const redactSsoProviderSecrets = <
 	samlConfig: redactSamlConfig(provider.samlConfig),
 });
 
+const resolveTenantTrustedOriginInput = async (origin: string) => {
+	try {
+		return await assertTenantTrustedOriginAllowed(
+			normalizeTrustedOrigin(origin),
+		);
+	} catch (error) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message:
+				error instanceof Error ? error.message : "Invalid trusted origin",
+		});
+	}
+};
+
 export const ssoRouter = createTRPCRouter({
 	showSignInWithSSO: publicProcedure.query(async () => {
 		if (IS_CLOUD) {
@@ -257,7 +275,7 @@ export const ssoRouter = createTRPCRouter({
 			where: eq(user.id, ownerId),
 			columns: { trustedOrigins: true },
 		});
-		return ownerUser?.trustedOrigins ?? [];
+		return await filterTenantTrustedOrigins(ownerUser?.trustedOrigins ?? []);
 	}),
 	one: enterpriseProcedure
 		.input(z.object({ providerId: z.string().min(1) }))
@@ -355,7 +373,9 @@ export const ssoRouter = createTRPCRouter({
 					where: eq(user.id, ownerId),
 					columns: { trustedOrigins: true },
 				});
-				const trustedOrigins = ownerUser?.trustedOrigins ?? [];
+				const trustedOrigins = await filterTenantTrustedOrigins(
+					ownerUser?.trustedOrigins ?? [],
+				);
 				const newOrigin = normalizeTrustedOrigin(input.issuer);
 				const isInTrustedOrigins = trustedOrigins.some(
 					(o) => o.toLowerCase() === newOrigin.toLowerCase(),
@@ -493,16 +513,18 @@ export const ssoRouter = createTRPCRouter({
 					message: "Organization owner not found",
 				});
 			}
-			const normalized = normalizeTrustedOrigin(input.origin);
+			const trustedOrigin = await resolveTenantTrustedOriginInput(input.origin);
 			const ownerUser = await db.query.user.findFirst({
 				where: eq(user.id, ownerId),
 				columns: { trustedOrigins: true },
 			});
 			const existing = ownerUser?.trustedOrigins || [];
-			if (existing.some((o) => o.toLowerCase() === normalized.toLowerCase())) {
+			if (
+				existing.some((o) => o.toLowerCase() === trustedOrigin.toLowerCase())
+			) {
 				return { success: true };
 			}
-			const next = Array.from(new Set([...existing, normalized]));
+			const next = Array.from(new Set([...existing, trustedOrigin]));
 			await db
 				.update(user)
 				.set({ trustedOrigins: next })
@@ -554,14 +576,16 @@ export const ssoRouter = createTRPCRouter({
 				});
 			}
 			const oldNorm = normalizeTrustedOrigin(input.oldOrigin);
-			const newNorm = normalizeTrustedOrigin(input.newOrigin);
+			const trustedOrigin = await resolveTenantTrustedOriginInput(
+				input.newOrigin,
+			);
 			const ownerUser = await db.query.user.findFirst({
 				where: eq(user.id, ownerId),
 				columns: { trustedOrigins: true },
 			});
 			const existing = ownerUser?.trustedOrigins || [];
 			const next = existing.map((o) =>
-				o.toLowerCase() === oldNorm.toLowerCase() ? newNorm : o,
+				o.toLowerCase() === oldNorm.toLowerCase() ? trustedOrigin : o,
 			);
 			await db
 				.update(user)

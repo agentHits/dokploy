@@ -11,10 +11,13 @@ const mocks = vi.hoisted(() => ({
 	updateSSOProvider: vi.fn(),
 	updateSet: vi.fn(),
 	updateWhere: vi.fn(),
+	userFindFirst: vi.fn(),
 }));
 
 vi.mock("@dokploy/server", () => ({
+	getOrganizationOwnerId: vi.fn().mockResolvedValue("owner-1"),
 	normalizeTrustedOrigin: (origin: string) => origin,
+	requestToHeaders: mocks.requestToHeaders,
 }));
 
 vi.mock("@dokploy/server/constants", () => ({
@@ -32,7 +35,7 @@ vi.mock("@dokploy/server/db", () => ({
 				findMany: mocks.ssoProviderFindMany,
 			},
 			user: {
-				findFirst: vi.fn(),
+				findFirst: mocks.userFindFirst,
 			},
 		},
 		delete: vi.fn(() => ({
@@ -148,6 +151,7 @@ describe("SSO provider owner boundary", () => {
 		});
 		mocks.ssoProviderFindMany.mockResolvedValue([]);
 		mocks.deleteReturning.mockResolvedValue([{ id: "provider-row-1" }]);
+		mocks.userFindFirst.mockResolvedValue({ trustedOrigins: [] });
 	});
 
 	it.each([
@@ -371,5 +375,77 @@ describe("SSO provider owner boundary", () => {
 				}),
 			}),
 		);
+	});
+
+	it("rejects private tenant trusted origins before storing them", async () => {
+		await expect(
+			createCaller("owner").addTrustedOrigin({
+				origin: "https://127.0.0.1:8443",
+			}),
+		).rejects.toMatchObject({
+			code: "BAD_REQUEST",
+			message: expect.stringMatching(/Trusted origin/i),
+		});
+
+		expect(mocks.updateSet).not.toHaveBeenCalled();
+	});
+
+	it("stores only public HTTPS tenant trusted origins", async () => {
+		await expect(
+			createCaller("owner").addTrustedOrigin({
+				origin: "https://8.8.8.8",
+			}),
+		).resolves.toEqual({ success: true });
+
+		expect(mocks.updateSet).toHaveBeenCalledWith({
+			trustedOrigins: ["https://8.8.8.8"],
+		});
+	});
+
+	it("rejects private tenant trusted origin updates before storing them", async () => {
+		mocks.userFindFirst.mockResolvedValue({
+			trustedOrigins: ["https://8.8.8.8"],
+		});
+
+		await expect(
+			createCaller("owner").updateTrustedOrigin({
+				oldOrigin: "https://8.8.8.8",
+				newOrigin: "https://127.0.0.1:8443",
+			}),
+		).rejects.toMatchObject({
+			code: "BAD_REQUEST",
+			message: expect.stringMatching(/Trusted origin/i),
+		});
+
+		expect(mocks.updateSet).not.toHaveBeenCalled();
+	});
+
+	it("filters private legacy trusted origins from tenant reads", async () => {
+		mocks.userFindFirst.mockResolvedValue({
+			trustedOrigins: ["https://8.8.8.8", "https://127.0.0.1:8443"],
+		});
+
+		await expect(createCaller("owner").getTrustedOrigins()).resolves.toEqual([
+			"https://8.8.8.8",
+		]);
+	});
+
+	it("does not allow legacy private trusted origins to approve issuer changes", async () => {
+		mocks.userFindFirst.mockResolvedValue({
+			trustedOrigins: ["https://127.0.0.1:8443"],
+		});
+
+		await expect(
+			createCaller("owner").update({
+				...providerInput,
+				issuer: "https://127.0.0.1:8443",
+			}),
+		).rejects.toMatchObject({
+			code: "BAD_REQUEST",
+			message:
+				"The new Issuer URL is not in the organization's trusted origins list. Please add it in Manage origins before saving.",
+		});
+
+		expect(mocks.updateSSOProvider).not.toHaveBeenCalled();
 	});
 });
