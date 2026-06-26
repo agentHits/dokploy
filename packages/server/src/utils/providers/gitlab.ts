@@ -29,6 +29,26 @@ const getGitlabProviderBaseUrl = (gitlabProvider: GitlabProviderBaseUrl) =>
 		{ fieldName: "GitLab provider URL" },
 	);
 
+const getGitlabGroupNames = (groupName?: string | null) =>
+	groupName
+		?.split(",")
+		.map((name) => name.trim().toLowerCase())
+		.filter(Boolean);
+
+const isGitlabNamespaceInConfiguredGroup = (
+	pathNamespace: string,
+	groupName?: string | null,
+) => {
+	const normalizedPathNamespace = pathNamespace.toLowerCase();
+	const groupNames = getGitlabGroupNames(groupName);
+
+	return groupNames?.some(
+		(name) =>
+			normalizedPathNamespace === name ||
+			normalizedPathNamespace.startsWith(`${name}/`),
+	);
+};
+
 export const assertGitlabProjectScope = (
 	gitlabProvider: Pick<Gitlab, "groupName">,
 	input: {
@@ -37,25 +57,17 @@ export const assertGitlabProjectScope = (
 		repo?: string | null;
 	},
 ) => {
-	const groupNames = gitlabProvider.groupName
-		?.split(",")
-		.map((name) => name.trim().toLowerCase())
-		.filter(Boolean);
+	const groupNames = getGitlabGroupNames(gitlabProvider.groupName);
 
 	if (!groupNames?.length) {
 		return;
 	}
 
 	const pathNamespace = getGitlabProjectPathNamespace(input);
-	const normalizedPathNamespace = pathNamespace.toLowerCase();
 
 	if (
 		!pathNamespace ||
-		!groupNames.some(
-			(groupName) =>
-				normalizedPathNamespace === groupName ||
-				normalizedPathNamespace.startsWith(`${groupName}/`),
-		)
+		!isGitlabNamespaceInConfiguredGroup(pathNamespace, gitlabProvider.groupName)
 	) {
 		throw new TRPCError({
 			code: "UNAUTHORIZED",
@@ -249,14 +261,12 @@ export const getGitlabRepositories = async (gitlabId?: string) => {
 
 	const filteredRepos = allProjects.filter((repo: any) => {
 		const { full_path, kind } = repo.namespace;
-		const groupName = gitlabProvider.groupName?.toLowerCase();
 
-		if (groupName) {
-			return groupName
-				.split(",")
-				.some((name: string) =>
-					full_path.toLowerCase().startsWith(name.trim().toLowerCase()),
-				);
+		if (gitlabProvider.groupName) {
+			return isGitlabNamespaceInConfiguredGroup(
+				full_path,
+				gitlabProvider.groupName,
+			);
 		}
 		return kind === "user";
 	});
@@ -377,11 +387,7 @@ export const testGitlabConnection = async (
 		const { full_path, kind } = repo.namespace;
 
 		if (groupName) {
-			return groupName
-				.split(",")
-				.some((name: string) =>
-					full_path.toLowerCase().startsWith(name.trim().toLowerCase()),
-				);
+			return isGitlabNamespaceInConfiguredGroup(full_path, groupName);
 		}
 		return kind === "user";
 	});

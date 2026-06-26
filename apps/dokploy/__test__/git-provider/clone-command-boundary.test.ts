@@ -89,8 +89,13 @@ const { assertGiteaRepositoryScope, cloneGiteaRepository, getGiteaBranches } =
 const { cloneGithubRepository } = await import(
 	"@dokploy/server/utils/providers/github"
 );
-const { assertGitlabProjectScope, cloneGitlabRepository, getGitlabBranches } =
-	await import("@dokploy/server/utils/providers/gitlab");
+const {
+	assertGitlabProjectScope,
+	cloneGitlabRepository,
+	getGitlabBranches,
+	getGitlabRepositories,
+	testGitlabConnection,
+} = await import("@dokploy/server/utils/providers/gitlab");
 
 const parseShellArgs = (command: string) =>
 	parse(command).filter((part): part is string => typeof part === "string");
@@ -446,6 +451,118 @@ describe("Git provider clone command boundary", () => {
 				{ pathNamespace: "allowed/group/repo" },
 			),
 		).not.toThrow();
+	});
+
+	it("filters GitLab repository listing by configured group boundaries", async () => {
+		mocks.findGitlabById.mockResolvedValue({
+			accessToken: fixtures.gitlabToken,
+			expiresAt: 4_102_444_800,
+			groupName: "foo",
+			gitlabInternalUrl: null,
+			gitlabUrl: fixtures.gitlabBaseUrl,
+			refreshToken: "refresh-token",
+		});
+		mocks.fetchWithPublicEgress.mockResolvedValue(
+			new Response(
+				JSON.stringify([
+					{
+						id: 1,
+						name: "allowed-root",
+						namespace: { full_path: "foo", kind: "group", path: "foo" },
+						path_with_namespace: "foo/allowed-root",
+					},
+					{
+						id: 2,
+						name: "allowed-child",
+						namespace: {
+							full_path: "foo/subgroup",
+							kind: "group",
+							path: "subgroup",
+						},
+						path_with_namespace: "foo/subgroup/allowed-child",
+					},
+					{
+						id: 3,
+						name: "prefix-collision",
+						namespace: {
+							full_path: "foobar",
+							kind: "group",
+							path: "foobar",
+						},
+						path_with_namespace: "foobar/prefix-collision",
+					},
+				]),
+				{
+					headers: {
+						"x-total": "3",
+					},
+					status: 200,
+				},
+			),
+		);
+
+		await expect(getGitlabRepositories("gitlab-1")).resolves.toEqual([
+			{
+				id: 1,
+				name: "allowed-root",
+				owner: { username: "foo" },
+				url: "foo/allowed-root",
+			},
+			{
+				id: 2,
+				name: "allowed-child",
+				owner: { username: "subgroup" },
+				url: "foo/subgroup/allowed-child",
+			},
+		]);
+	});
+
+	it("counts GitLab connection repositories by group boundaries", async () => {
+		mocks.fetchWithPublicEgress.mockResolvedValue(
+			new Response(
+				JSON.stringify([
+					{
+						id: 1,
+						name: "allowed-root",
+						namespace: { full_path: "foo", kind: "group", path: "foo" },
+						path_with_namespace: "foo/allowed-root",
+					},
+					{
+						id: 2,
+						name: "allowed-child",
+						namespace: {
+							full_path: "foo/subgroup",
+							kind: "group",
+							path: "subgroup",
+						},
+						path_with_namespace: "foo/subgroup/allowed-child",
+					},
+					{
+						id: 3,
+						name: "prefix-collision",
+						namespace: {
+							full_path: "foobar",
+							kind: "group",
+							path: "foobar",
+						},
+						path_with_namespace: "foobar/prefix-collision",
+					},
+				]),
+				{
+					headers: {
+						"x-total": "3",
+					},
+					status: 200,
+				},
+			),
+		);
+
+		await expect(
+			testGitlabConnection({
+				gitlabId: "gitlab-1",
+				groupName: "foo",
+			}),
+		).resolves.toBe(2);
 	});
 
 	it("quotes Gitea clone metadata", async () => {
