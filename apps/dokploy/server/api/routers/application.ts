@@ -90,6 +90,44 @@ const applicationRegistryFields = [
 	"rollbackRegistryId",
 ] as const;
 
+const applicationSourceUpdateFields = [
+	"bitbucketBranch",
+	"bitbucketBuildPath",
+	"bitbucketId",
+	"bitbucketOwner",
+	"bitbucketRepository",
+	"bitbucketRepositorySlug",
+	"branch",
+	"buildPath",
+	"customGitBranch",
+	"customGitBuildPath",
+	"customGitSSHKeyId",
+	"customGitUrl",
+	"dockerImage",
+	"enableSubmodules",
+	"giteaBranch",
+	"giteaBuildPath",
+	"giteaId",
+	"giteaOwner",
+	"giteaRepository",
+	"githubId",
+	"gitlabBranch",
+	"gitlabBuildPath",
+	"gitlabId",
+	"gitlabOwner",
+	"gitlabPathNamespace",
+	"gitlabProjectId",
+	"gitlabRepository",
+	"owner",
+	"password",
+	"registryUrl",
+	"repository",
+	"sourceType",
+	"triggerType",
+	"username",
+	"watchPaths",
+] as const;
+
 type ApplicationRegistryUpdateInput = Pick<
 	z.infer<typeof apiUpdateApplication>,
 	(typeof applicationRegistryFields)[number]
@@ -121,6 +159,54 @@ const assertApplicationRegistryAccess = async (
 				message: "You are not authorized to use this registry",
 			});
 		}
+	}
+};
+
+type ApplicationSourceUpdateInput = {
+	applicationId: string;
+	[key: string]: unknown;
+};
+
+const hasApplicationSourceUpdate = (input: ApplicationSourceUpdateInput) =>
+	applicationSourceUpdateFields.some((field) => Object.hasOwn(input, field));
+
+const getCurrentApplicationGitProviderId = (
+	application: Awaited<ReturnType<typeof findApplicationById>>,
+) => {
+	switch (application.sourceType) {
+		case "github":
+			return application.github?.gitProviderId;
+		case "gitlab":
+			return application.gitlab?.gitProviderId;
+		case "bitbucket":
+			return application.bitbucket?.gitProviderId;
+		case "gitea":
+			return application.gitea?.gitProviderId;
+		default:
+			return null;
+	}
+};
+
+const assertCurrentApplicationSourceEditAccess = async (
+	input: ApplicationSourceUpdateInput,
+	session: { userId: string; activeOrganizationId: string },
+) => {
+	if (!hasApplicationSourceUpdate(input)) {
+		return;
+	}
+
+	const application = await findApplicationById(input.applicationId);
+	const gitProviderId = getCurrentApplicationGitProviderId(application);
+	if (!gitProviderId) {
+		return;
+	}
+
+	const canEdit = await canEditDeployGitSource(gitProviderId, session);
+	if (!canEdit) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not authorized to edit this application source",
+		});
 	}
 };
 
@@ -467,6 +553,7 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertCurrentApplicationSourceEditAccess(input, ctx.session);
 			await assertDeploySourceCredentialAccess(
 				{ githubId: input.githubId },
 				ctx.session,
@@ -499,6 +586,7 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertCurrentApplicationSourceEditAccess(input, ctx.session);
 			await assertDeploySourceCredentialAccess(
 				{
 					gitlabId: input.gitlabId,
@@ -537,6 +625,7 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertCurrentApplicationSourceEditAccess(input, ctx.session);
 			await assertDeploySourceCredentialAccess(
 				{
 					bitbucketId: input.bitbucketId,
@@ -572,6 +661,7 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertCurrentApplicationSourceEditAccess(input, ctx.session);
 			await assertDeploySourceCredentialAccess(
 				{ giteaId: input.giteaId },
 				ctx.session,
@@ -603,6 +693,10 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertCurrentApplicationSourceEditAccess(
+				{ ...input, sourceType: null },
+				ctx.session,
+			);
 			await updateApplication(input.applicationId, {
 				dockerImage: input.dockerImage,
 				username: input.username,
@@ -626,6 +720,7 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertCurrentApplicationSourceEditAccess(input, ctx.session);
 			await assertDeploySourceCredentialAccess(
 				{ customGitSSHKeyId: input.customGitSSHKeyId },
 				ctx.session,
@@ -657,6 +752,10 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertCurrentApplicationSourceEditAccess(
+				{ ...input, sourceType: null },
+				ctx.session,
+			);
 			await updateApplication(input.applicationId, {
 				repository: null,
 				branch: null,
@@ -725,6 +824,7 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				service: ["create"],
 			});
+			await assertCurrentApplicationSourceEditAccess(input, ctx.session);
 
 			if (input.buildServerId) {
 				const accessibleIds = await getAccessibleServerIds(ctx.session);
@@ -901,6 +1001,10 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, applicationId, {
 				deployment: ["create"],
 			});
+			await assertCurrentApplicationSourceEditAccess(
+				{ applicationId, sourceType: "drop" },
+				ctx.session,
+			);
 			const app = await findApplicationById(applicationId);
 
 			await updateApplication(applicationId, {

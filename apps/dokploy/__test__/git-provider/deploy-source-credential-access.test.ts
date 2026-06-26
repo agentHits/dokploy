@@ -391,6 +391,156 @@ describe("deploy source credential access", () => {
 		expect(serverMocks.updateApplication).not.toHaveBeenCalled();
 	});
 
+	it("rejects application source replacement when the current provider edit guard denies access", async () => {
+		serverMocks.findApplicationById.mockResolvedValueOnce({
+			applicationId: "app-1",
+			sourceType: "gitlab",
+			gitlab: {
+				gitProviderId: "git-provider-current",
+			},
+		});
+		serverMocks.canEditDeployGitSource.mockResolvedValue(false);
+
+		await expect(
+			applicationRouter
+				.createCaller(createContext())
+				.saveGithubProvider(githubInput),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(serverMocks.canEditDeployGitSource).toHaveBeenCalledWith(
+			"git-provider-current",
+			expect.objectContaining({
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(serverMocks.findGithubGitProviderId).not.toHaveBeenCalled();
+		expect(serverMocks.updateApplication).not.toHaveBeenCalled();
+	});
+
+	it("rejects application source metadata updates when the current provider edit guard denies access", async () => {
+		serverMocks.findApplicationById.mockResolvedValueOnce({
+			applicationId: "app-1",
+			sourceType: "github",
+			github: {
+				gitProviderId: "git-provider-current",
+			},
+		});
+		serverMocks.canEditDeployGitSource.mockResolvedValue(false);
+
+		await expect(
+			applicationRouter.createCaller(createContext()).update({
+				applicationId: "app-1",
+				enableSubmodules: true,
+				triggerType: "tag",
+				watchPaths: ["src/**"],
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(serverMocks.canEditDeployGitSource).toHaveBeenCalledWith(
+			"git-provider-current",
+			expect.objectContaining({
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(serverMocks.updateApplication).not.toHaveBeenCalled();
+	});
+
+	it("rejects application source conversion to docker when the current provider edit guard denies access", async () => {
+		serverMocks.findApplicationById.mockResolvedValueOnce({
+			applicationId: "app-1",
+			sourceType: "bitbucket",
+			bitbucket: {
+				gitProviderId: "git-provider-current",
+			},
+		});
+		serverMocks.canEditDeployGitSource.mockResolvedValue(false);
+
+		await expect(
+			applicationRouter.createCaller(createContext()).saveDockerProvider({
+				applicationId: "app-1",
+				dockerImage: "dokploy/app:latest",
+				password: "",
+				registryUrl: "",
+				username: "",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(serverMocks.canEditDeployGitSource).toHaveBeenCalledWith(
+			"git-provider-current",
+			expect.objectContaining({
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(serverMocks.updateApplication).not.toHaveBeenCalled();
+	});
+
+	it("rejects application source disconnect when the current provider edit guard denies access", async () => {
+		serverMocks.findApplicationById.mockResolvedValueOnce({
+			applicationId: "app-1",
+			sourceType: "gitea",
+			gitea: {
+				gitProviderId: "git-provider-current",
+			},
+		});
+		serverMocks.canEditDeployGitSource.mockResolvedValue(false);
+
+		await expect(
+			applicationRouter
+				.createCaller(createContext())
+				.disconnectGitProvider({ applicationId: "app-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(serverMocks.canEditDeployGitSource).toHaveBeenCalledWith(
+			"git-provider-current",
+			expect.objectContaining({
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(serverMocks.updateApplication).not.toHaveBeenCalled();
+	});
+
+	it("rejects application drop deployment when the current provider edit guard denies access", async () => {
+		serverMocks.findApplicationById.mockResolvedValueOnce({
+			applicationId: "app-1",
+			sourceType: "github",
+			github: {
+				gitProviderId: "git-provider-current",
+			},
+		});
+		serverMocks.canEditDeployGitSource.mockResolvedValue(false);
+
+		await expect(
+			applicationRouter.createCaller(createContext()).dropDeployment({
+				applicationId: "app-1",
+				dropBuildPath: "/",
+				zip: new File(["zip"], "app.zip", {
+					type: "application/zip",
+				}),
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(serverMocks.canEditDeployGitSource).toHaveBeenCalledWith(
+			"git-provider-current",
+			expect.objectContaining({
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(serverMocks.updateApplication).not.toHaveBeenCalled();
+		expect(serverMocks.unzipDrop).not.toHaveBeenCalled();
+	});
+
+	it("allows non-source application updates without the current provider edit guard", async () => {
+		await expect(
+			applicationRouter.createCaller(createContext()).update({
+				applicationId: "app-1",
+				buildType: "dockerfile",
+			}),
+		).resolves.toBe(true);
+
+		expect(serverMocks.canEditDeployGitSource).not.toHaveBeenCalled();
+		expect(serverMocks.updateApplication).toHaveBeenCalled();
+	});
+
 	it.each([
 		["runtime registry", "registryId"],
 		["build registry", "buildRegistryId"],
