@@ -262,8 +262,76 @@ describe("registry router remote test login boundary", () => {
 				dangerousPassword,
 			),
 		);
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			server: ["execute"],
+		});
 		expect(mocks.execAsyncRemote.mock.calls[0]?.[1]).not.toContain(
 			`echo ${dangerousPassword}`,
+		);
+	});
+
+	it("requires server execute before loading stored credentials for remote registry tests", async () => {
+		mocks.checkPermission.mockImplementation(async (_ctx, permissions) => {
+			if (
+				JSON.stringify(permissions) === JSON.stringify({ server: ["execute"] })
+			) {
+				throw new TRPCError({ code: "UNAUTHORIZED" });
+			}
+		});
+
+		await expect(
+			createCaller().testRegistryById({
+				registryId: "registry-1",
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			registry: ["create"],
+		});
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			server: ["execute"],
+		});
+		expect(mocks.findRegistryRecord).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+		expect(mocks.execFileAsync).not.toHaveBeenCalled();
+	});
+
+	it("does not require server execute for local stored registry tests", async () => {
+		mocks.findRegistryRecord.mockResolvedValue({
+			registryId: "registry-1",
+			registryName: "registry",
+			registryUrl: "registry.example.com",
+			registryType: "cloud",
+			username: dangerousUsername,
+			password: dangerousPassword,
+			organizationId: "org-1",
+		});
+
+		await expect(
+			createCaller().testRegistryById({
+				registryId: "registry-1",
+				serverId: "none",
+			}),
+		).resolves.toBe(true);
+
+		expect(mocks.checkPermission).not.toHaveBeenCalledWith(expect.anything(), {
+			server: ["execute"],
+		});
+		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+		expect(mocks.execFileAsync).toHaveBeenCalledWith(
+			"docker",
+			[
+				"login",
+				"registry.example.com",
+				"--username",
+				dangerousUsername,
+				"--password-stdin",
+			],
+			{
+				input: dangerousPassword,
+			},
 		);
 	});
 

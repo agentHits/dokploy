@@ -10,6 +10,7 @@ import {
 	updateRegistry,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
+import { checkPermission } from "@dokploy/server/services/permission";
 import {
 	isRedactedSecretValue,
 	redactSecretFields,
@@ -57,6 +58,27 @@ const assertCloudRegistryTestServer = (serverId?: string) => {
 			code: "NOT_FOUND",
 			message: "Select a server to test the registry",
 		});
+	}
+};
+
+const isRemoteRegistryTestServer = (serverId?: string) =>
+	Boolean(serverId && serverId !== "none");
+
+const assertStoredRegistryRemoteTestAccess = async (
+	ctx: {
+		user: { id: string };
+		session: {
+			userId: string;
+			activeOrganizationId: string;
+		};
+	},
+	serverId?: string,
+) => {
+	assertCloudRegistryTestServer(serverId);
+	await assertRegistryServerAccess(ctx, serverId);
+
+	if (isRemoteRegistryTestServer(serverId)) {
+		await checkPermission(ctx, { server: ["execute"] });
 	}
 };
 
@@ -208,6 +230,8 @@ export const registryRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			let registryPassword: string | null | undefined;
 			try {
+				await assertStoredRegistryRemoteTestAccess(ctx, input.serverId);
+
 				const registryData = await db.query.registry.findFirst({
 					where: eq(registry.registryId, input.registryId ?? ""),
 				});
@@ -235,10 +259,7 @@ export const registryRouter = createTRPCRouter({
 					"--password-stdin",
 				];
 
-				assertCloudRegistryTestServer(input.serverId);
-				await assertRegistryServerAccess(ctx, input.serverId);
-
-				if (input.serverId && input.serverId !== "none") {
+				if (isRemoteRegistryTestServer(input.serverId)) {
 					await execAsyncRemote(
 						input.serverId,
 						safeDockerLoginCommand(
