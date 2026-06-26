@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import {
 	type Bitbucket,
 	getBitbucketHeaders,
@@ -5,6 +6,7 @@ import {
 	shouldDeploy,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
+import { Webhooks } from "@octokit/webhooks";
 import { eq } from "drizzle-orm";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { applications } from "@/server/db/schema";
@@ -31,6 +33,76 @@ export const rejectNonPostDeployWebhook = (
 
 	res.setHeader("Allow", "POST");
 	res.status(405).json({ message: "Method Not Allowed" });
+	return true;
+};
+
+const getHeaderValue = (header: string | string[] | undefined) =>
+	Array.isArray(header) ? header[0] : header;
+
+const constantTimeEquals = (actual: string | undefined, expected: string) => {
+	if (!actual) {
+		return false;
+	}
+	const actualBuffer = Buffer.from(actual);
+	const expectedBuffer = Buffer.from(expected);
+	return (
+		actualBuffer.length === expectedBuffer.length &&
+		timingSafeEqual(actualBuffer, expectedBuffer)
+	);
+};
+
+type DeployWebhookProviderCredentials = {
+	github?: { githubWebhookSecret?: string | null } | null;
+	gitlab?: { secret?: string | null } | null;
+	bitbucket?: object | null;
+	gitea?: object | null;
+};
+
+export const isProviderDeployWebhookAuthenticated = async (
+	req: NextApiRequest,
+	providers: DeployWebhookProviderCredentials,
+) => {
+	const provider = getProviderByHeader(req.headers);
+	if (!provider) {
+		return true;
+	}
+
+	if (provider === "github") {
+		const secret = providers.github?.githubWebhookSecret;
+		const signature = getHeaderValue(req.headers["x-hub-signature-256"]);
+		if (!secret || !signature) {
+			return false;
+		}
+
+		const webhooks = new Webhooks({ secret });
+		return webhooks.verify(JSON.stringify(req.body), signature);
+	}
+
+	if (provider === "gitlab") {
+		const secret = providers.gitlab?.secret;
+		if (!secret) {
+			return false;
+		}
+
+		return constantTimeEquals(
+			getHeaderValue(req.headers["x-gitlab-token"]),
+			secret,
+		);
+	}
+
+	return false;
+};
+
+export const rejectUnauthenticatedProviderDeployWebhook = async (
+	req: NextApiRequest,
+	res: NextApiResponse,
+	providers: DeployWebhookProviderCredentials,
+) => {
+	if (await isProviderDeployWebhookAuthenticated(req, providers)) {
+		return false;
+	}
+
+	res.status(401).json({ message: "Invalid webhook signature" });
 	return true;
 };
 

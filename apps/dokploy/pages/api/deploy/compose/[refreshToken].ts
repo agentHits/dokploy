@@ -14,6 +14,7 @@ import {
 	getProviderByHeader,
 	logWebhookError,
 	rejectNonPostDeployWebhook,
+	rejectUnauthenticatedProviderDeployWebhook,
 } from "../[refreshToken]";
 
 export default async function handler(
@@ -39,6 +40,9 @@ export default async function handler(
 					},
 				},
 				bitbucket: true,
+				github: true,
+				gitlab: true,
+				gitea: true,
 			},
 		});
 
@@ -50,6 +54,17 @@ export default async function handler(
 			res.status(400).json({
 				message: "Automatic deployments are disabled for this compose",
 			});
+			return;
+		}
+
+		if (
+			await rejectUnauthenticatedProviderDeployWebhook(req, res, {
+				github: composeResult.github,
+				gitlab: composeResult.gitlab,
+				bitbucket: composeResult.bitbucket,
+				gitea: composeResult.gitea,
+			})
+		) {
 			return;
 		}
 
