@@ -15,6 +15,7 @@ import { quoteShellArgument } from "../shell";
 import {
 	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
+	buildRcloneS3DeleteXargsCommand,
 	getRcloneS3Destination,
 	normalizeS3Path,
 	scheduleBackup,
@@ -163,12 +164,13 @@ export const keepLatestNBackups = async (
 		// when we pipe the above command with this one, we only get the list of files we want to delete
 		const sortAndPickUnwantedBackups = `sort -r | tail -n +$((${backup.keepLatestCount}+1)) | xargs -I{}`;
 		// this command deletes the files
-		// to test the deletion before actually deleting we can add --dry-run before ${backupFilesPath}{}
-		const rcloneDelete = buildRcloneS3Command("delete", destination, [
-			`${backupFilesPath}{}`,
-		]);
+		// the object name from xargs is passed as $1, not interpolated into shell code
+		const rcloneDelete = buildRcloneS3DeleteXargsCommand(
+			destination,
+			backupFilesPath,
+		);
 
-		const rcloneCommand = `${rcloneList} | ${sortAndPickUnwantedBackups} sh -c ${quoteShellArgument(rcloneDelete)}`;
+		const rcloneCommand = `${rcloneList} | ${sortAndPickUnwantedBackups} sh -c ${quoteShellArgument(rcloneDelete)} _ {}`;
 
 		if (serverId) {
 			await execAsyncRemote(serverId, rcloneCommand);

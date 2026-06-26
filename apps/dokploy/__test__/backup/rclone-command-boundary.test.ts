@@ -291,7 +291,10 @@ describe("destination rclone command boundary", () => {
 		const command = mocks.execAsync.mock.calls[0]?.[0] as string;
 
 		expect(command).toContain("xargs -I{} sh -c ");
+		expect(command).toContain("\\$1");
+		expect(command).toContain(" _ {}");
 		expect(command).not.toContain("xargs -I{} RCLONE_CONFIG_");
+		expect(command).not.toContain("dokploys3:my-bucket/postgres-app/prefix/{}");
 		expect(command).toContain("rclone delete");
 	});
 

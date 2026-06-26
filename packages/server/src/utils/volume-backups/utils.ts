@@ -15,6 +15,7 @@ import { scheduledJobs, scheduleJob } from "node-schedule";
 import {
 	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
+	buildRcloneS3DeleteXargsCommand,
 	getRcloneS3Destination,
 	normalizeS3Path,
 	shouldRunBackupRetention,
@@ -109,10 +110,11 @@ const cleanupOldVolumeBackups = async (
 			backupFilesPath,
 		]);
 		const sortAndPick = `sort -r | tail -n +$((${keepLatestCount}+1)) | xargs -I{}`;
-		const deleteCommand = buildRcloneS3Command("delete", safeDestination, [
-			`${backupFilesPath}{}`,
-		]);
-		const fullCommand = `${listCommand} | ${sortAndPick} sh -c ${quoteShellArgument(deleteCommand)}`;
+		const deleteCommand = buildRcloneS3DeleteXargsCommand(
+			safeDestination,
+			backupFilesPath,
+		);
+		const fullCommand = `${listCommand} | ${sortAndPick} sh -c ${quoteShellArgument(deleteCommand)} _ {}`;
 
 		if (serverId) {
 			await execAsyncRemote(serverId, fullCommand);

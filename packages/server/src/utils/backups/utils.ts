@@ -195,6 +195,15 @@ export const buildRcloneS3Command = (
 		buildRcloneCommand([command, ...getS3RuntimeArgs(destination), ...args]),
 	].join(" ");
 
+export const buildRcloneS3DeleteXargsCommand = (
+	destination: RcloneS3Destination,
+	pathPrefix: string,
+) =>
+	[
+		...getRcloneS3EnvironmentAssignments(destination),
+		`${buildRcloneCommand(["delete", ...getS3RuntimeArgs(destination)])} ${quoteShellArgument(pathPrefix)}"$1"`,
+	].join(" ");
+
 export const assertRcloneS3DestinationAllowed = async (
 	destination: RcloneS3Destination,
 ) => {
