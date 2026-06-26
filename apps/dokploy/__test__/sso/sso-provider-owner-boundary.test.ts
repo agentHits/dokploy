@@ -309,4 +309,67 @@ describe("SSO provider owner boundary", () => {
 			existingSamlConfig.spMetadata.encPrivateKeyPass,
 		);
 	});
+
+	it("rejects SSO provider updates that reuse a domain from another organization", async () => {
+		mocks.ssoProviderFindFirst.mockResolvedValue({
+			id: "provider-row-1",
+			issuer: "https://idp.example.com",
+			domain: "example.com",
+			oidcConfig: JSON.stringify({ clientSecret: "stored-secret" }),
+			samlConfig: null,
+			userId: "user-1",
+		});
+		mocks.ssoProviderFindMany.mockResolvedValue([
+			{
+				id: "provider-row-1",
+				domain: "example.com",
+			},
+			{
+				id: "other-org-provider",
+				domain: "shared.example.com",
+			},
+		]);
+
+		await expect(
+			createCaller("owner").update({
+				...providerInput,
+				domains: ["shared.example.com"],
+			}),
+		).rejects.toMatchObject({
+			code: "BAD_REQUEST",
+			message:
+				"Domain shared.example.com is already registered for another provider",
+		});
+
+		expect(mocks.updateSSOProvider).not.toHaveBeenCalled();
+	});
+
+	it("allows SSO provider updates to keep domains from the same provider row", async () => {
+		mocks.ssoProviderFindFirst.mockResolvedValue({
+			id: "provider-row-1",
+			issuer: "https://idp.example.com",
+			domain: "example.com",
+			oidcConfig: JSON.stringify({ clientSecret: "stored-secret" }),
+			samlConfig: null,
+			userId: "user-1",
+		});
+		mocks.ssoProviderFindMany.mockResolvedValue([
+			{
+				id: "provider-row-1",
+				domain: "example.com",
+			},
+		]);
+
+		await expect(createCaller("owner").update(providerInput)).resolves.toEqual({
+			success: true,
+		});
+
+		expect(mocks.updateSSOProvider).toHaveBeenCalledWith(
+			expect.objectContaining({
+				body: expect.objectContaining({
+					domain: "example.com",
+				}),
+			}),
+		);
+	});
 });

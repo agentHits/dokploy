@@ -320,12 +320,11 @@ export const ssoRouter = createTRPCRouter({
 			}
 
 			const providers = await db.query.ssoProvider.findMany({
-				where: eq(ssoProvider.organizationId, ctx.session.activeOrganizationId),
-				columns: { providerId: true, domain: true },
+				columns: { id: true, domain: true },
 			});
 
 			for (const provider of providers) {
-				if (provider.providerId === input.providerId) continue;
+				if (provider.id === existing.id) continue;
 				const providerDomains = provider.domain
 					.split(",")
 					.map((d) => d.trim().toLowerCase());
