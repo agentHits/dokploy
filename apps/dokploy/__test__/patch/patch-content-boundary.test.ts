@@ -134,4 +134,21 @@ describe("patch content boundary", () => {
 		expect(mocks.findApplicationById).not.toHaveBeenCalled();
 		expect(mocks.readPatchRepoFile).not.toHaveBeenCalled();
 	});
+
+	it("denies repository directory browsing before listing without service.create", async () => {
+		mocks.checkServicePermissionAndAccess.mockRejectedValueOnce(
+			new Error("service create denied"),
+		);
+
+		await expect(
+			createCaller().readRepoDirectories({
+				id: "app-1",
+				type: "application",
+				repoPath: "src",
+			}),
+		).rejects.toThrow("service create denied");
+
+		expect(mocks.findApplicationById).not.toHaveBeenCalled();
+		expect(mocks.readPatchRepoDirectory).not.toHaveBeenCalled();
+	});
 });
