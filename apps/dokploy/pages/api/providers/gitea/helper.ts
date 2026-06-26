@@ -12,7 +12,7 @@ export interface Gitea {
 	giteaInternalUrl: string | null;
 	clientId: string | null;
 	clientSecret: string | null;
-	organizationName?: string;
+	organizationName: string | null;
 	gitProvider: {
 		name: string;
 		gitProviderId: string;
