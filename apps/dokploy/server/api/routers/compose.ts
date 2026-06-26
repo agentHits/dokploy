@@ -1054,14 +1054,6 @@ export const composeRouter = createTRPCRouter({
 					"utf-8",
 				);
 
-				for (const mount of compose.mounts) {
-					await deleteMount(mount.mountId);
-				}
-
-				for (const domain of compose.domains) {
-					await removeDomainById(domain.domainId);
-				}
-
 				let serverIp = "127.0.0.1";
 
 				if (compose.serverId) {
@@ -1098,6 +1090,35 @@ export const composeRouter = createTRPCRouter({
 					serverIp: serverIp,
 					projectName: compose.appName,
 				});
+
+				if (compose.mounts?.length > 0) {
+					await checkServicePermissionAndAccess(ctx, input.composeId, {
+						volume: ["delete"],
+					});
+				}
+				if (compose.domains?.length > 0) {
+					await checkServicePermissionAndAccess(ctx, input.composeId, {
+						domain: ["delete"],
+					});
+				}
+				if (processedTemplate.mounts && processedTemplate.mounts.length > 0) {
+					await checkServicePermissionAndAccess(ctx, input.composeId, {
+						volume: ["create"],
+					});
+				}
+				if (processedTemplate.domains && processedTemplate.domains.length > 0) {
+					await checkServicePermissionAndAccess(ctx, input.composeId, {
+						domain: ["create"],
+					});
+				}
+
+				for (const mount of compose.mounts ?? []) {
+					await deleteMount(mount.mountId);
+				}
+
+				for (const domain of compose.domains ?? []) {
+					await removeDomainById(domain.domainId);
+				}
 
 				await updateCompose(input.composeId, {
 					composeFile: templateData.compose,
@@ -1142,6 +1163,9 @@ export const composeRouter = createTRPCRouter({
 					message: "Template imported successfully",
 				};
 			} catch (error) {
+				if (error instanceof TRPCError) {
+					throw error;
+				}
 				throw new TRPCError({
 					code: "BAD_REQUEST",
 					message: `Error importing template: ${error instanceof Error ? error.message : error}`,

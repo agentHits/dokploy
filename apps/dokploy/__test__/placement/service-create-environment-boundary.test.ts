@@ -1,3 +1,4 @@
+import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const serverMocks = vi.hoisted(() => ({
@@ -353,6 +354,32 @@ const composeInput = {
 	composeFile: "services: {}",
 };
 
+const templateImportInput = {
+	composeId: "compose-1",
+	base64: Buffer.from(
+		JSON.stringify({
+			compose: "services:\n  app:\n    image: nginx",
+			config: [
+				"[metadata]",
+				'id = "template"',
+				'name = "Template"',
+				'description = "Template"',
+				"tags = []",
+				'version = "1.0.0"',
+				'logo = ""',
+				"[metadata.links]",
+				'github = "https://example.com"',
+				"[variables]",
+				"[config]",
+				"isolated = true",
+				"domains = []",
+				"mounts = []",
+				"env = {}",
+			].join("\n"),
+		}),
+	).toString("base64"),
+};
+
 const databaseInput = {
 	name: "database",
 	appName: "database",
@@ -449,6 +476,23 @@ describe("service create target environment access boundary", () => {
 			remoteServersOnly: false,
 		});
 		serverMocks.createMount.mockResolvedValue({});
+		serverMocks.findComposeById.mockResolvedValue({
+			...baseService("compose-1"),
+			composeId: "compose-1",
+			name: "compose",
+			domains: [],
+			mounts: [],
+			environment: environment(),
+		});
+		serverMocks.updateCompose.mockResolvedValue({
+			...baseService("compose-1"),
+			composeId: "compose-1",
+		});
+		templateMocks.processTemplate.mockReturnValue({
+			domains: [],
+			envs: [],
+			mounts: [],
+		});
 
 		serverMocks.createApplication.mockResolvedValue({
 			...baseService("app-created"),
@@ -509,5 +553,182 @@ describe("service create target environment access boundary", () => {
 
 		expect(persistMock).toHaveBeenCalled();
 		expect(permissionMocks.addNewService).toHaveBeenCalled();
+	});
+
+	it("denies compose template import side effects without domain or volume create permission", async () => {
+		permissionMocks.checkServicePermissionAndAccess.mockImplementation(
+			async (_ctx, _serviceId, permissions) => {
+				if ("domain" in permissions || "volume" in permissions) {
+					throw new Error("Permission denied");
+				}
+			},
+		);
+		templateMocks.processTemplate.mockReturnValue({
+			domains: [
+				{
+					host: "app.example.com",
+					port: 3000,
+					serviceName: "app",
+				},
+			],
+			envs: [],
+			mounts: [
+				{
+					filePath: "/etc/app/config.yaml",
+					content: "debug: false",
+				},
+			],
+		});
+
+		await expect(
+			composeRouter.createCaller(createContext()).import(templateImportInput),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(
+			permissionMocks.checkServicePermissionAndAccess,
+		).toHaveBeenCalledWith(expect.anything(), "compose-1", {
+			service: ["create"],
+		});
+		expect(
+			permissionMocks.checkServicePermissionAndAccess,
+		).toHaveBeenCalledWith(expect.anything(), "compose-1", {
+			volume: ["create"],
+		});
+		expect(serverMocks.updateCompose).not.toHaveBeenCalled();
+		expect(serverMocks.createDomain).not.toHaveBeenCalled();
+		expect(serverMocks.createMount).not.toHaveBeenCalled();
+	});
+
+	it("checks side-effect permissions before importing compose template domains and mounts", async () => {
+		templateMocks.processTemplate.mockReturnValue({
+			domains: [
+				{
+					host: "app.example.com",
+					port: 3000,
+					serviceName: "app",
+				},
+			],
+			envs: ["APP_ENV=production"],
+			mounts: [
+				{
+					filePath: "/etc/app/config.yaml",
+					content: "debug: false",
+				},
+			],
+		});
+
+		await expect(
+			composeRouter.createCaller(createContext()).import(templateImportInput),
+		).resolves.toMatchObject({ success: true });
+
+		expect(
+			permissionMocks.checkServicePermissionAndAccess,
+		).toHaveBeenCalledWith(expect.anything(), "compose-1", {
+			service: ["create"],
+		});
+		expect(
+			permissionMocks.checkServicePermissionAndAccess,
+		).toHaveBeenCalledWith(expect.anything(), "compose-1", {
+			volume: ["create"],
+		});
+		expect(
+			permissionMocks.checkServicePermissionAndAccess,
+		).toHaveBeenCalledWith(expect.anything(), "compose-1", {
+			domain: ["create"],
+		});
+		expect(serverMocks.updateCompose).toHaveBeenCalledWith("compose-1", {
+			composeFile: "services:\n  app:\n    image: nginx",
+			sourceType: "raw",
+			env: "APP_ENV=production",
+			isolatedDeployment: true,
+		});
+		expect(serverMocks.createMount).toHaveBeenCalledWith(
+			expect.objectContaining({
+				content: "debug: false",
+				filePath: "/etc/app/config.yaml",
+				serviceId: "compose-1",
+				serviceType: "compose",
+				type: "file",
+			}),
+		);
+		expect(serverMocks.createDomain).toHaveBeenCalledWith(
+			expect.objectContaining({
+				composeId: "compose-1",
+				domainType: "compose",
+				host: "app.example.com",
+			}),
+		);
+	});
+
+	it("denies compose template import deletion side effects without delete permissions", async () => {
+		serverMocks.findComposeById.mockResolvedValue({
+			...baseService("compose-1"),
+			composeId: "compose-1",
+			name: "compose",
+			domains: [
+				{
+					domainId: "domain-1",
+				},
+			],
+			mounts: [
+				{
+					mountId: "mount-1",
+				},
+			],
+			environment: environment(),
+		});
+		permissionMocks.checkServicePermissionAndAccess.mockImplementation(
+			async (_ctx, _serviceId, permissions) => {
+				if ("volume" in permissions || "domain" in permissions) {
+					throw new Error("Permission denied");
+				}
+			},
+		);
+
+		await expect(
+			composeRouter.createCaller(createContext()).import(templateImportInput),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(
+			permissionMocks.checkServicePermissionAndAccess,
+		).toHaveBeenCalledWith(expect.anything(), "compose-1", {
+			volume: ["delete"],
+		});
+		expect(serverMocks.deleteMount).not.toHaveBeenCalled();
+		expect(serverMocks.removeDomainById).not.toHaveBeenCalled();
+		expect(serverMocks.updateCompose).not.toHaveBeenCalled();
+	});
+
+	it("preserves compose template import permission errors without wrapping them as bad requests", async () => {
+		permissionMocks.checkServicePermissionAndAccess.mockImplementation(
+			async (_ctx, _serviceId, permissions) => {
+				if ("volume" in permissions) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "Missing volume permission",
+					});
+				}
+			},
+		);
+		templateMocks.processTemplate.mockReturnValue({
+			domains: [],
+			envs: [],
+			mounts: [
+				{
+					filePath: "/etc/app/config.yaml",
+					content: "debug: false",
+				},
+			],
+		});
+
+		await expect(
+			composeRouter.createCaller(createContext()).import(templateImportInput),
+		).rejects.toMatchObject({
+			code: "UNAUTHORIZED",
+			message: "Missing volume permission",
+		});
+
+		expect(serverMocks.updateCompose).not.toHaveBeenCalled();
+		expect(serverMocks.createMount).not.toHaveBeenCalled();
 	});
 });
