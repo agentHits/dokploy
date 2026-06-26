@@ -1,20 +1,40 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import "dotenv/config";
+import {
+	assertSignedDeploymentCancelJob,
+	assertSignedDeploymentQueueJob,
+} from "@dokploy/server/utils/deployments/signed-job";
 import { zValidator } from "@hono/zod-validator";
 import { Inngest } from "inngest";
 import { serve as serveInngest } from "inngest/hono";
 import { isValidApiKey } from "./auth.js";
 import { logger } from "./logger.js";
 import {
-	cancelDeploymentSchema,
 	type DeployJob,
-	deployJobSchema,
+	signedCancelDeploymentSchema,
+	signedDeployJobSchema,
 } from "./schema.js";
 import { fetchDeploymentJobs } from "./service.js";
 import { deploy } from "./utils.js";
 
 const app = new Hono();
+
+const usedDeploymentSignatures = new Map<string, number>();
+
+const consumeDeploymentSignature = (signature: string, expiresAt: number) => {
+	const now = Date.now();
+	for (const [usedSignature, usedExpiresAt] of usedDeploymentSignatures) {
+		if (usedExpiresAt <= now) {
+			usedDeploymentSignatures.delete(usedSignature);
+		}
+	}
+	const existingExpiresAt = usedDeploymentSignatures.get(signature);
+	if (existingExpiresAt && existingExpiresAt > now) {
+		throw new Error("Deployment job scoped claim has already been used");
+	}
+	usedDeploymentSignatures.set(signature, expiresAt);
+};
 
 // Initialize Inngest client
 export const inngest = new Inngest({
@@ -97,13 +117,18 @@ app.use(async (c, next) => {
 	return next();
 });
 
-app.post("/deploy", zValidator("json", deployJobSchema), async (c) => {
-	const data = c.req.valid("json");
+app.post("/deploy", zValidator("json", signedDeployJobSchema), async (c) => {
+	const signedData = c.req.valid("json");
+	const data = await assertSignedDeploymentQueueJob(signedData, {
+		operation: "deploy",
+	});
+	consumeDeploymentSignature(signedData.signature, signedData.scope.expiresAt);
 	logger.info({ data }, "Received deployment request");
 
 	try {
 		// Send event to Inngest instead of adding to Redis queue
 		await inngest.send({
+			id: `deployment:${signedData.signature}`,
 			name: "deployment/requested",
 			data,
 		});
@@ -136,15 +161,23 @@ app.post("/deploy", zValidator("json", deployJobSchema), async (c) => {
 
 app.post(
 	"/cancel-deployment",
-	zValidator("json", cancelDeploymentSchema),
+	zValidator("json", signedCancelDeploymentSchema),
 	async (c) => {
-		const data = c.req.valid("json");
+		const signedData = c.req.valid("json");
+		const data = await assertSignedDeploymentCancelJob(signedData, {
+			operation: "cancel",
+		});
+		consumeDeploymentSignature(
+			signedData.signature,
+			signedData.scope.expiresAt,
+		);
 		logger.info({ data }, "Received cancel deployment request");
 
 		try {
 			// Send cancellation event to Inngest
 
 			await inngest.send({
+				id: `deployment-cancel:${signedData.signature}`,
 				name: "deployment/cancelled",
 				data,
 			});
@@ -216,6 +249,6 @@ app.on(
 	}),
 );
 
-const port = Number.parseInt(process.env.PORT || "3000");
+const port = Number.parseInt(process.env.PORT || "3000", 10);
 logger.info({ port }, "Starting Deployments Server with Inngest ✅");
 serve({ fetch: app.fetch, port });
