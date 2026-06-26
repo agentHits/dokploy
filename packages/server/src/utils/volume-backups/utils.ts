@@ -19,7 +19,11 @@ import {
 	shouldRunBackupRetention,
 } from "../backups/utils";
 import { sendVolumeBackupNotifications } from "../notifications/volume-backup";
-import { backupVolume, getVolumeServiceAppName } from "./backup";
+import {
+	backupVolume,
+	getVolumeServiceAppName,
+	resolveVolumeBackupServerId,
+} from "./backup";
 
 // Helper functions to extract project info from volume backup
 const getProjectName = (
@@ -121,8 +125,7 @@ const cleanupOldVolumeBackups = async (
 
 export const runVolumeBackup = async (volumeBackupId: string) => {
 	const volumeBackup = await findVolumeBackupById(volumeBackupId);
-	const serverId =
-		volumeBackup.application?.serverId || volumeBackup.compose?.serverId;
+	const serverId = resolveVolumeBackupServerId(volumeBackup);
 	const deployment = await createDeploymentVolumeBackup({
 		volumeBackupId: volumeBackup.volumeBackupId,
 		title: "Volume Backup",

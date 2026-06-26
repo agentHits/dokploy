@@ -41,6 +41,18 @@ export const getVolumeServiceAppName = (
 	);
 };
 
+export const resolveVolumeBackupServerId = (
+	volumeBackup: Awaited<ReturnType<typeof findVolumeBackupById>>,
+) =>
+	volumeBackup.application?.serverId ||
+	volumeBackup.compose?.serverId ||
+	volumeBackup.postgres?.serverId ||
+	volumeBackup.mysql?.serverId ||
+	volumeBackup.mariadb?.serverId ||
+	volumeBackup.mongo?.serverId ||
+	volumeBackup.redis?.serverId ||
+	volumeBackup.libsql?.serverId;
+
 export const backupVolume = async (
 	volumeBackup: Awaited<ReturnType<typeof findVolumeBackupById>>,
 ) => {
@@ -50,8 +62,7 @@ export const backupVolume = async (
 		volumeBackup.appName,
 	);
 	const destination = await findDestinationById(volumeBackup.destinationId);
-	const serverId =
-		volumeBackup.application?.serverId || volumeBackup.compose?.serverId;
+	const serverId = resolveVolumeBackupServerId(volumeBackup);
 	const { VOLUME_BACKUPS_PATH, VOLUME_BACKUP_LOCK_PATH } = paths(!!serverId);
 	const s3AppName = getVolumeServiceAppName(volumeBackup);
 	const backupFileName = `${safeVolumeName}-${getBackupTimestamp()}.tar`;

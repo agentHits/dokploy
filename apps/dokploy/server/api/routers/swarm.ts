@@ -8,11 +8,15 @@ import {
 } from "@dokploy/server";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { assertLocalHostAccess } from "@/server/api/utils/local-host-access";
 import { createTRPCRouter, withPermission } from "../trpc";
 import { containerIdRegex } from "./docker";
 
 const assertSwarmServerAccess = async (
 	ctx: {
+		user: {
+			id: string;
+		};
 		session: {
 			userId: string;
 			activeOrganizationId: string;
@@ -21,6 +25,7 @@ const assertSwarmServerAccess = async (
 	serverId?: string,
 ) => {
 	if (!serverId) {
+		await assertLocalHostAccess(ctx);
 		return;
 	}
 

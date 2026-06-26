@@ -24,7 +24,7 @@ const { createVolumeBackupSchema, updateVolumeBackupSchema } = await import(
 const { shouldRunBackupRetention } = await import(
 	"@dokploy/server/utils/backups/utils"
 );
-const { backupVolume } = await import(
+const { backupVolume, resolveVolumeBackupServerId } = await import(
 	"@dokploy/server/utils/volume-backups/backup"
 );
 
@@ -195,5 +195,24 @@ describe("volume backup command and schema boundaries", () => {
 		expect(unescapedCommand).not.toContain(
 			'label=com.docker.compose.service="api"',
 		);
+	});
+
+	it("uses database server bindings when selecting remote volume backup paths", async () => {
+		const databaseVolumeBackup = {
+			...volumeBackup,
+			application: null,
+			postgres: {
+				appName: "postgres-one",
+				serverId: "server-1",
+			},
+			serviceType: "postgres",
+		};
+
+		expect(resolveVolumeBackupServerId(databaseVolumeBackup as never)).toBe(
+			"server-1",
+		);
+		await backupVolume(databaseVolumeBackup as never);
+
+		expect(mocks.paths).toHaveBeenCalledWith(true);
 	});
 });

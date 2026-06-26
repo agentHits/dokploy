@@ -8,6 +8,7 @@ import {
 	findPatchByFilePath,
 	findPatchById,
 	findPatchesByEntityId,
+	getAccessibleServerIds,
 	getPatchRepoPath,
 	markPatchForDeletion,
 	readPatchRepoDirectory,
@@ -23,6 +24,7 @@ import {
 	protectedProcedure,
 } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
+import { assertLocalHostAccess } from "@/server/api/utils/local-host-access";
 import {
 	apiCreatePatch,
 	apiDeletePatch,
@@ -331,6 +333,17 @@ export const patchRouter = createTRPCRouter({
 	cleanPatchRepos: adminProcedure
 		.input(z.object({ serverId: z.string().optional() }))
 		.mutation(async ({ input, ctx }) => {
+			if (input.serverId) {
+				const accessibleIds = await getAccessibleServerIds(ctx.session);
+				if (!accessibleIds.has(input.serverId)) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You are not authorized to access this server",
+					});
+				}
+			} else {
+				await assertLocalHostAccess(ctx);
+			}
 			await cleanPatchRepos(input.serverId);
 			await audit(ctx, {
 				action: "delete",

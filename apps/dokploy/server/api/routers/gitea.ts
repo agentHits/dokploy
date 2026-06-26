@@ -1,5 +1,6 @@
 import {
 	assertGitProviderAccess,
+	assertGitProviderManagementAccess,
 	createGitea,
 	findGiteaById,
 	findGiteaGitProviderId,
@@ -109,6 +110,7 @@ export const giteaRouter = createTRPCRouter({
 
 			const gitProviderId = await findGiteaGitProviderId(giteaId);
 			await assertGitProviderAccess(gitProviderId, ctx.session);
+			await assertGitProviderManagementAccess(gitProviderId, ctx.session);
 
 			try {
 				const repositories = await getGiteaRepositories(giteaId);
@@ -160,6 +162,7 @@ export const giteaRouter = createTRPCRouter({
 
 			const gitProviderId = await findGiteaGitProviderId(giteaId);
 			await assertGitProviderAccess(gitProviderId, ctx.session);
+			await assertGitProviderManagementAccess(gitProviderId, ctx.session);
 
 			try {
 				const result = await testGiteaConnection({
@@ -187,6 +190,7 @@ export const giteaRouter = createTRPCRouter({
 				});
 			}
 			await assertGitProviderAccess(gitProviderId, ctx.session);
+			await assertGitProviderManagementAccess(gitProviderId, ctx.session);
 
 			if (input.name) {
 				await updateGitProvider(gitProviderId, {

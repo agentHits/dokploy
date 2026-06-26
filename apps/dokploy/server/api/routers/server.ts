@@ -630,9 +630,10 @@ export const serverRouter = createTRPCRouter({
 				input.buildsConcurrency,
 				ctx.session.activeOrganizationId,
 			);
-			return await updateServerById(input.serverId, {
+			const updatedServer = await updateServerById(input.serverId, {
 				buildsConcurrency: input.buildsConcurrency,
 			});
+			return redactServer(updatedServer);
 		}),
 	publicIp: protectedProcedure.query(async () => {
 		if (IS_CLOUD) {

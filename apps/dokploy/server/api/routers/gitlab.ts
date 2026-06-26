@@ -1,5 +1,6 @@
 import {
 	assertGitProviderAccess,
+	assertGitProviderManagementAccess,
 	createGitlab,
 	findGitlabById,
 	findGitlabGitProviderId,
@@ -116,6 +117,7 @@ export const gitlabRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			const gitProviderId = await findGitlabGitProviderId(input.gitlabId);
 			await assertGitProviderAccess(gitProviderId, ctx.session);
+			await assertGitProviderManagementAccess(gitProviderId, ctx.session);
 
 			try {
 				const result = await testGitlabConnection(input);
@@ -139,6 +141,7 @@ export const gitlabRouter = createTRPCRouter({
 				});
 			}
 			await assertGitProviderAccess(gitProviderId, ctx.session);
+			await assertGitProviderManagementAccess(gitProviderId, ctx.session);
 
 			if (input.name) {
 				await updateGitProvider(gitProviderId, {

@@ -371,6 +371,62 @@ describe("github provider router security boundary", () => {
 		expect(mocks.updateGitlab).not.toHaveBeenCalled();
 	});
 
+	it("rejects gitlab updates when management authorization is missing", async () => {
+		mocks.assertGitProviderManagementAccess.mockRejectedValue(
+			new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You are not authorized to manage this Git provider",
+			}),
+		);
+
+		await expect(
+			createGitlabCaller().update({
+				gitProviderId: "gp-1",
+				gitlabId: "gl-1",
+				gitlabUrl: "https://gitlab.example",
+				name: "gitlab",
+			}),
+		).rejects.toMatchObject({
+			code: "UNAUTHORIZED",
+		});
+
+		expect(mocks.assertGitProviderAccess).toHaveBeenCalledWith(
+			"gp-1",
+			expect.objectContaining({
+				userId: "user-1",
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(mocks.assertGitProviderManagementAccess).toHaveBeenCalledWith(
+			"gp-1",
+			expect.objectContaining({
+				userId: "user-1",
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(mocks.updateGitProvider).not.toHaveBeenCalled();
+		expect(mocks.updateGitlab).not.toHaveBeenCalled();
+	});
+
+	it("rejects gitlab testConnection when management authorization is missing", async () => {
+		mocks.assertGitProviderManagementAccess.mockRejectedValue(
+			new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You are not authorized to manage this Git provider",
+			}),
+		);
+
+		await expect(
+			createGitlabCaller().testConnection({
+				gitlabId: "gl-1",
+			}),
+		).rejects.toMatchObject({
+			code: "UNAUTHORIZED",
+		});
+
+		expect(mocks.testGitlabConnection).not.toHaveBeenCalled();
+	});
+
 	it("rejects gitea update when the supplied gitProviderId does not match the gitea row", async () => {
 		mocks.findGiteaGitProviderId.mockResolvedValue("gp-actual");
 
@@ -388,6 +444,62 @@ describe("github provider router security boundary", () => {
 		expect(mocks.assertGitProviderAccess).not.toHaveBeenCalled();
 		expect(mocks.updateGitProvider).not.toHaveBeenCalled();
 		expect(mocks.updateGitea).not.toHaveBeenCalled();
+	});
+
+	it("rejects gitea updates when management authorization is missing", async () => {
+		mocks.assertGitProviderManagementAccess.mockRejectedValue(
+			new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You are not authorized to manage this Git provider",
+			}),
+		);
+
+		await expect(
+			createGiteaCaller().update({
+				giteaId: "gt-1",
+				giteaUrl: "https://gitea.example",
+				gitProviderId: "gp-1",
+				name: "gitea",
+			}),
+		).rejects.toMatchObject({
+			code: "UNAUTHORIZED",
+		});
+
+		expect(mocks.assertGitProviderAccess).toHaveBeenCalledWith(
+			"gp-1",
+			expect.objectContaining({
+				userId: "user-1",
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(mocks.assertGitProviderManagementAccess).toHaveBeenCalledWith(
+			"gp-1",
+			expect.objectContaining({
+				userId: "user-1",
+				activeOrganizationId: "org-1",
+			}),
+		);
+		expect(mocks.updateGitProvider).not.toHaveBeenCalled();
+		expect(mocks.updateGitea).not.toHaveBeenCalled();
+	});
+
+	it("rejects gitea testConnection when management authorization is missing", async () => {
+		mocks.assertGitProviderManagementAccess.mockRejectedValue(
+			new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You are not authorized to manage this Git provider",
+			}),
+		);
+
+		await expect(
+			createGiteaCaller().testConnection({
+				giteaId: "gt-1",
+			}),
+		).rejects.toMatchObject({
+			code: "UNAUTHORIZED",
+		});
+
+		expect(mocks.testGiteaConnection).not.toHaveBeenCalled();
 	});
 
 	it("rejects bitbucket testConnection for non-owners/admins", async () => {

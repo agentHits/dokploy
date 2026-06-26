@@ -388,6 +388,38 @@ describe("server router assigned-server boundary", () => {
 		});
 	});
 
+	it("redacts monitoring tokens from build concurrency update responses", async () => {
+		mocks.updateServerById.mockResolvedValue({
+			serverId: "server-1",
+			name: "primary",
+			organizationId: "org-1",
+			buildsConcurrency: 2,
+			metricsConfig: {
+				server: {
+					port: 4500,
+					token: "stored-monitoring-token",
+				},
+			},
+		});
+
+		await expect(
+			createCaller().updateBuildsConcurrency({
+				serverId: "server-1",
+				buildsConcurrency: 2,
+			}),
+		).resolves.toMatchObject({
+			metricsConfig: {
+				server: {
+					token: "__DOKPLOY_REDACTED_SECRET__",
+				},
+			},
+		});
+
+		expect(mocks.updateServerById).toHaveBeenCalledWith("server-1", {
+			buildsConcurrency: 2,
+		});
+	});
+
 	it("denies inaccessible default command reads before server metadata use", async () => {
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
 

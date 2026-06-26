@@ -4,6 +4,7 @@ import {
 	execAsync,
 	execAsyncRemote,
 } from "@dokploy/server/utils/process/execAsync";
+import { redactSecretFields } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import type { z } from "zod";
@@ -27,14 +28,19 @@ export function safeDockerLoginCommand(
 	return `printf %s ${escapedPassword} | docker login ${escapedRegistry} -u ${escapedUser} --password-stdin`;
 }
 
-function sanitizeRegistryError(
+export function sanitizeRegistryError(
 	error: unknown,
 	password: string | null | undefined,
 ): string {
 	const message =
 		error instanceof Error ? error.message : "Error with registry login";
 	if (!password) return message;
-	return message.split(password).join("***");
+	const passwordForms = new Set([password, shEscape(password)]);
+	let sanitized = message;
+	for (const secret of passwordForms) {
+		sanitized = sanitized.split(secret).join("***");
+	}
+	return sanitized;
 }
 
 const assertCloudRegistryServer = (serverId?: string | null) => {
@@ -90,11 +96,11 @@ export const createRegistry = async (
 
 export const removeRegistry = async (registryId: string) => {
 	try {
-		const response = await db
+		const rows = await db
 			.delete(registry)
 			.where(eq(registry.registryId, registryId))
-			.returning()
-			.then((res) => res[0]);
+			.returning();
+		const response = rows[0];
 
 		if (!response) {
 			throw new TRPCError({
@@ -107,7 +113,7 @@ export const removeRegistry = async (registryId: string) => {
 			await execAsync(`docker logout ${shEscape(response.registryUrl)}`);
 		}
 
-		return response;
+		return redactSecretFields(response, ["password"]);
 	} catch (error) {
 		throw new TRPCError({
 			code: "BAD_REQUEST",
@@ -123,14 +129,14 @@ export const updateRegistry = async (
 ) => {
 	try {
 		assertCloudRegistryServer(registryData.serverId);
-		const response = await db
+		const rows = await db
 			.update(registry)
 			.set({
 				...registryData,
 			})
 			.where(eq(registry.registryId, registryId))
-			.returning()
-			.then((res) => res[0]);
+			.returning();
+		const response = rows[0];
 
 		const loginCommand = safeDockerLoginCommand(
 			response?.registryUrl,

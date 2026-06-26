@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+	assertLocalHostAccess: vi.fn(),
 	checkPermission: vi.fn(),
 	findServerById: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
@@ -25,6 +26,10 @@ vi.mock("@dokploy/server/services/permission", () => ({
 	checkPermission: mocks.checkPermission,
 }));
 
+vi.mock("@/server/api/utils/local-host-access", () => ({
+	assertLocalHostAccess: mocks.assertLocalHostAccess,
+}));
+
 const { swarmRouter } = await import("../../server/api/routers/swarm");
 
 const createCaller = () =>
@@ -45,6 +50,7 @@ const createCaller = () =>
 describe("swarm router server boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mocks.assertLocalHostAccess.mockResolvedValue(undefined);
 		mocks.checkPermission.mockResolvedValue(undefined);
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
 		mocks.getNodeInfo.mockResolvedValue({ ID: "node-1" });
@@ -84,5 +90,30 @@ describe("swarm router server boundary", () => {
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
 		expect(mocks.getSwarmNodes).not.toHaveBeenCalled();
+	});
+
+	it("denies local swarm node listings without local host access", async () => {
+		mocks.assertLocalHostAccess.mockRejectedValue(new Error("denied"));
+
+		await expect(createCaller().getNodes({})).rejects.toThrow("denied");
+
+		expect(mocks.assertLocalHostAccess).toHaveBeenCalledWith(
+			expect.objectContaining({
+				session: expect.objectContaining({
+					activeOrganizationId: "org-1",
+				}),
+				user: expect.objectContaining({
+					id: "user-1",
+				}),
+			}),
+		);
+		expect(mocks.getSwarmNodes).not.toHaveBeenCalled();
+	});
+
+	it("allows local swarm node listings after local host access is approved", async () => {
+		await expect(createCaller().getNodes({})).resolves.toEqual([]);
+
+		expect(mocks.assertLocalHostAccess).toHaveBeenCalled();
+		expect(mocks.getSwarmNodes).toHaveBeenCalledWith(undefined);
 	});
 });
