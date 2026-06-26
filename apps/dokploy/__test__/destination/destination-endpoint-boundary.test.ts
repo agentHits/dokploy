@@ -115,9 +115,9 @@ describe("destination S3 endpoint boundary", () => {
 
 		expect(() =>
 			buildRcloneS3Command("ls", destination, [":s3:bucket"]),
-		).toThrow(/Additional flags cannot override/i);
+		).toThrow(/Additional flags can only use explicitly allowed/i);
 		await expect(assertRcloneS3DestinationAllowed(destination)).rejects.toThrow(
-			/Additional flags cannot override/i,
+			/Additional flags can only use explicitly allowed/i,
 		);
 
 		expect(
@@ -150,5 +150,39 @@ describe("destination S3 endpoint boundary", () => {
 				additionalFlags: ["--s3-sign-accept-encoding=false"],
 			}).success,
 		).toBe(true);
+	});
+
+	it("rejects broad rclone global flags with filesystem or debug side effects", async () => {
+		for (const flag of [
+			"--log-file=/tmp/rclone.log",
+			"--dump=auth",
+			"--dump=headers",
+			"--rc",
+			"--files-from=/tmp/files.txt",
+		]) {
+			const destination = {
+				accessKey: "access",
+				secretAccessKey: "secret",
+				region: "auto",
+				endpoint: "https://s3.example.com",
+				provider: "AWS",
+				additionalFlags: [flag],
+				bucket: "bucket",
+			};
+
+			expect(() =>
+				buildRcloneS3Command("ls", destination, [":s3:bucket"]),
+			).toThrow(/Additional flags can only use explicitly allowed/i);
+			await expect(
+				assertRcloneS3DestinationAllowed(destination),
+			).rejects.toThrow(/Additional flags can only use explicitly allowed/i);
+
+			expect(
+				apiCreateDestination.safeParse({
+					...safeDestinationInput,
+					additionalFlags: [flag],
+				}).success,
+			).toBe(false);
+		}
 	});
 });
