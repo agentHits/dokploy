@@ -129,7 +129,7 @@ export const registryRouter = createTRPCRouter({
 				"password",
 			]);
 		}),
-	update: withPermission("registry", "create")
+	update: withPermission("registry", "update")
 		.input(apiUpdateRegistry)
 		.mutation(async ({ input, ctx }) => {
 			const { registryId, ...rest } = input;

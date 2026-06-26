@@ -139,6 +139,13 @@ describe("member is denied org-level enterprise resources (CVE: bypass via stati
 			checkPermission(ctx, { registry: ["create"] }),
 		).rejects.toThrow();
 	});
+
+	it("member is denied registry.update", async () => {
+		memberToReturn = mockMemberData("member");
+		await expect(
+			checkPermission(ctx, { registry: ["update"] }),
+		).rejects.toThrow();
+	});
 });
 
 describe("static roles validate free-tier resources", () => {

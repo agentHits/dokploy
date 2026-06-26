@@ -137,6 +137,69 @@ describe("registry router remote test login boundary", () => {
 		);
 	});
 
+	it("requires registry update permission before changing stored credentials", async () => {
+		mocks.checkPermission.mockImplementation(async (_ctx, permissions) => {
+			if (
+				JSON.stringify(permissions) === JSON.stringify({ registry: ["update"] })
+			) {
+				throw new TRPCError({ code: "UNAUTHORIZED" });
+			}
+		});
+
+		await expect(
+			createCaller().update({
+				registryId: "registry-1",
+				registryName: "registry",
+				registryUrl: "registry.example.com",
+				registryType: "cloud",
+				username: "user",
+				password: "new-registry-secret",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			registry: ["update"],
+		});
+		expect(mocks.findRegistryById).not.toHaveBeenCalled();
+		expect(mocks.updateRegistry).not.toHaveBeenCalled();
+	});
+
+	it("does not accept registry create permission as update permission", async () => {
+		mocks.findRegistryById.mockResolvedValue({
+			registryId: "registry-1",
+			registryName: "registry",
+			registryUrl: "registry.example.com",
+			registryType: "cloud",
+			username: "user",
+			organizationId: "org-1",
+		});
+		mocks.updateRegistry.mockResolvedValue({ registryId: "registry-1" });
+
+		await expect(
+			createCaller().update({
+				registryId: "registry-1",
+				registryName: "registry",
+				registryUrl: "registry.example.com",
+				registryType: "cloud",
+				username: "user",
+				password: "new-registry-secret",
+			}),
+		).resolves.toBe(true);
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			registry: ["update"],
+		});
+		expect(mocks.checkPermission).not.toHaveBeenCalledWith(expect.anything(), {
+			registry: ["create"],
+		});
+		expect(mocks.updateRegistry).toHaveBeenCalledWith(
+			"registry-1",
+			expect.objectContaining({
+				password: "new-registry-secret",
+			}),
+		);
+	});
+
 	it("tests ad-hoc remote registry credentials with a shell-escaped docker login command", async () => {
 		await expect(
 			createCaller().testRegistry({
