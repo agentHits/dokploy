@@ -6,6 +6,7 @@ import {
 	extractImageTagFromRequest,
 	rejectNonPostDeployWebhook,
 } from "@/pages/api/deploy/[refreshToken]";
+import { shouldRequirePreviewCollaboratorPermissions } from "@/pages/api/deploy/github";
 
 describe("GitHub Webhook Skip CI", () => {
 	const mockGithubHeaders = {
@@ -148,6 +149,59 @@ describe("generic refresh-token deploy method boundary", () => {
 			),
 		).toBe(false);
 		expect(response.status).not.toHaveBeenCalled();
+	});
+});
+
+describe("GitHub preview deployment collaborator boundary", () => {
+	it("requires collaborator permissions when disabled previews still carry secrets", () => {
+		expect(
+			shouldRequirePreviewCollaboratorPermissions({
+				previewRequireCollaboratorPermissions: false,
+				previewEnv: "PREVIEW_TOKEN=secret",
+				previewBuildArgs: null,
+				previewBuildSecrets: null,
+			}),
+		).toBe(true);
+
+		expect(
+			shouldRequirePreviewCollaboratorPermissions({
+				previewRequireCollaboratorPermissions: false,
+				previewEnv: null,
+				previewBuildArgs: "",
+				previewBuildSecrets: "BUILD_SECRET=secret",
+			}),
+		).toBe(true);
+	});
+
+	it("allows disabled collaborator checks only for previews without sensitive configuration", () => {
+		expect(
+			shouldRequirePreviewCollaboratorPermissions({
+				previewRequireCollaboratorPermissions: false,
+				previewEnv: " \n ",
+				previewBuildArgs: null,
+				previewBuildSecrets: "",
+			}),
+		).toBe(false);
+	});
+
+	it("keeps collaborator permissions enabled by default", () => {
+		expect(
+			shouldRequirePreviewCollaboratorPermissions({
+				previewRequireCollaboratorPermissions: true,
+				previewEnv: null,
+				previewBuildArgs: null,
+				previewBuildSecrets: null,
+			}),
+		).toBe(true);
+
+		expect(
+			shouldRequirePreviewCollaboratorPermissions({
+				previewRequireCollaboratorPermissions: null,
+				previewEnv: null,
+				previewBuildArgs: null,
+				previewBuildSecrets: null,
+			}),
+		).toBe(true);
 	});
 });
 
