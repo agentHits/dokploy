@@ -46,18 +46,44 @@ const redactOidcConfig = (config: string | null | undefined) =>
 		}
 	});
 
+const redactConfigFields = (
+	config: Record<string, unknown>,
+	fields: string[],
+) => {
+	for (const field of fields) {
+		if (config[field]) {
+			config[field] = REDACTED_SECRET_VALUE;
+		}
+	}
+};
+
+const redactSamlSecretFields = (config: Record<string, unknown>) => {
+	redactConfigFields(config, ["cert", "privateKey", "decryptionPvk"]);
+
+	if (config.idpMetadata && typeof config.idpMetadata === "object") {
+		const idpMetadata = config.idpMetadata as Record<string, unknown>;
+		redactConfigFields(idpMetadata, [
+			"metadata",
+			"privateKey",
+			"privateKeyPass",
+			"encPrivateKey",
+			"encPrivateKeyPass",
+		]);
+	}
+
+	if (config.spMetadata && typeof config.spMetadata === "object") {
+		const spMetadata = config.spMetadata as Record<string, unknown>;
+		redactConfigFields(spMetadata, [
+			"privateKey",
+			"privateKeyPass",
+			"encPrivateKey",
+			"encPrivateKeyPass",
+		]);
+	}
+};
+
 const redactSamlConfig = (config: string | null | undefined) =>
-	redactJsonConfigFields(config, (parsed) => {
-		if (parsed.cert) {
-			parsed.cert = REDACTED_SECRET_VALUE;
-		}
-		if (parsed.idpMetadata && typeof parsed.idpMetadata === "object") {
-			const idpMetadata = parsed.idpMetadata as Record<string, unknown>;
-			if (idpMetadata.metadata) {
-				idpMetadata.metadata = REDACTED_SECRET_VALUE;
-			}
-		}
-	});
+	redactJsonConfigFields(config, redactSamlSecretFields);
 
 const preserveRedactedJsonConfigFields = <T extends Record<string, unknown>>(
 	nextConfig: T | undefined,
@@ -96,6 +122,18 @@ const preserveRedactedOidcConfig = (
 		},
 	);
 
+const preserveRedactedConfigFields = (
+	next: Record<string, unknown>,
+	existing: Record<string, unknown>,
+	fields: string[],
+) => {
+	for (const field of fields) {
+		if (next[field] === REDACTED_SECRET_VALUE) {
+			next[field] = existing[field];
+		}
+	}
+};
+
 const preserveRedactedSamlConfig = (
 	nextConfig:
 		| NonNullable<z.infer<typeof ssoProviderBodySchema>["samlConfig"]>
@@ -106,9 +144,11 @@ const preserveRedactedSamlConfig = (
 		nextConfig,
 		existingConfig,
 		(next, existing) => {
-			if (next.cert === REDACTED_SECRET_VALUE) {
-				next.cert = existing.cert;
-			}
+			preserveRedactedConfigFields(next, existing, [
+				"cert",
+				"privateKey",
+				"decryptionPvk",
+			]);
 			if (
 				next.idpMetadata &&
 				typeof next.idpMetadata === "object" &&
@@ -120,9 +160,28 @@ const preserveRedactedSamlConfig = (
 					string,
 					unknown
 				>;
-				if (nextMetadata.metadata === REDACTED_SECRET_VALUE) {
-					nextMetadata.metadata = existingMetadata.metadata;
-				}
+				preserveRedactedConfigFields(nextMetadata, existingMetadata, [
+					"metadata",
+					"privateKey",
+					"privateKeyPass",
+					"encPrivateKey",
+					"encPrivateKeyPass",
+				]);
+			}
+			if (
+				next.spMetadata &&
+				typeof next.spMetadata === "object" &&
+				existing.spMetadata &&
+				typeof existing.spMetadata === "object"
+			) {
+				const nextMetadata = next.spMetadata as Record<string, unknown>;
+				const existingMetadata = existing.spMetadata as Record<string, unknown>;
+				preserveRedactedConfigFields(nextMetadata, existingMetadata, [
+					"privateKey",
+					"privateKeyPass",
+					"encPrivateKey",
+					"encPrivateKeyPass",
+				]);
 			}
 		},
 	);

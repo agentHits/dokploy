@@ -50,6 +50,7 @@ vi.mock("@dokploy/server/db", () => ({
 
 vi.mock("@dokploy/server/index", () => ({
 	getOrganizationOwnerId: vi.fn().mockResolvedValue("owner-1"),
+	normalizeTrustedOrigin: (origin: string) => origin,
 	requestToHeaders: mocks.requestToHeaders,
 }));
 
@@ -79,6 +80,43 @@ const providerInput = {
 		clientSecret: "client-secret",
 	},
 };
+
+const REDACTED_SECRET_VALUE = "__DOKPLOY_REDACTED_SECRET__";
+
+const samlSecretConfig = {
+	entryPoint: "https://idp.example.com/saml",
+	cert: "idp-signing-cert",
+	callbackUrl:
+		"https://dokploy.example.com/api/auth/sso/saml2/callback/acme-sso",
+	audience: "https://dokploy.example.com",
+	idpMetadata: {
+		metadata: "<EntityDescriptor>secret metadata</EntityDescriptor>",
+		entityID: "https://idp.example.com",
+		cert: "idp-public-cert",
+		privateKey: "idp-private-key",
+		privateKeyPass: "idp-private-pass",
+		encPrivateKey: "idp-enc-private-key",
+		encPrivateKeyPass: "idp-enc-private-pass",
+	},
+	spMetadata: {
+		metadata: "<EntityDescriptor>sp metadata</EntityDescriptor>",
+		entityID: "https://dokploy.example.com",
+		privateKey: "sp-private-key",
+		privateKeyPass: "sp-private-pass",
+		encPrivateKey: "sp-enc-private-key",
+		encPrivateKeyPass: "sp-enc-private-pass",
+	},
+	privateKey: "top-private-key",
+	decryptionPvk: "top-decryption-key",
+	mapping: {
+		id: "nameID",
+		email: "email",
+		name: "displayName",
+	},
+};
+
+const cloneSamlConfig = () =>
+	JSON.parse(JSON.stringify(samlSecretConfig)) as typeof samlSecretConfig;
 
 const createCaller = (role: "owner" | "admin" = "admin") =>
 	ssoRouter.createCaller({
@@ -142,6 +180,133 @@ describe("SSO provider owner boundary", () => {
 					domain: "example.com",
 				}),
 			}),
+		);
+	});
+
+	it("redacts SAML private-key material from provider reads", async () => {
+		const provider = {
+			id: "provider-row-1",
+			providerId: "acme-sso",
+			issuer: "https://idp.example.com",
+			domain: "example.com",
+			oidcConfig: null,
+			samlConfig: JSON.stringify(samlSecretConfig),
+			organizationId: "org-1",
+		};
+		mocks.ssoProviderFindMany.mockResolvedValue([provider]);
+		mocks.ssoProviderFindFirst.mockResolvedValue(provider);
+
+		const providers = await createCaller("admin").listProviders();
+		const listedSamlConfig = JSON.parse(providers[0]?.samlConfig ?? "{}");
+		expect(listedSamlConfig.cert).toBe(REDACTED_SECRET_VALUE);
+		expect(listedSamlConfig.privateKey).toBe(REDACTED_SECRET_VALUE);
+		expect(listedSamlConfig.decryptionPvk).toBe(REDACTED_SECRET_VALUE);
+		expect(listedSamlConfig.idpMetadata.metadata).toBe(REDACTED_SECRET_VALUE);
+		expect(listedSamlConfig.idpMetadata.privateKey).toBe(REDACTED_SECRET_VALUE);
+		expect(listedSamlConfig.idpMetadata.privateKeyPass).toBe(
+			REDACTED_SECRET_VALUE,
+		);
+		expect(listedSamlConfig.idpMetadata.encPrivateKey).toBe(
+			REDACTED_SECRET_VALUE,
+		);
+		expect(listedSamlConfig.idpMetadata.encPrivateKeyPass).toBe(
+			REDACTED_SECRET_VALUE,
+		);
+		expect(listedSamlConfig.spMetadata.privateKey).toBe(REDACTED_SECRET_VALUE);
+		expect(listedSamlConfig.spMetadata.privateKeyPass).toBe(
+			REDACTED_SECRET_VALUE,
+		);
+		expect(listedSamlConfig.spMetadata.encPrivateKey).toBe(
+			REDACTED_SECRET_VALUE,
+		);
+		expect(listedSamlConfig.spMetadata.encPrivateKeyPass).toBe(
+			REDACTED_SECRET_VALUE,
+		);
+		expect(listedSamlConfig.entryPoint).toBe(samlSecretConfig.entryPoint);
+		expect(listedSamlConfig.idpMetadata.cert).toBe(
+			samlSecretConfig.idpMetadata.cert,
+		);
+
+		const oneProvider = await createCaller("admin").one({
+			providerId: "acme-sso",
+		});
+		const oneSamlConfig = JSON.parse(oneProvider.samlConfig ?? "{}");
+		expect(oneSamlConfig.spMetadata.privateKey).toBe(REDACTED_SECRET_VALUE);
+		expect(oneSamlConfig.decryptionPvk).toBe(REDACTED_SECRET_VALUE);
+	});
+
+	it("preserves stored SAML private-key material when update submits redacted placeholders", async () => {
+		const existingSamlConfig = cloneSamlConfig();
+		mocks.ssoProviderFindFirst.mockResolvedValue({
+			id: "provider-row-1",
+			issuer: "https://idp.example.com",
+			domain: "example.com",
+			oidcConfig: null,
+			samlConfig: JSON.stringify(existingSamlConfig),
+			userId: "user-1",
+		});
+
+		const nextSamlConfig = cloneSamlConfig();
+		nextSamlConfig.entryPoint = "https://idp.example.com/updated-saml";
+		nextSamlConfig.cert = REDACTED_SECRET_VALUE;
+		nextSamlConfig.privateKey = REDACTED_SECRET_VALUE;
+		nextSamlConfig.decryptionPvk = REDACTED_SECRET_VALUE;
+		nextSamlConfig.idpMetadata.metadata = REDACTED_SECRET_VALUE;
+		nextSamlConfig.idpMetadata.privateKey = REDACTED_SECRET_VALUE;
+		nextSamlConfig.idpMetadata.privateKeyPass = REDACTED_SECRET_VALUE;
+		nextSamlConfig.idpMetadata.encPrivateKey = REDACTED_SECRET_VALUE;
+		nextSamlConfig.idpMetadata.encPrivateKeyPass = REDACTED_SECRET_VALUE;
+		nextSamlConfig.spMetadata.privateKey = REDACTED_SECRET_VALUE;
+		nextSamlConfig.spMetadata.privateKeyPass = REDACTED_SECRET_VALUE;
+		nextSamlConfig.spMetadata.encPrivateKey = REDACTED_SECRET_VALUE;
+		nextSamlConfig.spMetadata.encPrivateKeyPass = REDACTED_SECRET_VALUE;
+
+		await expect(
+			createCaller("owner").update({
+				providerId: "acme-sso",
+				issuer: "https://idp.example.com",
+				domains: ["example.com"],
+				samlConfig: nextSamlConfig,
+			}),
+		).resolves.toEqual({ success: true });
+
+		const updateBody = mocks.updateSSOProvider.mock.calls[0]?.[0]?.body;
+		expect(updateBody.samlConfig.entryPoint).toBe(
+			"https://idp.example.com/updated-saml",
+		);
+		expect(updateBody.samlConfig.cert).toBe(existingSamlConfig.cert);
+		expect(updateBody.samlConfig.privateKey).toBe(
+			existingSamlConfig.privateKey,
+		);
+		expect(updateBody.samlConfig.decryptionPvk).toBe(
+			existingSamlConfig.decryptionPvk,
+		);
+		expect(updateBody.samlConfig.idpMetadata.metadata).toBe(
+			existingSamlConfig.idpMetadata.metadata,
+		);
+		expect(updateBody.samlConfig.idpMetadata.privateKey).toBe(
+			existingSamlConfig.idpMetadata.privateKey,
+		);
+		expect(updateBody.samlConfig.idpMetadata.privateKeyPass).toBe(
+			existingSamlConfig.idpMetadata.privateKeyPass,
+		);
+		expect(updateBody.samlConfig.idpMetadata.encPrivateKey).toBe(
+			existingSamlConfig.idpMetadata.encPrivateKey,
+		);
+		expect(updateBody.samlConfig.idpMetadata.encPrivateKeyPass).toBe(
+			existingSamlConfig.idpMetadata.encPrivateKeyPass,
+		);
+		expect(updateBody.samlConfig.spMetadata.privateKey).toBe(
+			existingSamlConfig.spMetadata.privateKey,
+		);
+		expect(updateBody.samlConfig.spMetadata.privateKeyPass).toBe(
+			existingSamlConfig.spMetadata.privateKeyPass,
+		);
+		expect(updateBody.samlConfig.spMetadata.encPrivateKey).toBe(
+			existingSamlConfig.spMetadata.encPrivateKey,
+		);
+		expect(updateBody.samlConfig.spMetadata.encPrivateKeyPass).toBe(
+			existingSamlConfig.spMetadata.encPrivateKeyPass,
 		);
 	});
 });
