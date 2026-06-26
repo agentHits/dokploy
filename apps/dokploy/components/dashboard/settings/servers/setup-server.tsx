@@ -23,6 +23,10 @@ import {
 	DialogTrigger,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+	buildAuthorizedKeysAppendCommand,
+	buildSshLoginCommand,
+} from "@/lib/shell-command";
 import { cn } from "@/lib/utils";
 import { api } from "@/utils/api";
 import { ShowDeployment } from "../../application/deployments/show-deployment";
@@ -52,6 +56,13 @@ export const SetupServer = ({ serverId, asButton = false }: Props) => {
 	const [activeLog, setActiveLog] = useState<string | null>(null);
 	const { data: isCloud } = api.settings.isCloud.useQuery();
 	const isBuildServer = server?.serverType === "build";
+	const sshLoginCommand = buildSshLoginCommand(
+		server?.username,
+		server?.ipAddress,
+	);
+	const authorizedKeysCommand = buildAuthorizedKeysAppendCommand(
+		server?.sshKey?.publicKey || "Generate a SSH Key",
+	);
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 	const [filteredLogs, setFilteredLogs] = useState<LogLine[]>([]);
 	const [isDeploying, setIsDeploying] = useState(false);
@@ -206,14 +217,12 @@ export const SetupServer = ({ serverId, asButton = false }: Props) => {
 											<li className="items-center flex gap-1">
 												1. Login to your server{" "}
 												<span className="text-primary bg-secondary p-1 rounded-lg">
-													ssh {server?.username}@{server?.ipAddress}
+													{sshLoginCommand}
 												</span>
 												<button
 													type="button"
 													onClick={() => {
-														copy(
-															`ssh ${server?.username}@${server?.ipAddress}`,
-														);
+														copy(sshLoginCommand);
 														toast.success("Copied to clipboard");
 													}}
 												>
@@ -226,7 +235,7 @@ export const SetupServer = ({ serverId, asButton = false }: Props) => {
 													<CodeEditor
 														lineWrapping
 														language="properties"
-														value={`echo "${server?.sshKey?.publicKey}" >> ~/.ssh/authorized_keys`}
+														value={authorizedKeysCommand}
 														readOnly
 														className="font-mono opacity-60"
 													/>
@@ -234,9 +243,7 @@ export const SetupServer = ({ serverId, asButton = false }: Props) => {
 														type="button"
 														className="absolute right-2 top-2"
 														onClick={() => {
-															copy(
-																`echo "${server?.sshKey?.publicKey}" >> ~/.ssh/authorized_keys`,
-															);
+															copy(authorizedKeysCommand);
 															toast.success("Copied to clipboard");
 														}}
 													>
