@@ -9,7 +9,6 @@ import {
 	assertEnvironmentVariableName,
 	quoteEnvironmentAssignment,
 	quoteShellArgs,
-	quoteShellArgument,
 } from "../shell";
 import type { ApplicationNested } from ".";
 
@@ -94,10 +93,13 @@ export const getRailpackCommand = (application: ApplicationNested) => {
 
 	const bashCommand = `
 
-# Ensure we have a builder with containerd (isolated per build)
+# Ensure Railpack is installed by the server setup flow before running tenant-triggered builds.
+if ! command -v railpack >/dev/null 2>&1; then
+	echo "❌ Railpack is not installed. Run server setup or install Railpack on the target server before building." ;
+	exit 1;
+fi
 
-export RAILPACK_VERSION=${quoteShellArgument(application.railpackVersion || "")}
-bash -c "$(curl -fsSL https://railpack.com/install.sh)"
+# Ensure we have a builder with containerd (isolated per build)
 ${quoteShellArgs(["docker", "buildx", "create", "--name", builderName, "--driver", "docker-container"])} || true
 
 echo "Preparing Railpack build plan..." ;

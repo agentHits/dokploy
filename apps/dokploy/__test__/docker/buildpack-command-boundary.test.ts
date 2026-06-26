@@ -46,6 +46,15 @@ describe("buildpack command boundary", () => {
 		expect(command).not.toContain("docker buildx build --builder railpack my");
 	});
 
+	it("does not fetch a remote Railpack installer during build command generation", () => {
+		const command = getRailpackCommand(baseApplication);
+
+		expect(command).toContain("command -v railpack");
+		expect(command).not.toContain("railpack.com/install.sh");
+		expect(command).not.toContain("curl -fsSL");
+		expect(command).not.toContain('bash -c "$(');
+	});
+
 	it("rejects unsafe build paths before buildpack command generation", () => {
 		expect(() =>
 			getHerokuCommand({
