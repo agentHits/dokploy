@@ -22,6 +22,25 @@ const getGiteaProviderBaseUrl = (giteaProvider: Gitea) =>
 		{ fieldName: "Gitea provider URL" },
 	);
 
+export const assertGiteaRepositoryScope = (
+	giteaProvider: Pick<Gitea, "organizationName">,
+	owner: string | null | undefined,
+) => {
+	const configuredOrganization = giteaProvider.organizationName
+		?.trim()
+		.toLowerCase();
+
+	if (
+		configuredOrganization &&
+		(!owner || configuredOrganization !== owner.trim().toLowerCase())
+	) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "Repository is outside the configured Gitea organization",
+		});
+	}
+};
+
 export const getErrorCloneRequirements = (entity: {
 	giteaRepository?: string | null;
 	giteaOwner?: string | null;
@@ -185,6 +204,7 @@ export const cloneGiteaRepository = async ({
 	const outputPath = outputPathOverride ?? join(basePath, appName, "code");
 	command += buildRemovePathCommand(outputPath);
 	command += buildCreateDirectoryCommand(outputPath);
+	assertGiteaRepositoryScope(giteaProvider, giteaOwner);
 
 	const repoClone = `${giteaOwner}/${giteaRepository}.git`;
 	const baseUrl = await getGiteaProviderBaseUrl(giteaProvider);
@@ -230,7 +250,7 @@ export const testGiteaConnection = async (input: { giteaId: string }) => {
 		await refreshGiteaToken(giteaId);
 
 		const provider = await findGiteaById(giteaId);
-		if (!provider || !provider.accessToken) {
+		if (!provider?.accessToken) {
 			throw new TRPCError({
 				code: "UNAUTHORIZED",
 				message: "No access token available. Please authorize with Gitea.",
@@ -360,6 +380,7 @@ export const getGiteaBranches = async (input: {
 	await refreshGiteaToken(input.giteaId);
 
 	const giteaProvider = await findGiteaById(input.giteaId);
+	assertGiteaRepositoryScope(giteaProvider, input.owner);
 
 	const baseUrl = await getGiteaProviderBaseUrl(giteaProvider);
 

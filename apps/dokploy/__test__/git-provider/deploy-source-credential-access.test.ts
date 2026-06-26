@@ -24,6 +24,7 @@ const serverMocks = vi.hoisted(() => ({
 	findComposeById: vi.fn(),
 	findDomainsByComposeId: vi.fn(),
 	findEnvironmentById: vi.fn(),
+	findGiteaById: vi.fn(),
 	findGiteaGitProviderId: vi.fn(),
 	findGithubGitProviderId: vi.fn(),
 	findGitlabById: vi.fn(),
@@ -105,6 +106,7 @@ vi.mock("@dokploy/server", () => ({
 	findComposeById: serverMocks.findComposeById,
 	findDomainsByComposeId: serverMocks.findDomainsByComposeId,
 	findEnvironmentById: serverMocks.findEnvironmentById,
+	findGiteaById: serverMocks.findGiteaById,
 	findGiteaGitProviderId: serverMocks.findGiteaGitProviderId,
 	findGithubGitProviderId: serverMocks.findGithubGitProviderId,
 	findGitlabById: serverMocks.findGitlabById,
@@ -266,6 +268,9 @@ describe("deploy source credential access", () => {
 			sourceType: "raw",
 		});
 		serverMocks.findGiteaGitProviderId.mockResolvedValue("git-provider-1");
+		serverMocks.findGiteaById.mockResolvedValue({
+			organizationName: "allowed-org",
+		});
 		serverMocks.findGithubGitProviderId.mockResolvedValue("git-provider-1");
 		serverMocks.findGitlabById.mockResolvedValue({
 			groupName: "allowed/group",
@@ -903,6 +908,38 @@ describe("deploy source credential access", () => {
 				gitlabProjectId: 1,
 				gitlabRepository: "repo",
 				sourceType: "gitlab",
+			}),
+		).resolves.toEqual({ composeId: "compose-1" });
+
+		expect(serverMocks.updateCompose).toHaveBeenCalled();
+	});
+
+	it("rejects Gitea owners outside the configured organization before compose source persistence", async () => {
+		await expect(
+			composeRouter.createCaller(createContext()).update({
+				composeId: "compose-1",
+				giteaBranch: "main",
+				giteaId: "gitea-1",
+				giteaOwner: "other-org",
+				giteaRepository: "repo",
+				sourceType: "gitea",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(serverMocks.findGiteaGitProviderId).toHaveBeenCalledWith("gitea-1");
+		expect(serverMocks.findGiteaById).toHaveBeenCalledWith("gitea-1");
+		expect(serverMocks.updateCompose).not.toHaveBeenCalled();
+	});
+
+	it("allows Gitea owners inside the configured organization before compose source persistence", async () => {
+		await expect(
+			composeRouter.createCaller(createContext()).update({
+				composeId: "compose-1",
+				giteaBranch: "main",
+				giteaId: "gitea-1",
+				giteaOwner: "allowed-org",
+				giteaRepository: "repo",
+				sourceType: "gitea",
 			}),
 		).resolves.toEqual({ composeId: "compose-1" });
 

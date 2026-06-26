@@ -84,9 +84,8 @@ const {
 const { assertCustomGitUrlAllowed, cloneGitRepository } = await import(
 	"@dokploy/server/utils/providers/git"
 );
-const { cloneGiteaRepository } = await import(
-	"@dokploy/server/utils/providers/gitea"
-);
+const { assertGiteaRepositoryScope, cloneGiteaRepository, getGiteaBranches } =
+	await import("@dokploy/server/utils/providers/gitea");
 const { cloneGithubRepository } = await import(
 	"@dokploy/server/utils/providers/github"
 );
@@ -97,18 +96,16 @@ const parseShellArgs = (command: string) =>
 	parse(command).filter((part): part is string => typeof part === "string");
 
 const extractGitCloneArgs = (command: string) => {
-	const cloneLine = command
-		.split("\n")
-		.find((line) => line.includes("git clone"));
-	expect(cloneLine).toBeDefined();
+	for (const line of command.split("\n")) {
+		const args = parseShellArgs(line);
+		const gitStart = args.indexOf("git");
+		const cloneIndex = args.indexOf("clone");
+		if (gitStart >= 0 && cloneIndex > gitStart) {
+			return [args[gitStart], ...args.slice(cloneIndex)];
+		}
+	}
 
-	const args = parseShellArgs(cloneLine || "");
-	const cloneStart = args.findIndex(
-		(arg, index) => arg === "git" && args[index + 1] === "clone",
-	);
-	expect(cloneStart).toBeGreaterThanOrEqual(0);
-
-	return args.slice(cloneStart);
+	throw new Error("git clone command not found");
 };
 
 const expectCloneArgsPreserveDangerousValues = (
@@ -160,6 +157,7 @@ describe("Git provider clone command boundary", () => {
 			accessToken: fixtures.giteaToken,
 			giteaInternalUrl: null,
 			giteaUrl: fixtures.giteaBaseUrl,
+			organizationName: null,
 		});
 		mocks.findSSHKeyById.mockResolvedValue({
 			privateKey: "private-key$(id); touch /tmp/private-key",
@@ -469,5 +467,55 @@ describe("Git provider clone command boundary", () => {
 			cloneUrl: expectedCloneUrl,
 			outputPath: fixtures.outputPath,
 		});
+	});
+
+	it("rejects Gitea clone metadata outside the configured organization", async () => {
+		mocks.findGiteaById.mockResolvedValue({
+			accessToken: fixtures.giteaToken,
+			giteaInternalUrl: null,
+			giteaUrl: fixtures.giteaBaseUrl,
+			organizationName: "allowed-org",
+		});
+
+		await expect(
+			cloneGiteaRepository({
+				appName: "app",
+				enableSubmodules: false,
+				giteaBranch: fixtures.branch,
+				giteaId: "gitea-1",
+				giteaOwner: "other-org",
+				giteaRepository: fixtures.giteaRepository,
+				outputPathOverride: fixtures.outputPath,
+				serverId: null,
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+	});
+
+	it("rejects Gitea branch lookup outside the configured organization before fetching", async () => {
+		mocks.findGiteaById.mockResolvedValue({
+			accessToken: fixtures.giteaToken,
+			giteaInternalUrl: null,
+			giteaUrl: fixtures.giteaBaseUrl,
+			organizationName: "allowed-org",
+		});
+
+		await expect(
+			getGiteaBranches({
+				giteaId: "gitea-1",
+				owner: "other-org",
+				repo: "repo",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.fetchWithPublicEgress).not.toHaveBeenCalled();
+	});
+
+	it("allows Gitea repository scope when the owner matches a configured organization", () => {
+		expect(() =>
+			assertGiteaRepositoryScope(
+				{ organizationName: "allowed-org" },
+				"ALLOWED-ORG",
+			),
+		).not.toThrow();
 	});
 });

@@ -1,6 +1,7 @@
 import {
 	findBitbucketById,
 	findBitbucketGitProviderId,
+	findGiteaById,
 	findGiteaGitProviderId,
 	findGithubGitProviderId,
 	findGitlabById,
@@ -13,6 +14,7 @@ import {
 } from "@dokploy/server/services/permission";
 import { assertSshKeyAccess } from "@dokploy/server/services/ssh-key";
 import { assertBitbucketRepositoryScope } from "@dokploy/server/utils/providers/bitbucket";
+import { assertGiteaRepositoryScope } from "@dokploy/server/utils/providers/gitea";
 import { assertGitlabProjectScope } from "@dokploy/server/utils/providers/gitlab";
 
 type DeploySourceSession = {
@@ -25,6 +27,8 @@ type DeploySourceCredentialInput = {
 	bitbucketOwner?: string | null;
 	customGitSSHKeyId?: string | null;
 	giteaId?: string | null;
+	giteaOwner?: string | null;
+	giteaRepository?: string | null;
 	githubId?: string | null;
 	gitlabId?: string | null;
 	gitlabOwner?: string | null;
@@ -66,6 +70,8 @@ export const assertDeploySourceCredentialAccess = async (
 	if (input.giteaId) {
 		const gitProviderId = await findGiteaGitProviderId(input.giteaId);
 		await assertGitProviderAccess(gitProviderId, session);
+		const giteaProvider = await findGiteaById(input.giteaId);
+		assertGiteaRepositoryScope(giteaProvider, input.giteaOwner);
 	}
 
 	if (input.customGitSSHKeyId) {

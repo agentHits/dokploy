@@ -1219,6 +1219,13 @@
       "when": 1781045439163,
       "tag": "0173_scope_sso_domains",
       "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1781045439164,
+      "tag": "0174_scope_gitea_owners",
+      "breakpoints": true
     }
   ]
 }

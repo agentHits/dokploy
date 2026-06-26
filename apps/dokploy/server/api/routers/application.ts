@@ -663,7 +663,11 @@ export const applicationRouter = createTRPCRouter({
 			});
 			await assertCurrentApplicationSourceEditAccess(input, ctx.session);
 			await assertDeploySourceCredentialAccess(
-				{ giteaId: input.giteaId },
+				{
+					giteaId: input.giteaId,
+					giteaOwner: input.giteaOwner,
+					giteaRepository: input.giteaRepository,
+				},
 				ctx.session,
 				{ permissionCtx: ctx, requireSshKeyRead: true },
 			);
