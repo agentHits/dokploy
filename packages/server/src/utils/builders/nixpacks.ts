@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import { prepareEnvironmentVariables } from "../docker/utils";
 import { getBuildAppDirectory } from "../filesystem/directory";
 import {
+	getNoSymlinkFilePathGuardCommand,
 	normalizeRelativeFilePath,
 	quoteShellArg,
 } from "../filesystem/safe-path";
@@ -56,13 +57,18 @@ export const getNixpacksCommand = (application: ApplicationNested) => {
 	 */
 	if (safePublishDirectory) {
 		const localPath = path.join(buildAppDirectory, safePublishDirectory);
+		const pathGuardCommand = getNoSymlinkFilePathGuardCommand(
+			buildAppDirectory,
+			localPath,
+		);
 		const isDirectory =
 			safePublishDirectory.endsWith("/") || !path.extname(safePublishDirectory);
 		const containerSource = `${buildContainerId}:/app/${safePublishDirectory}${isDirectory ? "/." : ""}`;
 
 		bashCommand += `
-	${quoteShellArgs(["docker", "create", "--name", buildContainerId, appName])}
-	mkdir -p ${quoteShellArg(localPath)}
+		${quoteShellArgs(["docker", "create", "--name", buildContainerId, appName])}
+		${pathGuardCommand}
+		mkdir -p ${quoteShellArg(localPath)}
 	${quoteShellArgs(["docker", "cp", containerSource, path.join(buildAppDirectory, safePublishDirectory)])} || {
 		${quoteShellArgs(["docker", "rm", buildContainerId])}
 		echo ${quoteShellArg(`❌ Copying ${safePublishDirectory} to ${path.join(buildAppDirectory, safePublishDirectory)} failed`)} ;

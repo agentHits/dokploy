@@ -227,4 +227,47 @@ describe("monitoring WebSocket server permission gate", () => {
 		expect(mocks.listContainers).not.toHaveBeenCalled();
 		expect(mocks.recordAdvancedStats).not.toHaveBeenCalled();
 	});
+
+	it("closes host monitoring sockets for non-owner callers", async () => {
+		mocks.validateRequest.mockResolvedValue({
+			user: { id: "user-1", role: "member" },
+			session: { activeOrganizationId: "org-1" },
+		});
+		mocks.checkPermission.mockResolvedValue(undefined);
+		server = http.createServer();
+		setupDockerStatsMonitoringSocketServer(server);
+		const port = await listen(server);
+
+		await expect(
+			openAndWaitForClose(
+				port,
+				"/listen-docker-stats-monitoring?appName=dokploy",
+			),
+		).resolves.toEqual({ code: 1005, reason: "" });
+
+		expect(mocks.getHostSystemStats).not.toHaveBeenCalled();
+		expect(mocks.listContainers).not.toHaveBeenCalled();
+		expect(mocks.recordAdvancedStats).not.toHaveBeenCalled();
+	});
+
+	it("closes monitoring sockets with invalid appType before Docker access", async () => {
+		mocks.validateRequest.mockResolvedValue({
+			user: { id: "user-1", role: "member" },
+			session: { activeOrganizationId: "org-1" },
+		});
+		server = http.createServer();
+		setupDockerStatsMonitoringSocketServer(server);
+		const port = await listen(server);
+
+		await expect(
+			openAndWaitForClose(
+				port,
+				"/listen-docker-stats-monitoring?appName=app-one&appType=bad",
+			),
+		).resolves.toEqual({ code: 4000, reason: "Invalid appType" });
+
+		expect(mocks.checkPermission).not.toHaveBeenCalled();
+		expect(mocks.listContainers).not.toHaveBeenCalled();
+		expect(mocks.recordAdvancedStats).not.toHaveBeenCalled();
+	});
 });

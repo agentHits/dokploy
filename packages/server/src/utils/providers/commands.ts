@@ -24,7 +24,16 @@ export const buildGitCloneCommand = ({
 	enableSubmodules?: boolean;
 	outputPath: string;
 }) => {
-	const args = ["git", "clone", "--branch", branch, "--depth", "1"];
+	const args = [
+		"git",
+		"-c",
+		"http.followRedirects=false",
+		"clone",
+		"--branch",
+		branch,
+		"--depth",
+		"1",
+	];
 
 	if (enableSubmodules) {
 		args.push("--recurse-submodules");

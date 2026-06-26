@@ -148,6 +148,45 @@ const assertAssignedServersBelongToOrganization = async (
 	}
 };
 
+const assertLegacyPermissionGrantsAllowed = async (
+	ctx: Parameters<typeof checkPermission>[0],
+	input: {
+		canCreateProjects?: boolean;
+		canDeleteProjects?: boolean;
+		canCreateServices?: boolean;
+		canDeleteServices?: boolean;
+		canCreateEnvironments?: boolean;
+		canDeleteEnvironments?: boolean;
+		canAccessToTraefikFiles?: boolean;
+		canAccessToDocker?: boolean;
+		canAccessToAPI?: boolean;
+		canAccessToSSHKeys?: boolean;
+		canAccessToGitProviders?: boolean;
+	},
+) => {
+	const checks: Array<
+		[boolean | undefined, Parameters<typeof checkPermission>[1]]
+	> = [
+		[input.canCreateProjects, { project: ["create"] }],
+		[input.canDeleteProjects, { project: ["delete"] }],
+		[input.canCreateServices, { service: ["create"] }],
+		[input.canDeleteServices, { service: ["delete"] }],
+		[input.canCreateEnvironments, { environment: ["create"] }],
+		[input.canDeleteEnvironments, { environment: ["delete"] }],
+		[input.canAccessToTraefikFiles, { traefikFiles: ["read"] }],
+		[input.canAccessToDocker, { docker: ["read"] }],
+		[input.canAccessToAPI, { api: ["read"] }],
+		[input.canAccessToSSHKeys, { sshKeys: ["read", "create", "delete"] }],
+		[input.canAccessToGitProviders, { gitProviders: ["read"] }],
+	];
+
+	for (const [enabled, permissions] of checks) {
+		if (enabled === true) {
+			await checkPermission(ctx, permissions);
+		}
+	}
+};
+
 const buildContainerMetricsRequest = ({
 	host,
 	port,
@@ -530,6 +569,7 @@ export const userRouter = createTRPCRouter({
 				}
 
 				const { id, accessedGitProviders, accessedServers, ...rest } = input;
+				await assertLegacyPermissionGrantsAllowed(ctx, rest);
 
 				const licensed = await hasValidLicense(
 					ctx.session?.activeOrganizationId || "",

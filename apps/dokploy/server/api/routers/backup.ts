@@ -52,6 +52,7 @@ import {
 	restoreWebServerBackup,
 } from "@dokploy/server/utils/restore";
 import { normalizeRestoreBackupFile } from "@dokploy/server/utils/restore/safe-input";
+import { redactBackupScheduleSecrets } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -618,7 +619,7 @@ export const backupRouter = createTRPCRouter({
 			const backup = await findBackupById(input.backupId);
 			await assertBackupAccess(ctx, backup, "read");
 
-			return backup;
+			return redactBackupScheduleSecrets(backup);
 		}),
 	update: protectedProcedure
 		.input(apiUpdateBackup)
@@ -701,7 +702,7 @@ export const backupRouter = createTRPCRouter({
 					resourceType: "backup",
 					resourceId: input.backupId,
 				});
-				return value;
+				return redactBackupScheduleSecrets(value);
 			} catch (error) {
 				const message =
 					error instanceof Error ? error.message : "Error deleting this Backup";

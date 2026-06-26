@@ -83,12 +83,20 @@ const isBlockedIPv6 = (hostname: string) => {
 	const isLinkLocal =
 		Number.isInteger(firstHextetValue) &&
 		(firstHextetValue & 0xffc0) === 0xfe80;
+	const isIpv4TranslationPrefix =
+		lowerHostname.startsWith("64:ff9b:") ||
+		lowerHostname.startsWith("64:ff9b::") ||
+		lowerHostname.startsWith("64:ff9b:1:") ||
+		lowerHostname.startsWith("2002:") ||
+		lowerHostname.startsWith("2001:0:") ||
+		lowerHostname.startsWith("2001:0000:");
 
 	return (
 		lowerHostname === "::" ||
 		lowerHostname === "::1" ||
 		lowerHostname.startsWith("::ffff:") ||
 		lowerHostname.startsWith("2001:db8:") ||
+		isIpv4TranslationPrefix ||
 		isLinkLocal ||
 		firstHextet.startsWith("fc") ||
 		firstHextet.startsWith("fd") ||

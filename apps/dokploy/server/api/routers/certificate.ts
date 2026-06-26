@@ -61,7 +61,7 @@ export const certificateRouter = createTRPCRouter({
 				resourceId: cert.certificateId,
 				resourceName: cert.name,
 			});
-			return cert;
+			return redactSecretFields(cert, ["privateKey"]);
 		}),
 
 	one: withPermission("certificate", "read")

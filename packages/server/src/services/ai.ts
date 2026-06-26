@@ -4,6 +4,7 @@ import {
 	assertAIProviderApiUrlAllowed,
 	selectAIProvider,
 } from "@dokploy/server/utils/ai/select-ai-provider";
+import { secretUpdateValue } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { generateText, Output } from "ai";
 import { desc, eq } from "drizzle-orm";
@@ -79,13 +80,21 @@ export const saveAiSettings = async (organizationId: string, settings: any) => {
 	}
 
 	const normalizedSettings = { ...settings };
+	if (aiId) {
+		const nextApiKey = secretUpdateValue(normalizedSettings.apiKey);
+		if (nextApiKey === undefined) {
+			delete normalizedSettings.apiKey;
+		} else {
+			normalizedSettings.apiKey = nextApiKey;
+		}
+	}
 	if (normalizedSettings.apiUrl) {
 		normalizedSettings.apiUrl = await assertAIProviderApiUrlAllowed(
 			normalizedSettings.apiUrl,
 		);
 	}
 
-	return db
+	const [savedSetting] = await db
 		.insert(ai)
 		.values({
 			aiId,
@@ -97,7 +106,10 @@ export const saveAiSettings = async (organizationId: string, settings: any) => {
 			set: {
 				...normalizedSettings,
 			},
-		});
+		})
+		.returning();
+
+	return savedSetting;
 };
 
 export const deleteAiSettings = async (

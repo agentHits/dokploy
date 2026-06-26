@@ -9,14 +9,136 @@ import {
 } from "@dokploy/server/index";
 import { auth } from "@dokploy/server/lib/auth";
 import { getWebServerSettings } from "@dokploy/server/services/web-server-settings";
+import {
+	REDACTED_SECRET_VALUE,
+	redactSensitiveText,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
 	createTRPCRouter,
+	enterpriseOwnerProcedure,
 	enterpriseProcedure,
 	publicProcedure,
 } from "@/server/api/trpc";
+
+const redactJsonConfigFields = (
+	config: string | null | undefined,
+	redact: (value: Record<string, unknown>) => void,
+) => {
+	if (!config) {
+		return config;
+	}
+	try {
+		const parsed = JSON.parse(config) as Record<string, unknown>;
+		redact(parsed);
+		return JSON.stringify(parsed);
+	} catch {
+		return redactSensitiveText(config);
+	}
+};
+
+const redactOidcConfig = (config: string | null | undefined) =>
+	redactJsonConfigFields(config, (parsed) => {
+		if (parsed.clientSecret) {
+			parsed.clientSecret = REDACTED_SECRET_VALUE;
+		}
+	});
+
+const redactSamlConfig = (config: string | null | undefined) =>
+	redactJsonConfigFields(config, (parsed) => {
+		if (parsed.cert) {
+			parsed.cert = REDACTED_SECRET_VALUE;
+		}
+		if (parsed.idpMetadata && typeof parsed.idpMetadata === "object") {
+			const idpMetadata = parsed.idpMetadata as Record<string, unknown>;
+			if (idpMetadata.metadata) {
+				idpMetadata.metadata = REDACTED_SECRET_VALUE;
+			}
+		}
+	});
+
+const preserveRedactedJsonConfigFields = <T extends Record<string, unknown>>(
+	nextConfig: T | undefined,
+	existingConfig: string | null | undefined,
+	preserve: (
+		next: Record<string, unknown>,
+		existing: Record<string, unknown>,
+	) => void,
+) => {
+	if (!nextConfig || !existingConfig) {
+		return nextConfig;
+	}
+	try {
+		const next = { ...nextConfig } as Record<string, unknown>;
+		const existing = JSON.parse(existingConfig) as Record<string, unknown>;
+		preserve(next, existing);
+		return next as T;
+	} catch {
+		return nextConfig;
+	}
+};
+
+const preserveRedactedOidcConfig = (
+	nextConfig:
+		| NonNullable<z.infer<typeof ssoProviderBodySchema>["oidcConfig"]>
+		| undefined,
+	existingConfig: string | null | undefined,
+) =>
+	preserveRedactedJsonConfigFields(
+		nextConfig,
+		existingConfig,
+		(next, existing) => {
+			if (next.clientSecret === REDACTED_SECRET_VALUE) {
+				next.clientSecret = existing.clientSecret;
+			}
+		},
+	);
+
+const preserveRedactedSamlConfig = (
+	nextConfig:
+		| NonNullable<z.infer<typeof ssoProviderBodySchema>["samlConfig"]>
+		| undefined,
+	existingConfig: string | null | undefined,
+) =>
+	preserveRedactedJsonConfigFields(
+		nextConfig,
+		existingConfig,
+		(next, existing) => {
+			if (next.cert === REDACTED_SECRET_VALUE) {
+				next.cert = existing.cert;
+			}
+			if (
+				next.idpMetadata &&
+				typeof next.idpMetadata === "object" &&
+				existing.idpMetadata &&
+				typeof existing.idpMetadata === "object"
+			) {
+				const nextMetadata = next.idpMetadata as Record<string, unknown>;
+				const existingMetadata = existing.idpMetadata as Record<
+					string,
+					unknown
+				>;
+				if (nextMetadata.metadata === REDACTED_SECRET_VALUE) {
+					nextMetadata.metadata = existingMetadata.metadata;
+				}
+			}
+		},
+	);
+
+const redactSsoProviderSecrets = <
+	T extends {
+		oidcConfig?: string | null;
+		samlConfig?: string | null;
+	},
+>(
+	provider: T,
+) => ({
+	...provider,
+	oidcConfig: redactOidcConfig(provider.oidcConfig),
+	samlConfig: redactSamlConfig(provider.samlConfig),
+});
 
 export const ssoRouter = createTRPCRouter({
 	showSignInWithSSO: publicProcedure.query(async () => {
@@ -65,7 +187,7 @@ export const ssoRouter = createTRPCRouter({
 			},
 			orderBy: [asc(ssoProvider.createdAt)],
 		});
-		return providers;
+		return providers.map(redactSsoProviderSecrets);
 	}),
 	getTrustedOrigins: enterpriseProcedure.query(async ({ ctx }) => {
 		const ownerId = await getOrganizationOwnerId(
@@ -103,7 +225,7 @@ export const ssoRouter = createTRPCRouter({
 						"SSO provider not found or you do not have permission to access it",
 				});
 			}
-			return provider;
+			return redactSsoProviderSecrets(provider);
 		}),
 	update: enterpriseProcedure
 		.input(ssoProviderBodySchema)
@@ -117,6 +239,8 @@ export const ssoRouter = createTRPCRouter({
 					id: true,
 					issuer: true,
 					domain: true,
+					oidcConfig: true,
+					samlConfig: true,
 					userId: true,
 				},
 			});
@@ -200,10 +324,16 @@ export const ssoRouter = createTRPCRouter({
 				providerId: input.providerId,
 			};
 			if (input.oidcConfig != null) {
-				updateBody.oidcConfig = input.oidcConfig;
+				updateBody.oidcConfig = preserveRedactedOidcConfig(
+					input.oidcConfig,
+					existing.oidcConfig,
+				);
 			}
 			if (input.samlConfig != null) {
-				updateBody.samlConfig = input.samlConfig;
+				updateBody.samlConfig = preserveRedactedSamlConfig(
+					input.samlConfig,
+					existing.samlConfig,
+				);
 			}
 
 			await auth.updateSSOProvider({
@@ -293,7 +423,7 @@ export const ssoRouter = createTRPCRouter({
 			});
 			return { success: true };
 		}),
-	addTrustedOrigin: enterpriseProcedure
+	addTrustedOrigin: enterpriseOwnerProcedure
 		.input(z.object({ origin: z.string().min(1) }))
 		.mutation(async ({ ctx, input }) => {
 			const ownerId = await getOrganizationOwnerId(
@@ -321,7 +451,7 @@ export const ssoRouter = createTRPCRouter({
 				.where(eq(user.id, ownerId));
 			return { success: true };
 		}),
-	removeTrustedOrigin: enterpriseProcedure
+	removeTrustedOrigin: enterpriseOwnerProcedure
 		.input(z.object({ origin: z.string().min(1) }))
 		.mutation(async ({ ctx, input }) => {
 			const ownerId = await getOrganizationOwnerId(
@@ -348,7 +478,7 @@ export const ssoRouter = createTRPCRouter({
 				.where(eq(user.id, ownerId));
 			return { success: true };
 		}),
-	updateTrustedOrigin: enterpriseProcedure
+	updateTrustedOrigin: enterpriseOwnerProcedure
 		.input(
 			z.object({
 				oldOrigin: z.string().min(1),

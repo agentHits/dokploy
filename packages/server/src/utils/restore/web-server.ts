@@ -130,6 +130,14 @@ export const restoreWebServerBackup = async (
 				`unzip -Z1 ${quoteRestoreShellArg(localBackupPath)}`,
 			);
 			validateWebServerArchiveMembers(archiveListing.split(/\r?\n/));
+			const { stdout: unsupportedArchiveMembers } = await execAsync(
+				`unzip -Z -l ${quoteRestoreShellArg(localBackupPath)} | awk '$1 ~ /^[lbcps]/ { print; exit }'`,
+			);
+			if (unsupportedArchiveMembers.trim()) {
+				throw new Error(
+					"Backup archive contains unsupported filesystem entries",
+				);
+			}
 
 			// Extract backup
 			emit("Extracting backup...");

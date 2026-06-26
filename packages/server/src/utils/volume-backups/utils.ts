@@ -10,6 +10,7 @@ import {
 	execAsync,
 	execAsyncRemote,
 } from "@dokploy/server/utils/process/execAsync";
+import { quoteShellArgument } from "@dokploy/server/utils/shell";
 import { scheduledJobs, scheduleJob } from "node-schedule";
 import {
 	assertRcloneS3DestinationAllowed,
@@ -111,7 +112,7 @@ const cleanupOldVolumeBackups = async (
 		const deleteCommand = buildRcloneS3Command("delete", safeDestination, [
 			`${backupFilesPath}{}`,
 		]);
-		const fullCommand = `${listCommand} | ${sortAndPick} ${deleteCommand}`;
+		const fullCommand = `${listCommand} | ${sortAndPick} sh -c ${quoteShellArgument(deleteCommand)}`;
 
 		if (serverId) {
 			await execAsyncRemote(serverId, fullCommand);

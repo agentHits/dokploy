@@ -142,6 +142,6 @@ export const bitbucketRouter = createTRPCRouter({
 				resourceName: input.name,
 			});
 
-			return result;
+			return redactBitbucketProvider(result);
 		}),
 });

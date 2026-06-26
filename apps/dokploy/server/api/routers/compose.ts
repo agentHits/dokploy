@@ -17,6 +17,7 @@ import {
 	getAccessibleServerIds,
 	getComposeContainer,
 	getContainerLogs,
+	getContainersByAppNameMatch,
 	getWebServerSettings,
 	IS_CLOUD,
 	loadServices,
@@ -402,7 +403,7 @@ export const composeRouter = createTRPCRouter({
 				deployment: ["cancel"],
 			});
 			const compose = await findComposeById(input.composeId);
-			await killDockerBuild("compose", compose.serverId);
+			await killDockerBuild("compose", compose.serverId, compose.appName);
 		}),
 
 	loadServices: protectedProcedure
@@ -1337,6 +1338,21 @@ export const composeRouter = createTRPCRouter({
 				throw new TRPCError({
 					code: "UNAUTHORIZED",
 					message: "You are not authorized to access this compose",
+				});
+			}
+			const containers = await getContainersByAppNameMatch(
+				compose.appName,
+				compose.composeType === "docker-compose" ? "docker-compose" : "stack",
+				compose.serverId ?? undefined,
+			);
+			if (
+				!containers.some(
+					(container) => container.containerId === input.containerId,
+				)
+			) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this container",
 				});
 			}
 			return await getContainerLogs(

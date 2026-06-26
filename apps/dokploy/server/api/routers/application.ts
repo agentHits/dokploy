@@ -54,6 +54,7 @@ import {
 } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { assertDeploySourceCredentialAccess } from "@/server/api/utils/deploy-source-access";
+import { assertContainerMetricsServiceAccess } from "@/server/api/utils/monitoring-access";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
 import {
 	apiCreateApplication,
@@ -853,7 +854,11 @@ export const applicationRouter = createTRPCRouter({
 				deployment: ["cancel"],
 			});
 			const application = await findApplicationById(input.applicationId);
-			await killDockerBuild("application", application.serverId);
+			await killDockerBuild(
+				"application",
+				application.serverId,
+				application.appName,
+			);
 			await audit(ctx, {
 				action: "stop",
 				resourceType: "application",
@@ -962,13 +967,14 @@ export const applicationRouter = createTRPCRouter({
 		}),
 	readAppMonitoring: withPermission("monitoring", "read")
 		.input(apiFindMonitoringStats)
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
 			if (IS_CLOUD) {
 				throw new TRPCError({
 					code: "UNAUTHORIZED",
 					message: "Functionality not available in cloud version",
 				});
 			}
+			await assertContainerMetricsServiceAccess(ctx, input.appName);
 			const stats = await getApplicationStats(input.appName);
 
 			return stats;

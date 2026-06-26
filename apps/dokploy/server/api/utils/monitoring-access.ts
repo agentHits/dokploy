@@ -198,7 +198,7 @@ export const assertContainerMetricsServiceAccess = async (
 		});
 	}
 
-	if ((serverId || service.serverId) && service.serverId !== serverId) {
+	if (serverId !== undefined && service.serverId !== serverId) {
 		throw new TRPCError({
 			code: "UNAUTHORIZED",
 			message: "Monitored service is not linked to this metrics server",

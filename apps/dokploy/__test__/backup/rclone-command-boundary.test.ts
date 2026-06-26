@@ -97,6 +97,7 @@ vi.mock("@dokploy/server/utils/notifications/database-backup", () => ({
 const { destinationRouter } = await import(
 	"../../server/api/routers/destination"
 );
+const { keepLatestNBackups } = await import("@dokploy/server/utils/backups");
 const { runPostgresBackup } = await import(
 	"@dokploy/server/utils/backups/postgres"
 );
@@ -120,26 +121,23 @@ const createDestinationCaller = () =>
 const parseShellArgs = (command: string) =>
 	parse(command).filter((part): part is string => typeof part === "string");
 
-const expectS3CredentialsAsArgs = (args: string[]) => {
-	expect(args[args.indexOf("--s3-provider") + 1]).toBe(
-		dangerousDestination.provider,
-	);
-	expect(args[args.indexOf("--s3-access-key-id") + 1]).toBe(
-		dangerousDestination.accessKey,
-	);
-	expect(args[args.indexOf("--s3-secret-access-key") + 1]).toBe(
-		dangerousDestination.secretAccessKey,
-	);
-	expect(args[args.indexOf("--s3-region") + 1]).toBe(
-		dangerousDestination.region,
-	);
-	expect(args[args.indexOf("--s3-endpoint") + 1]).toBe(
-		dangerousDestination.endpoint,
-	);
+const expectS3CredentialsAsEnvironment = (command: string, args: string[]) => {
+	expect(command).toContain("RCLONE_CONFIG_DOKPLOYS3_PROVIDER=");
+	expect(command).toContain("RCLONE_CONFIG_DOKPLOYS3_ACCESS_KEY_ID=");
+	expect(command).toContain("RCLONE_CONFIG_DOKPLOYS3_SECRET_ACCESS_KEY=");
+	expect(command).toContain("RCLONE_CONFIG_DOKPLOYS3_REGION=");
+	expect(command).toContain("RCLONE_CONFIG_DOKPLOYS3_ENDPOINT=");
+	expect(args).not.toContain("--s3-provider");
+	expect(args).not.toContain("--s3-access-key-id");
+	expect(args).not.toContain("--s3-secret-access-key");
+	expect(args).not.toContain("--s3-region");
+	expect(args).not.toContain("--s3-endpoint");
 };
 
 const extractUploadRcloneCommand = (backupCommand: string) => {
-	const match = backupCommand.match(/\|\s+(rclone rcat .*?)\s+2>&1/);
+	const match = backupCommand.match(
+		/\|\s+((?:RCLONE_CONFIG_[\s\S]*?)?rclone rcat .*?)\s+2>&1/,
+	);
 	expect(match?.[1]).toBeDefined();
 	return match?.[1] || "";
 };
@@ -183,10 +181,11 @@ describe("destination rclone command boundary", () => {
 
 		const command = mocks.execAsync.mock.calls[0]?.[0] as string;
 		const args = parseShellArgs(command);
+		const rcloneIndex = args.indexOf("rclone");
 
-		expect(args.slice(0, 2)).toEqual(["rclone", "ls"]);
-		expectS3CredentialsAsArgs(args);
-		expect(args).toContain(`:s3:${dangerousDestination.bucket}`);
+		expect(args.slice(rcloneIndex, rcloneIndex + 2)).toEqual(["rclone", "ls"]);
+		expectS3CredentialsAsEnvironment(command, args);
+		expect(args).toContain(`dokploys3:${dangerousDestination.bucket}`);
 		expect(command).not.toContain(
 			'--s3-access-key-id="AKIA; touch /tmp/access"',
 		);
@@ -208,6 +207,7 @@ describe("destination rclone command boundary", () => {
 				databaseType: "postgres",
 				destinationId: "destination-1",
 				prefix: "prefix$(id);touch",
+				postgresId: "postgres-1",
 				postgres: {
 					appName: "postgres-app",
 					databaseUser: "postgres",
@@ -218,11 +218,15 @@ describe("destination rclone command boundary", () => {
 		const command = mocks.execAsyncRemote.mock.calls[0]?.[1] as string;
 		const uploadCommand = extractUploadRcloneCommand(command);
 		const args = parseShellArgs(uploadCommand);
+		const rcloneIndex = args.indexOf("rclone");
 
-		expect(args.slice(0, 2)).toEqual(["rclone", "rcat"]);
-		expectS3CredentialsAsArgs(args);
+		expect(args.slice(rcloneIndex, rcloneIndex + 2)).toEqual([
+			"rclone",
+			"rcat",
+		]);
+		expectS3CredentialsAsEnvironment(uploadCommand, args);
 		expect(args.at(-1)).toMatch(
-			/^:s3:bucket\$\(id\);touch\/postgres-app\/prefix\$\(id\);touch\/.*\.sql\.gz$/,
+			/^dokploys3:bucket\$\(id\);touch\/postgres-app\/prefix\$\(id\);touch\/.*\.sql\.gz$/,
 		);
 		expect(command).not.toContain(
 			'--s3-access-key-id="AKIA; touch /tmp/access"',
@@ -247,6 +251,7 @@ describe("destination rclone command boundary", () => {
 				databaseType: "postgres",
 				destinationId: "destination-1",
 				prefix: "prefix",
+				postgresId: "postgres-1",
 				postgres: {
 					appName: "postgres-app",
 					databaseUser: "postgres",
@@ -268,6 +273,28 @@ describe("destination rclone command boundary", () => {
 		);
 	});
 
+	it("wraps retention rclone delete commands after xargs", async () => {
+		await keepLatestNBackups({
+			backupId: "backup-1",
+			backupType: "database",
+			database: "appdb",
+			databaseType: "postgres",
+			destinationId: "destination-1",
+			keepLatestCount: 1,
+			prefix: "prefix",
+			postgresId: "postgres-1",
+			postgres: {
+				appName: "postgres-app",
+			},
+		} as never);
+
+		const command = mocks.execAsync.mock.calls[0]?.[0] as string;
+
+		expect(command).toContain("xargs -I{} sh -c ");
+		expect(command).not.toContain("xargs -I{} RCLONE_CONFIG_");
+		expect(command).toContain("rclone delete");
+	});
+
 	it("redacts mongo database password from structured backup command logs", async () => {
 		const databasePassword = "mongo-secret-password";
 
@@ -285,6 +312,7 @@ describe("destination rclone command boundary", () => {
 				databaseType: "mongo",
 				destinationId: "destination-1",
 				prefix: "prefix",
+				mongoId: "mongo-1",
 				mongo: {
 					appName: "mongo-app",
 					databasePassword,

@@ -76,7 +76,7 @@ export const destinationRouter = createTRPCRouter({
 					resourceId: result.destinationId,
 					resourceName: input.name,
 				});
-				return result;
+				return redactSecretFields(result, ["secretAccessKey"]);
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -169,7 +169,7 @@ export const destinationRouter = createTRPCRouter({
 					resourceId: input.destinationId,
 					resourceName: destination.name,
 				});
-				return result;
+				return redactSecretFields(result, ["secretAccessKey"]);
 			} catch (error) {
 				throw error;
 			}

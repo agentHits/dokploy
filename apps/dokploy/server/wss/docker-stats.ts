@@ -9,6 +9,7 @@ import {
 	validateRequest,
 } from "@dokploy/server";
 import { WebSocketServer } from "ws";
+import { assertContainerMetricsServiceAccess } from "@/server/api/utils/monitoring-access";
 import { canAccessMonitoringWebSocket } from "./server-permission";
 
 export const setupDockerStatsMonitoringSocketServer = (
@@ -51,6 +52,10 @@ export const setupDockerStatsMonitoringSocketServer = (
 			ws.close(4000, "appName no provided");
 			return;
 		}
+		if (!["application", "stack", "docker-compose"].includes(appType)) {
+			ws.close(4000, "Invalid appType");
+			return;
+		}
 
 		if (!user || !session) {
 			ws.close();
@@ -58,6 +63,20 @@ export const setupDockerStatsMonitoringSocketServer = (
 		}
 
 		if (!(await canAccessMonitoringWebSocket({ user, session }))) {
+			ws.close();
+			return;
+		}
+
+		try {
+			if (appName === "dokploy") {
+				if (user.role !== "owner") {
+					ws.close();
+					return;
+				}
+			} else {
+				await assertContainerMetricsServiceAccess({ user, session }, appName);
+			}
+		} catch {
 			ws.close();
 			return;
 		}
@@ -97,7 +116,7 @@ export const setupDockerStatsMonitoringSocketServer = (
 				});
 
 				const container = containers[0];
-				if (!container || container?.State !== "running") {
+				if (container?.State !== "running") {
 					ws.close(4000, "Container not running");
 					return;
 				}

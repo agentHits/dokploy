@@ -12,6 +12,7 @@ import {
 import { db } from "@dokploy/server/db";
 import {
 	isRedactedSecretValue,
+	redactSecretFields,
 	redactSecretFieldsList,
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
@@ -84,7 +85,7 @@ export const registryRouter = createTRPCRouter({
 				resourceId: reg.registryId,
 				resourceName: reg.registryName,
 			});
-			return reg;
+			return redactSecretFields(reg, ["password"]);
 		}),
 	remove: withPermission("registry", "delete")
 		.input(apiRemoveRegistry)
@@ -102,7 +103,9 @@ export const registryRouter = createTRPCRouter({
 				resourceId: registry.registryId,
 				resourceName: registry.registryName,
 			});
-			return await removeRegistry(input.registryId);
+			return redactSecretFields(await removeRegistry(input.registryId), [
+				"password",
+			]);
 		}),
 	update: withPermission("registry", "create")
 		.input(apiUpdateRegistry)
@@ -156,7 +159,7 @@ export const registryRouter = createTRPCRouter({
 					message: "You are not allowed to access this registry",
 				});
 			}
-			return registry;
+			return redactSecretFields(registry, ["password"]);
 		}),
 	testRegistry: withPermission("registry", "read")
 		.input(apiTestRegistry)

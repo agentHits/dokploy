@@ -1,8 +1,11 @@
 import { ExecError } from "@dokploy/server/utils/process/ExecError";
 import {
 	REDACTED_SECRET_VALUE,
+	redactBackupScheduleSecrets,
 	redactDatabaseServiceSecrets,
 	redactDeployableServiceSecrets,
+	redactProjectNestedSecrets,
+	redactRollbackFullContextSecrets,
 	redactSecretFields,
 	redactSensitiveText,
 	secretUpdateValue,
@@ -40,6 +43,9 @@ describe("shared secret redaction helpers", () => {
 			refreshToken: "refresh-token",
 			buildSecrets: "NPM_TOKEN=secret",
 			password: "docker-password",
+			security: {
+				password: "basic-auth-password",
+			},
 			name: "app-one",
 		});
 
@@ -48,6 +54,9 @@ describe("shared secret redaction helpers", () => {
 			refreshToken: REDACTED_SECRET_VALUE,
 			buildSecrets: REDACTED_SECRET_VALUE,
 			password: REDACTED_SECRET_VALUE,
+			security: {
+				password: REDACTED_SECRET_VALUE,
+			},
 			name: "app-one",
 		});
 	});
@@ -68,12 +77,79 @@ describe("shared secret redaction helpers", () => {
 		});
 	});
 
+	it("redacts backup metadata and related service credentials", () => {
+		const redacted = redactBackupScheduleSecrets({
+			name: "backup",
+			metadata: {
+				mariadb: { databasePassword: "mariadb-secret" },
+				mysql: { databaseRootPassword: "mysql-root-secret" },
+			},
+			postgres: {
+				env: "PGPASSWORD=postgres-secret",
+				databasePassword: "postgres-secret",
+			},
+		});
+
+		expect(redacted.metadata).toMatchObject({
+			mariadb: { databasePassword: REDACTED_SECRET_VALUE },
+			mysql: { databaseRootPassword: REDACTED_SECRET_VALUE },
+		});
+		expect(redacted.postgres).toMatchObject({
+			env: REDACTED_SECRET_VALUE,
+			databasePassword: REDACTED_SECRET_VALUE,
+		});
+	});
+
+	it("redacts nested project environment and service secrets", () => {
+		const redacted = redactProjectNestedSecrets({
+			name: "project",
+			env: "PROJECT_TOKEN=secret",
+			environments: [
+				{
+					env: "ENV_TOKEN=secret",
+					applications: [{ env: "APP_TOKEN=secret" }],
+					compose: [{ composeFile: "services:\n  api:", env: "TOKEN=secret" }],
+					postgres: [{ databasePassword: "postgres-secret" }],
+				},
+			],
+		});
+
+		expect(redacted.env).toBe(REDACTED_SECRET_VALUE);
+		expect(redacted.environments?.[0]?.env).toBe(REDACTED_SECRET_VALUE);
+		expect(redacted.environments?.[0]?.applications?.[0]?.env).toBe(
+			REDACTED_SECRET_VALUE,
+		);
+		expect(redacted.environments?.[0]?.compose?.[0]).toMatchObject({
+			composeFile: REDACTED_SECRET_VALUE,
+			env: REDACTED_SECRET_VALUE,
+		});
+		expect(redacted.environments?.[0]?.postgres?.[0]).toMatchObject({
+			databasePassword: REDACTED_SECRET_VALUE,
+		});
+	});
+
+	it("redacts rollback registry credentials", () => {
+		const redacted = redactRollbackFullContextSecrets({
+			registry: { password: "registry-secret" },
+			buildRegistry: { password: "build-registry-secret" },
+			rollbackRegistry: { password: "rollback-registry-secret" },
+		});
+
+		expect(redacted).toMatchObject({
+			registry: { password: REDACTED_SECRET_VALUE },
+			buildRegistry: { password: REDACTED_SECRET_VALUE },
+			rollbackRegistry: { password: REDACTED_SECRET_VALUE },
+		});
+	});
+
 	it("redacts secrets embedded in command and provider error text", () => {
 		const message = [
 			"Command failed: git clone https://x-access-token:ghp_abcdefghijklmnopqrstuvwxyz@github.com/org/repo.git",
 			"rclone rcat --s3-access-key-id AKIA123 --s3-secret-access-key rcloneSecretValue :s3:bucket/path",
 			"mongodump -d appdb -u root -p mongo-secret-value --archive",
 			"mongodump -d appdb -u root -p 'mongo'\\''quoted-secret' --archive",
+			'{"apiKey":"json-api-key","password":"json-password"}',
+			"secret: yaml-secret",
 			"DATABASE_URL=postgres://dokploy:postgres-password@postgres:5432/dokploy",
 			"Authorization: Bearer bearer-token-123",
 		].join("\n");
@@ -85,6 +161,9 @@ describe("shared secret redaction helpers", () => {
 		expect(redacted).not.toContain("rcloneSecretValue");
 		expect(redacted).not.toContain("mongo-secret-value");
 		expect(redacted).not.toContain("quoted-secret");
+		expect(redacted).not.toContain("json-api-key");
+		expect(redacted).not.toContain("json-password");
+		expect(redacted).not.toContain("yaml-secret");
 		expect(redacted).not.toContain("postgres-password");
 		expect(redacted).not.toContain("bearer-token-123");
 	});

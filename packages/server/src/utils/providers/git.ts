@@ -5,6 +5,7 @@ import {
 	updateSSHKeyById,
 } from "@dokploy/server/services/ssh-key";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
+import { redactSensitiveText } from "../security/redaction";
 import { quoteShellArgs } from "../shell";
 import {
 	assertCloudHostResolvesPublic,
@@ -88,6 +89,7 @@ export const cloneGitRepository = async ({
 	}
 
 	await assertCustomGitUrlAllowed(customGitUrl);
+	const redactedCustomGitUrl = redactSensitiveText(customGitUrl);
 
 	const temporalKeyPath = path.join("/tmp", "id_rsa");
 
@@ -111,7 +113,7 @@ export const cloneGitRepository = async ({
 	command += buildRemovePathCommand(outputPath);
 	command += buildCreateDirectoryCommand(outputPath);
 	command += buildProviderEchoCommand(
-		`Cloning Repo Custom ${customGitUrl} to ${outputPath}: ✅`,
+		`Cloning Repo Custom ${redactedCustomGitUrl} to ${outputPath}: ✅`,
 	);
 
 	if (customGitSSHKeyId) {
@@ -135,9 +137,9 @@ export const cloneGitRepository = async ({
 		enableSubmodules,
 		outputPath,
 	})}; then
-				${buildProviderEchoCommand(`❌ [ERROR] Fail to clone the repository ${customGitUrl}`)}
-				exit 1;
-			fi
+					${buildProviderEchoCommand(`❌ [ERROR] Fail to clone the repository ${redactedCustomGitUrl}`)}
+					exit 1;
+				fi
 			`;
 
 	return command;

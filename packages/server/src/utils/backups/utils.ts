@@ -108,6 +108,8 @@ export type RcloneS3Destination = Pick<
 	| "bucket"
 >;
 
+const RCLONE_S3_REMOTE_NAME = "dokploys3";
+
 export const getS3CredentialArgs = (destination: RcloneS3Destination) => {
 	const { accessKey, secretAccessKey, region, endpoint, provider } =
 		destination;
@@ -145,17 +147,53 @@ export const getS3Credentials = (destination: RcloneS3Destination) =>
 export const getRcloneS3Destination = (
 	destination: Pick<RcloneS3Destination, "bucket">,
 	path?: string,
-) => `:s3:${destination.bucket}${path ? `/${path}` : ""}`;
+) => `${RCLONE_S3_REMOTE_NAME}:${destination.bucket}${path ? `/${path}` : ""}`;
 
 export const buildRcloneCommand = (args: readonly string[]) =>
 	quoteShellArgs(["rclone", ...args]);
+
+const getRcloneS3EnvironmentAssignments = (
+	destination: RcloneS3Destination,
+) => {
+	const { accessKey, secretAccessKey, region, endpoint, provider } =
+		destination;
+	const normalizedEndpoint = normalizeDestinationEndpointUrl(endpoint, {
+		fieldName: "S3 endpoint",
+	});
+	const configPrefix = `RCLONE_CONFIG_${RCLONE_S3_REMOTE_NAME.toUpperCase()}`;
+	const assignments: Array<[string, string]> = [
+		[`${configPrefix}_TYPE`, "s3"],
+		[`${configPrefix}_ACCESS_KEY_ID`, accessKey],
+		[`${configPrefix}_SECRET_ACCESS_KEY`, secretAccessKey],
+		[`${configPrefix}_REGION`, region],
+		[`${configPrefix}_ENDPOINT`, normalizedEndpoint],
+		[`${configPrefix}_NO_CHECK_BUCKET`, "true"],
+		[`${configPrefix}_FORCE_PATH_STYLE`, "true"],
+	];
+
+	if (provider) {
+		assignments.push([`${configPrefix}_PROVIDER`, provider]);
+	}
+
+	return assignments.map(
+		([key, value]) => `${key}=${quoteShellArgument(value)}`,
+	);
+};
+
+export const getS3RuntimeArgs = (destination: RcloneS3Destination) => {
+	assertRcloneAdditionalFlagsAllowed(destination.additionalFlags);
+	return destination.additionalFlags ?? [];
+};
 
 export const buildRcloneS3Command = (
 	command: string,
 	destination: RcloneS3Destination,
 	args: readonly string[],
 ) =>
-	buildRcloneCommand([command, ...getS3CredentialArgs(destination), ...args]);
+	[
+		...getRcloneS3EnvironmentAssignments(destination),
+		buildRcloneCommand([command, ...getS3RuntimeArgs(destination), ...args]),
+	].join(" ");
 
 export const assertRcloneS3DestinationAllowed = async (
 	destination: RcloneS3Destination,

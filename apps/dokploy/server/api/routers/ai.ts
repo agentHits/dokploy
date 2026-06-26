@@ -29,6 +29,10 @@ import {
 	type Model,
 	selectAIProvider,
 } from "@dokploy/server/utils/ai/select-ai-provider";
+import {
+	redactAiSettingsSecrets,
+	redactAiSettingsSecretsList,
+} from "@dokploy/server/utils/security/redaction";
 import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
 import { TRPCError } from "@trpc/server";
 import { generateText } from "ai";
@@ -52,9 +56,8 @@ export const aiRouter = createTRPCRouter({
 	one: adminProcedure
 		.input(z.object({ aiId: z.string() }))
 		.query(async ({ ctx, input }) => {
-			return await getAiSettingById(
-				input.aiId,
-				ctx.session.activeOrganizationId,
+			return redactAiSettingsSecrets(
+				await getAiSettingById(input.aiId, ctx.session.activeOrganizationId),
 			);
 		}),
 
@@ -213,25 +216,28 @@ export const aiRouter = createTRPCRouter({
 			}
 		}),
 	create: adminProcedure.input(apiCreateAi).mutation(async ({ ctx, input }) => {
-		return await saveAiSettings(ctx.session.activeOrganizationId, input);
+		return redactAiSettingsSecrets(
+			await saveAiSettings(ctx.session.activeOrganizationId, input),
+		);
 	}),
 
 	update: adminProcedure.input(apiUpdateAi).mutation(async ({ ctx, input }) => {
-		return await saveAiSettings(ctx.session.activeOrganizationId, input);
+		return redactAiSettingsSecrets(
+			await saveAiSettings(ctx.session.activeOrganizationId, input),
+		);
 	}),
 
 	getAll: adminProcedure.query(async ({ ctx }) => {
-		return await getAiSettingsByOrganizationId(
-			ctx.session.activeOrganizationId,
+		return redactAiSettingsSecretsList(
+			await getAiSettingsByOrganizationId(ctx.session.activeOrganizationId),
 		);
 	}),
 
 	get: adminProcedure
 		.input(z.object({ aiId: z.string() }))
 		.query(async ({ ctx, input }) => {
-			return await getAiSettingById(
-				input.aiId,
-				ctx.session.activeOrganizationId,
+			return redactAiSettingsSecrets(
+				await getAiSettingById(input.aiId, ctx.session.activeOrganizationId),
 			);
 		}),
 

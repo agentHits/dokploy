@@ -49,12 +49,12 @@ export const pullImage = async (
 				[
 					"login",
 					authConfig.registryUrl || "",
-					"-u",
+					"--username",
 					authConfig.username,
-					"-p",
-					authConfig.password,
+					"--password-stdin",
 				],
 				onData,
+				{ input: authConfig.password },
 			);
 		}
 		await spawnAsync("docker", ["pull", dockerImage], onData);

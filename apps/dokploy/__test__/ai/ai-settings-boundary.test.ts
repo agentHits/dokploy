@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
 	insert: vi.fn(),
 	insertValues: vi.fn(),
 	onConflictDoUpdate: vi.fn(),
+	returning: vi.fn(),
 }));
 
 vi.mock("@dokploy/server/db", () => ({
@@ -50,7 +51,12 @@ describe("AI settings organization boundary", () => {
 		mocks.insertValues.mockReturnValue({
 			onConflictDoUpdate: mocks.onConflictDoUpdate,
 		});
-		mocks.onConflictDoUpdate.mockResolvedValue(true);
+		mocks.onConflictDoUpdate.mockReturnValue({
+			returning: mocks.returning,
+		});
+		mocks.returning.mockResolvedValue([
+			{ ...aiSettings, organizationId: "org-1" },
+		]);
 	});
 
 	it("does not return AI settings from another organization", async () => {
@@ -74,6 +80,32 @@ describe("AI settings organization boundary", () => {
 		});
 
 		expect(mocks.insert).not.toHaveBeenCalled();
+	});
+
+	it("preserves an existing API key when update receives the redacted sentinel", async () => {
+		mocks.aiFindFirst.mockResolvedValue({
+			...aiSettings,
+			organizationId: "org-1",
+		});
+
+		await expect(
+			saveAiSettings("org-1", {
+				aiId: "ai-1",
+				apiKey: "__DOKPLOY_REDACTED_SECRET__",
+				apiUrl: "https://api.openai.com/v1",
+				isEnabled: true,
+				model: "gpt-4o-mini",
+				name: "OpenAI",
+			}),
+		).resolves.toMatchObject({ aiId: "ai-1" });
+
+		expect(mocks.onConflictDoUpdate).toHaveBeenCalledWith(
+			expect.objectContaining({
+				set: expect.not.objectContaining({
+					apiKey: "__DOKPLOY_REDACTED_SECRET__",
+				}),
+			}),
+		);
 	});
 
 	it("rejects deleting another organization's AI settings by aiId", async () => {

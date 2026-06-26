@@ -76,6 +76,14 @@ Compose Type: ${composeType} ✅`;
 };
 
 const ALLOWED_CUSTOM_DOCKER_COMMANDS = new Set(["compose", "stack"]);
+const ALLOWED_CUSTOM_COMPOSE_UP_FLAGS = new Set([
+	"-d",
+	"--build",
+	"--remove-orphans",
+	"--force-recreate",
+	"--no-deps",
+	"--wait",
+]);
 const UNSAFE_CUSTOM_DOCKER_COMMAND_PATTERN = /[`$;&|<>()\r\n]/;
 
 const throwInvalidCustomDockerCommand = (): never => {
@@ -94,6 +102,7 @@ const getLongOptionValue = (argument: string, option: string) => {
 
 const assertComposeProjectNameBound = (args: string[], appName: string) => {
 	let hasProjectName = false;
+	let subcommand: string | undefined;
 	for (let index = 1; index < args.length; index += 1) {
 		const current = args[index];
 		if (!current) {
@@ -116,10 +125,26 @@ const assertComposeProjectNameBound = (args: string[], appName: string) => {
 		}
 		if (longProjectName === appName) {
 			hasProjectName = true;
+			continue;
+		}
+
+		if (!subcommand) {
+			if (current.startsWith("-")) {
+				throwInvalidCustomDockerCommand();
+			}
+			subcommand = current;
+			if (subcommand !== "up") {
+				throwInvalidCustomDockerCommand();
+			}
+			continue;
+		}
+
+		if (!ALLOWED_CUSTOM_COMPOSE_UP_FLAGS.has(current)) {
+			throwInvalidCustomDockerCommand();
 		}
 	}
 
-	if (!hasProjectName) {
+	if (!hasProjectName || subcommand !== "up") {
 		throwInvalidCustomDockerCommand();
 	}
 };

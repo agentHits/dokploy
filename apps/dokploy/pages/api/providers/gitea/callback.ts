@@ -5,6 +5,10 @@ import {
 	verifyGitProviderOAuthState,
 } from "@dokploy/server/utils/providers/oauth-state";
 import { assertGitProviderBaseUrlAllowed } from "@dokploy/server/utils/providers/url";
+import {
+	redactSecretFields,
+	redactSensitiveText,
+} from "@dokploy/server/utils/security/redaction";
 import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { findGitea, type Gitea, redirectWithError } from "./helper";
@@ -38,7 +42,10 @@ const fetchAccessToken = async (gitea: Gitea, code: string) => {
 	const responseText = await response.text();
 	return response.ok
 		? JSON.parse(responseText)
-		: { error: "Token exchange failed", responseText };
+		: {
+				error: "Token exchange failed",
+				responseText: redactSensitiveText(responseText),
+			};
 };
 
 export default async function handler(
@@ -103,12 +110,18 @@ export default async function handler(
 	}
 
 	if (result.error) {
-		console.error("Token exchange failed:", result);
+		console.error(
+			"Token exchange failed:",
+			redactSecretFields(result, ["access_token", "refresh_token"]),
+		);
 		return redirectWithError(res, result.error);
 	}
 
 	if (!result.access_token) {
-		console.error("Missing access token:", result);
+		console.error(
+			"Missing access token:",
+			redactSecretFields(result, ["access_token", "refresh_token"]),
+		);
 		return redirectWithError(res, "No access token received");
 	}
 

@@ -11,6 +11,7 @@ import { startLogCleanup } from "../access-log/handler";
 import { cleanupAll } from "../docker/utils";
 import { sendDockerCleanupNotifications } from "../notifications/docker-cleanup";
 import { execAsync, execAsyncRemote } from "../process/execAsync";
+import { quoteShellArgument } from "../shell";
 import {
 	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
@@ -167,7 +168,7 @@ export const keepLatestNBackups = async (
 			`${backupFilesPath}{}`,
 		]);
 
-		const rcloneCommand = `${rcloneList} | ${sortAndPickUnwantedBackups} ${rcloneDelete}`;
+		const rcloneCommand = `${rcloneList} | ${sortAndPickUnwantedBackups} sh -c ${quoteShellArgument(rcloneDelete)}`;
 
 		if (serverId) {
 			await execAsyncRemote(serverId, rcloneCommand);

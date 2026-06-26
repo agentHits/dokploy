@@ -826,6 +826,9 @@ describe("backup restore command safety", () => {
 					stdout: "database.sql\nfilesystem/\nfilesystem/config.json\n",
 				};
 			}
+			if (command.startsWith("unzip -Z -l")) {
+				return { stdout: "" };
+			}
 			if (command.startsWith("find ")) {
 				return { stdout: "" };
 			}
@@ -915,6 +918,42 @@ describe("backup restore command safety", () => {
 			String(command),
 		);
 		expect(commands.some((command) => command.includes("unzip -Z1"))).toBe(
+			true,
+		);
+		expect(commands.some((command) => command.includes("&& unzip "))).toBe(
+			false,
+		);
+	});
+
+	it("rejects unsupported web-server archive member types before unzip extraction", async () => {
+		mocks.execAsync.mockImplementation(async (command: string) => {
+			if (command.includes("ls -la")) {
+				return { stdout: "webserver-backup-2026-06-22.zip\n" };
+			}
+			if (command.startsWith("unzip -Z1")) {
+				return { stdout: "database.sql\nfilesystem/config.json\n" };
+			}
+			if (command.startsWith("unzip -Z -l")) {
+				return {
+					stdout:
+						"lrwxrwxrwx  3.0 unx        8 bx stor 26-Jun-26 00:00 filesystem/config.json\n",
+				};
+			}
+			return { stdout: "" };
+		});
+
+		await expect(
+			restoreWebServerBackup(
+				safeDestination as never,
+				"dokploy/prefix/webserver-backup-2026-06-22.zip",
+				emit,
+			),
+		).rejects.toThrow("unsupported filesystem entries");
+
+		const commands = mocks.execAsync.mock.calls.map(([command]) =>
+			String(command),
+		);
+		expect(commands.some((command) => command.startsWith("unzip -Z -l"))).toBe(
 			true,
 		);
 		expect(commands.some((command) => command.includes("&& unzip "))).toBe(

@@ -36,7 +36,12 @@ import {
 	checkPermission,
 	checkProjectAccess,
 	findMemberByUserId,
+	hasPermission,
 } from "@dokploy/server/services/permission";
+import {
+	redactProjectNestedSecrets,
+	redactSecretFields,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
@@ -67,6 +72,11 @@ import {
 	projects,
 	redis,
 } from "@/server/db/schema";
+
+const canReadProjectEnvVars = (ctx: {
+	user: { id: string };
+	session: { activeOrganizationId: string };
+}) => hasPermission(ctx, { projectEnvVars: ["read"] });
 
 export const projectRouter = createTRPCRouter({
 	create: protectedProcedure
@@ -184,7 +194,9 @@ export const projectRouter = createTRPCRouter({
 						message: "Project not found",
 					});
 				}
-				return project;
+				return redactProjectNestedSecrets(project, {
+					redactProjectEnv: !(await canReadProjectEnvVars(ctx)),
+				});
 			}
 			const project = await findProjectById(input.projectId);
 
@@ -194,7 +206,9 @@ export const projectRouter = createTRPCRouter({
 					message: "You are not authorized to access this project",
 				});
 			}
-			return project;
+			return redactProjectNestedSecrets(project, {
+				redactProjectEnv: !(await canReadProjectEnvVars(ctx)),
+			});
 		}),
 	all: protectedProcedure.query(async ({ ctx }) => {
 		if (ctx.user.role !== "owner" && ctx.user.role !== "admin") {
@@ -703,8 +717,11 @@ export const projectRouter = createTRPCRouter({
 					.where(where),
 			]);
 
+			const canReadProjectEnv = await canReadProjectEnvVars(ctx);
 			return {
-				items,
+				items: canReadProjectEnv
+					? items
+					: items.map((item) => redactSecretFields(item, ["env"])),
 				total: countResult[0]?.count ?? 0,
 			};
 		}),
@@ -818,6 +835,11 @@ export const projectRouter = createTRPCRouter({
 					ctx,
 					input.sourceEnvironmentId,
 				);
+				if (!input.duplicateInSameProject && sourceEnvironment?.project.env) {
+					await checkPermission(ctx, {
+						projectEnvVars: ["read", "write"],
+					});
+				}
 				const servicesToDuplicate = input.includeServices
 					? input.selectedServices || []
 					: [];
