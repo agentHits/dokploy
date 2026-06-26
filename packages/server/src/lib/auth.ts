@@ -473,6 +473,16 @@ const { handler, api } = betterAuth({
 			domainVerification: {
 				enabled: true,
 			},
+			organizationProvisioning: {
+				getRole: async ({ user, provider }) => {
+					if (!canProvisionSsoMembershipForEmail(user.email, provider)) {
+						throw new APIError("UNAUTHORIZED", {
+							message: "SSO email domain is not allowed for this provider",
+						});
+					}
+					return "member";
+				},
+			},
 		}),
 		twoFactor(),
 		organization({

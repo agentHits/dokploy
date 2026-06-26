@@ -305,10 +305,8 @@ describe("Better Auth account linking policy", () => {
 
 describe("Better Auth SSO domain verification", () => {
 	it("enables Better Auth domain verification for SSO providers", () => {
-		expect(mocks.ssoPluginOptions).toEqual({
-			domainVerification: {
-				enabled: true,
-			},
+		expect(mocks.ssoPluginOptions.domainVerification).toEqual({
+			enabled: true,
 		});
 	});
 });
@@ -352,6 +350,60 @@ describe("Better Auth SSO membership provisioning", () => {
 				domainVerified: false,
 			}),
 		).toBe(false);
+	});
+
+	it("fails closed before Better Auth organization provisioning when explicit providerId email domain mismatches", async () => {
+		await expect(
+			mocks.ssoPluginOptions.organizationProvisioning.getRole({
+				user: {
+					id: "user-sso",
+					email: "attacker@evil.com",
+				},
+				userInfo: {},
+				provider: {
+					providerId: "acme-sso",
+					organizationId: "org-acme",
+					domain: "acme.com",
+					domainVerified: true,
+				},
+			}),
+		).rejects.toThrow("SSO email domain is not allowed for this provider");
+	});
+
+	it("fails closed before Better Auth organization provisioning when provider domain is unverified", async () => {
+		await expect(
+			mocks.ssoPluginOptions.organizationProvisioning.getRole({
+				user: {
+					id: "user-sso",
+					email: "ada@acme.com",
+				},
+				userInfo: {},
+				provider: {
+					providerId: "acme-sso",
+					organizationId: "org-acme",
+					domain: "acme.com",
+					domainVerified: false,
+				},
+			}),
+		).rejects.toThrow("SSO email domain is not allowed for this provider");
+	});
+
+	it("allows Better Auth organization provisioning only after explicit providerId email domain eligibility passes", async () => {
+		await expect(
+			mocks.ssoPluginOptions.organizationProvisioning.getRole({
+				user: {
+					id: "user-sso",
+					email: "ada@engineering.acme.com",
+				},
+				userInfo: {},
+				provider: {
+					providerId: "acme-sso",
+					organizationId: "org-acme",
+					domain: "acme.com",
+					domainVerified: true,
+				},
+			}),
+		).resolves.toBe("member");
 	});
 
 	it("fails closed before inserting SSO membership when email domain mismatches provider domains", async () => {
