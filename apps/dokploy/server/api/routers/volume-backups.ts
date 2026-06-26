@@ -23,6 +23,7 @@ import {
 	execAsyncRemote,
 	execAsyncStream,
 } from "@dokploy/server/utils/process/execAsync";
+import { signScheduledQueueJob } from "@dokploy/server/utils/schedules/signed-job";
 import {
 	normalizeDockerVolumeName,
 	normalizeVolumeBackupServiceName,
@@ -38,7 +39,12 @@ import {
 	assertTargetServerAccess,
 	type PlacementServiceType,
 } from "@/server/api/utils/placement-access";
-import { removeJob, schedule, updateJob } from "@/server/utils/backup";
+import {
+	removeJob,
+	removeSignedJob,
+	schedule,
+	updateJob,
+} from "@/server/utils/backup";
 import { createTRPCRouter, protectedProcedure, withPermission } from "../trpc";
 
 type VolumeBackupServiceFields = {
@@ -368,6 +374,15 @@ export const volumeBackupsRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			const vb = await findVolumeBackupById(input.volumeBackupId);
 			await assertVolumeBackupServiceAccess(ctx, vb, "delete");
+			if (IS_CLOUD) {
+				await removeJob({
+					cronSchedule: vb.cronExpression,
+					volumeBackupId: vb.volumeBackupId,
+					type: "volume-backup",
+				});
+			} else {
+				removeVolumeBackupJob(input.volumeBackupId);
+			}
 			const result = await removeVolumeBackup(input.volumeBackupId);
 			await audit(ctx, {
 				action: "delete",
@@ -420,6 +435,21 @@ export const volumeBackupsRouter = createTRPCRouter({
 				ctx.session.activeOrganizationId,
 			);
 			await assertVolumeNameDeclaredByService(input);
+			const signedRemovalJob =
+				IS_CLOUD && existingVb.enabled
+					? await signScheduledQueueJob(
+							{
+								cronSchedule: existingVb.cronExpression,
+								volumeBackupId: existingVb.volumeBackupId,
+								type: "volume-backup",
+							},
+							{
+								operation: "remove",
+								requireEnabled: false,
+								requireActiveServer: false,
+							},
+						)
+					: null;
 			const updatedVolumeBackup = await updateVolumeBackup(
 				input.volumeBackupId,
 				input,
@@ -439,12 +469,8 @@ export const volumeBackupsRouter = createTRPCRouter({
 						volumeBackupId: updatedVolumeBackup.volumeBackupId,
 						type: "volume-backup",
 					});
-				} else {
-					await removeJob({
-						cronSchedule: updatedVolumeBackup.cronExpression,
-						volumeBackupId: updatedVolumeBackup.volumeBackupId,
-						type: "volume-backup",
-					});
+				} else if (signedRemovalJob) {
+					await removeSignedJob(signedRemovalJob);
 				}
 			} else {
 				if (updatedVolumeBackup?.enabled) {

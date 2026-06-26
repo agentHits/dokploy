@@ -55,6 +55,7 @@ import {
 	restoreWebServerBackup,
 } from "@dokploy/server/utils/restore";
 import { normalizeRestoreBackupFile } from "@dokploy/server/utils/restore/safe-input";
+import { signScheduledQueueJob } from "@dokploy/server/utils/schedules/signed-job";
 import { redactBackupScheduleSecrets } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
@@ -74,7 +75,12 @@ import {
 	apiRestoreBackup,
 	apiUpdateBackup,
 } from "@/server/db/schema";
-import { removeJob, schedule, updateJob } from "@/server/utils/backup";
+import {
+	removeJob,
+	removeSignedJob,
+	schedule,
+	updateJob,
+} from "@/server/utils/backup";
 
 interface RcloneFile {
 	Path: string;
@@ -656,6 +662,21 @@ export const backupRouter = createTRPCRouter({
 					input.destinationId,
 					ctx.session.activeOrganizationId,
 				);
+				const signedRemovalJob =
+					IS_CLOUD && existing.enabled
+						? await signScheduledQueueJob(
+								{
+									cronSchedule: existing.schedule,
+									backupId: existing.backupId,
+									type: "backup",
+								},
+								{
+									operation: "remove",
+									requireEnabled: false,
+									requireActiveServer: false,
+								},
+							)
+						: null;
 
 				await updateBackupById(input.backupId, input);
 				const backup = await findBackupById(input.backupId);
@@ -667,12 +688,8 @@ export const backupRouter = createTRPCRouter({
 							backupId: backup.backupId,
 							type: "backup",
 						});
-					} else {
-						await removeJob({
-							cronSchedule: backup.schedule,
-							backupId: backup.backupId,
-							type: "backup",
-						});
+					} else if (signedRemovalJob) {
+						await removeSignedJob(signedRemovalJob);
 					}
 				} else {
 					if (backup.enabled) {
@@ -706,16 +723,16 @@ export const backupRouter = createTRPCRouter({
 				const backup = await findBackupById(input.backupId);
 				await assertBackupAccess(ctx, backup, "delete");
 
-				const value = await removeBackupById(input.backupId);
-				if (IS_CLOUD && value) {
-					removeJob({
+				if (IS_CLOUD) {
+					await removeJob({
 						backupId: input.backupId,
-						cronSchedule: value.schedule,
+						cronSchedule: backup.schedule,
 						type: "backup",
 					});
-				} else if (!IS_CLOUD) {
+				} else {
 					removeScheduleBackup(input.backupId);
 				}
+				const value = await removeBackupById(input.backupId);
 				await audit(ctx, {
 					action: "delete",
 					resourceType: "backup",

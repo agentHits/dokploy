@@ -18,12 +18,18 @@ import {
 	findScheduleById,
 	updateSchedule,
 } from "@dokploy/server/services/schedule";
+import { signScheduledQueueJob } from "@dokploy/server/utils/schedules/signed-job";
 import { TRPCError } from "@trpc/server";
 import { asc, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
 import { assertTargetServerAccess } from "@/server/api/utils/placement-access";
-import { removeJob, schedule } from "@/server/utils/backup";
+import {
+	removeJob,
+	removeSignedJob,
+	schedule,
+	updateJob,
+} from "@/server/utils/backup";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 
 const scheduleBindingError = () =>
@@ -233,22 +239,34 @@ export const scheduleRouter = createTRPCRouter({
 				await checkPermission(ctx, { schedule: ["update"] });
 				await assertServerLevelScheduleAccess(ctx, existingSchedule);
 			}
+			const signedRemovalJob =
+				IS_CLOUD && existingSchedule.enabled
+					? await signScheduledQueueJob(
+							{
+								scheduleId: existingSchedule.scheduleId,
+								type: "schedule",
+								cronSchedule: existingSchedule.cronExpression,
+								timezone: existingSchedule.timezone ?? undefined,
+							},
+							{
+								operation: "remove",
+								requireEnabled: false,
+								requireActiveServer: false,
+							},
+						)
+					: null;
 			const updatedSchedule = await updateSchedule(input);
 
 			if (IS_CLOUD) {
 				if (updatedSchedule?.enabled) {
-					schedule({
+					await updateJob({
 						scheduleId: updatedSchedule.scheduleId,
 						type: "schedule",
 						cronSchedule: updatedSchedule.cronExpression,
 						timezone: updatedSchedule.timezone,
 					});
-				} else {
-					await removeJob({
-						cronSchedule: updatedSchedule.cronExpression,
-						scheduleId: updatedSchedule.scheduleId,
-						type: "schedule",
-					});
+				} else if (signedRemovalJob) {
+					await removeSignedJob(signedRemovalJob);
 				}
 			} else {
 				if (updatedSchedule?.enabled) {
@@ -280,17 +298,17 @@ export const scheduleRouter = createTRPCRouter({
 				await checkPermission(ctx, { schedule: ["delete"] });
 				await assertServerLevelScheduleAccess(ctx, scheduleItem);
 			}
-			await deleteSchedule(input.scheduleId);
-
 			if (IS_CLOUD) {
 				await removeJob({
 					cronSchedule: scheduleItem.cronExpression,
 					scheduleId: scheduleItem.scheduleId,
 					type: "schedule",
+					timezone: scheduleItem.timezone,
 				});
 			} else {
 				removeScheduleJob(scheduleItem.scheduleId);
 			}
+			await deleteSchedule(input.scheduleId);
 			await audit(ctx, {
 				action: "delete",
 				resourceType: "schedule",
