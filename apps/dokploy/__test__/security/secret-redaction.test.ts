@@ -61,6 +61,65 @@ describe("shared secret redaction helpers", () => {
 		});
 	});
 
+	it("redacts nested server secrets from deployable service reads", () => {
+		const redacted = redactDeployableServiceSecrets({
+			name: "app-one",
+			server: {
+				serverId: "server-1",
+				command: "curl https://example.com/setup.sh | sh",
+				metricsConfig: {
+					server: {
+						token: "monitoring-token",
+						port: 4500,
+					},
+					containers: {
+						refreshRate: 60,
+					},
+				},
+				sshKey: {
+					privateKey: "private-key",
+					publicKey: "public-key",
+				},
+			},
+			buildServer: {
+				serverId: "server-2",
+				command: "docker login --password build-secret",
+				metricsConfig: {
+					server: {
+						token: "build-monitoring-token",
+						port: 4501,
+					},
+				},
+			},
+		});
+
+		expect(redacted.server).toMatchObject({
+			command: REDACTED_SECRET_VALUE,
+			metricsConfig: {
+				server: {
+					token: REDACTED_SECRET_VALUE,
+					port: 4500,
+				},
+				containers: {
+					refreshRate: 60,
+				},
+			},
+			sshKey: {
+				privateKey: REDACTED_SECRET_VALUE,
+				publicKey: "public-key",
+			},
+		});
+		expect(redacted.buildServer).toMatchObject({
+			command: REDACTED_SECRET_VALUE,
+			metricsConfig: {
+				server: {
+					token: REDACTED_SECRET_VALUE,
+					port: 4501,
+				},
+			},
+		});
+	});
+
 	it("redacts database service read credentials", () => {
 		const redacted = redactDatabaseServiceSecrets({
 			env: "PGSSLMODE=require",
@@ -74,6 +133,35 @@ describe("shared secret redaction helpers", () => {
 			databaseUser: "dokploy",
 			databasePassword: REDACTED_SECRET_VALUE,
 			databaseRootPassword: REDACTED_SECRET_VALUE,
+		});
+	});
+
+	it("redacts nested server secrets from database service reads", () => {
+		const redacted = redactDatabaseServiceSecrets({
+			databaseName: "postgres",
+			server: {
+				serverId: "server-1",
+				command: "curl https://example.com/setup.sh | sh",
+				metricsConfig: {
+					server: {
+						token: "monitoring-token",
+						port: 4500,
+					},
+				},
+			},
+		});
+
+		expect(redacted).toMatchObject({
+			databaseName: "postgres",
+			server: {
+				command: REDACTED_SECRET_VALUE,
+				metricsConfig: {
+					server: {
+						token: REDACTED_SECRET_VALUE,
+						port: 4500,
+					},
+				},
+			},
 		});
 	});
 

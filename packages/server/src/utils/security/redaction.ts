@@ -40,6 +40,34 @@ export const redactSecretFieldsList = <T extends SecretRecord>(
 	fields: string[],
 ) => records.map((record) => redactSecretFields(record, fields));
 
+const redactNestedServerSecrets = <T>(server: T): T => {
+	if (!server || typeof server !== "object") {
+		return server;
+	}
+
+	const redacted = { ...(server as SecretRecord) };
+	if ("command" in redacted) {
+		redacted.command = redactSecretValue(redacted.command);
+	}
+	if (redacted.metricsConfig && typeof redacted.metricsConfig === "object") {
+		const metricsConfig = { ...(redacted.metricsConfig as SecretRecord) };
+		if (metricsConfig.server && typeof metricsConfig.server === "object") {
+			metricsConfig.server = redactSecretFields(
+				metricsConfig.server as SecretRecord,
+				["token"],
+			);
+		}
+		redacted.metricsConfig = metricsConfig;
+	}
+	if (redacted.sshKey && typeof redacted.sshKey === "object") {
+		redacted.sshKey = redactSecretFields(redacted.sshKey as SecretRecord, [
+			"privateKey",
+		]);
+	}
+
+	return redacted as T;
+};
+
 export const redactDeployableServiceSecrets = <
 	T extends SecretRecord | null | undefined,
 >(
@@ -65,6 +93,11 @@ export const redactDeployableServiceSecrets = <
 			? withRelations.security.map(redactSecuritySecrets)
 			: redactSecuritySecrets(withRelations.security as SecretRecord);
 	}
+	for (const key of ["server", "buildServer"]) {
+		if (key in withRelations) {
+			withRelations[key] = redactNestedServerSecrets(withRelations[key]);
+		}
+	}
 	return withRelations as T;
 };
 
@@ -72,12 +105,22 @@ export const redactDatabaseServiceSecrets = <
 	T extends SecretRecord | null | undefined,
 >(
 	record: T,
-) =>
-	redactSecretFields(record, [
+) => {
+	const redacted = redactSecretFields(record, [
 		"env",
 		"databasePassword",
 		"databaseRootPassword",
 	]);
+	if (!redacted) {
+		return redacted;
+	}
+
+	const withRelations = { ...redacted };
+	if ("server" in withRelations) {
+		withRelations.server = redactNestedServerSecrets(withRelations.server);
+	}
+	return withRelations as T;
+};
 
 export const redactAiSettingsSecrets = <
 	T extends SecretRecord | null | undefined,
