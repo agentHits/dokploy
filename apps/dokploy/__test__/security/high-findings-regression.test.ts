@@ -119,6 +119,49 @@ describe("high-severity schema security boundaries", () => {
 		).toBe(false);
 	});
 
+	it("rejects unsafe custom Traefik identifiers on domain configuration", () => {
+		expect(
+			domain.safeParse({
+				host: "example.com",
+				path: "/",
+				https: true,
+				certificateType: "custom",
+				customEntrypoint: "websecure-custom",
+				customCertResolver: "team.resolver_1",
+				middlewares: ["auth@file", "rate-limit"],
+			}).success,
+		).toBe(true);
+
+		for (const payload of [
+			{ customEntrypoint: "web,websecure" },
+			{ customEntrypoint: "web secure" },
+			{ customCertResolver: "letsencrypt@docker" },
+			{ customCertResolver: "resolver`bad" },
+			{ middlewares: ["auth@docker"] },
+			{ middlewares: ["auth@file,evil@file"] },
+			{ middlewares: [" auth@file"] },
+			{ middlewares: ["auth;evil@file"] },
+		]) {
+			expect(
+				domain.safeParse({
+					host: "example.com",
+					path: "/",
+					...payload,
+				}).success,
+			).toBe(false);
+		}
+
+		expect(
+			domain.safeParse({
+				host: "example.com",
+				path: "/",
+				customEntrypoint: "",
+				customCertResolver: "",
+				middlewares: ["", "auth@file"],
+			}).success,
+		).toBe(true);
+	});
+
 	it("applies the same Traefik rule validation to compose domains", () => {
 		expect(
 			domainCompose.safeParse({
@@ -132,6 +175,32 @@ describe("high-severity schema security boundaries", () => {
 				host: "compose.example.com",
 				path: "/api`) || Host(`evil.example",
 				serviceName: "web",
+			}).success,
+		).toBe(false);
+		expect(
+			domainCompose.safeParse({
+				host: "compose.example.com",
+				path: "/api",
+				serviceName: "web",
+				customEntrypoint: "private.entrypoint",
+				customCertResolver: "resolver-1",
+				middlewares: ["compose-auth@file"],
+			}).success,
+		).toBe(true);
+		expect(
+			domainCompose.safeParse({
+				host: "compose.example.com",
+				path: "/api",
+				serviceName: "web",
+				customEntrypoint: "private,web",
+			}).success,
+		).toBe(false);
+		expect(
+			domainCompose.safeParse({
+				host: "compose.example.com",
+				path: "/api",
+				serviceName: "web",
+				middlewares: ["compose-auth@docker"],
 			}).success,
 		).toBe(false);
 	});

@@ -3,6 +3,9 @@ import { z } from "zod";
 const TRAEFIK_RULE_UNSAFE_HOST_CHARS = /[\s`"'(){}[\]|&!;,:/\\]/;
 const TRAEFIK_RULE_UNSAFE_PATH_CHARS = /[\s`"'(){}[\]|&!;\\]/;
 const HOST_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+const TRAEFIK_IDENTIFIER_REGEX = /^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$/i;
+const TRAEFIK_MIDDLEWARE_REFERENCE_REGEX =
+	/^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?(?:@file)?$/i;
 
 const isValidTraefikHost = (host: string) => {
 	if (host !== host.trim() || TRAEFIK_RULE_UNSAFE_HOST_CHARS.test(host)) {
@@ -63,12 +66,53 @@ const pathSchema = z
 	.nullable()
 	.optional();
 
+const nullableTraefikIdentifierSchema = (fieldName: string) =>
+	z.preprocess(
+		(value) =>
+			typeof value === "string" && value.trim() === "" ? null : value,
+		z
+			.string()
+			.refine((value) => value === value.trim(), {
+				message: `${fieldName} cannot have leading or trailing spaces`,
+			})
+			.refine((value) => TRAEFIK_IDENTIFIER_REGEX.test(value), {
+				message: `${fieldName} must be a valid Traefik identifier`,
+			})
+			.nullable()
+			.optional(),
+	);
+
+const nullableTraefikMiddlewareReferencesSchema = z.preprocess(
+	(value) =>
+		Array.isArray(value)
+			? value.filter(
+					(item) => !(typeof item === "string" && item.trim() === ""),
+				)
+			: value,
+	z
+		.array(
+			z
+				.string()
+				.refine((value) => value === value.trim(), {
+					message:
+						"Middleware reference cannot have leading or trailing spaces",
+				})
+				.refine((value) => TRAEFIK_MIDDLEWARE_REFERENCE_REGEX.test(value), {
+					message:
+						"Middleware reference must be a valid Traefik identifier or @file reference",
+				}),
+		)
+		.nullable()
+		.optional(),
+);
+
 export const domain = z
 	.object({
 		host: hostSchema,
 		path: pathSchema,
 		internalPath: pathSchema,
 		stripPath: z.boolean().optional(),
+		customEntrypoint: nullableTraefikIdentifierSchema("Entrypoint"),
 		port: z
 			.number()
 			.min(1, { message: "Port must be at least 1" })
@@ -77,8 +121,8 @@ export const domain = z
 			.optional(),
 		https: z.boolean().optional(),
 		certificateType: z.enum(["letsencrypt", "none", "custom"]).optional(),
-		customCertResolver: z.string().nullable().optional(),
-		middlewares: z.array(z.string()).nullable().optional(),
+		customCertResolver: nullableTraefikIdentifierSchema("Certificate resolver"),
+		middlewares: nullableTraefikMiddlewareReferencesSchema,
 	})
 	.superRefine((input, ctx) => {
 		if (input.https && !input.certificateType) {
@@ -114,6 +158,7 @@ export const domainCompose = z
 		path: pathSchema,
 		internalPath: pathSchema,
 		stripPath: z.boolean().optional(),
+		customEntrypoint: nullableTraefikIdentifierSchema("Entrypoint"),
 		port: z
 			.number()
 			.min(1, { message: "Port must be at least 1" })
@@ -122,9 +167,9 @@ export const domainCompose = z
 			.optional(),
 		https: z.boolean().optional(),
 		certificateType: z.enum(["letsencrypt", "none", "custom"]).optional(),
-		customCertResolver: z.string().nullable().optional(),
+		customCertResolver: nullableTraefikIdentifierSchema("Certificate resolver"),
 		serviceName: z.string().min(1, { message: "Service name is required" }),
-		middlewares: z.array(z.string()).nullable().optional(),
+		middlewares: nullableTraefikMiddlewareReferencesSchema,
 	})
 	.superRefine((input, ctx) => {
 		if (input.https && !input.certificateType) {
