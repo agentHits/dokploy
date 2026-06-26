@@ -106,6 +106,7 @@ describe("enterprise resources for static roles", () => {
 
 		expect(perms.server.read).toBe(false);
 		expect((perms.server as any).execute).toBe(false);
+		expect((perms.server as any).update).toBe(false);
 		expect(perms.registry.read).toBe(false);
 		expect((perms.registry as any).update).toBe(false);
 		expect(perms.certificate.read).toBe(false);

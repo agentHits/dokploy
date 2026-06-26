@@ -572,7 +572,7 @@ export const serverRouter = createTRPCRouter({
 				throw error;
 			}
 		}),
-	update: withPermission("server", "create")
+	update: withPermission("server", "update")
 		.input(apiUpdateServer)
 		.mutation(async ({ input, ctx }) => {
 			try {

@@ -537,7 +537,7 @@ const ROLE_PRESETS: {
 			envVars: ["read", "write"],
 			projectEnvVars: ["read", "write"],
 			environmentEnvVars: ["read", "write"],
-			server: ["read", "execute", "create", "delete"],
+			server: ["read", "execute", "create", "update", "delete"],
 			registry: ["read", "create", "delete"],
 			certificate: ["read", "create", "delete"],
 			backup: ["read", "create", "delete", "restore"],

@@ -55,6 +55,7 @@ export const SetupServer = ({ serverId, asButton = false }: Props) => {
 
 	const [activeLog, setActiveLog] = useState<string | null>(null);
 	const { data: isCloud } = api.settings.isCloud.useQuery();
+	const { data: permissions } = api.user.getPermissions.useQuery();
 	const isBuildServer = server?.serverType === "build";
 	const sshLoginCommand = buildSshLoginCommand(
 		server?.username,
@@ -306,7 +307,10 @@ export const SetupServer = ({ serverId, asButton = false }: Props) => {
 														setup the server or directly modify the script
 													</span>
 													<div className="flex flex-row gap-2">
-														<EditScript serverId={server?.serverId || ""} />
+														{permissions?.server.update &&
+															permissions?.server.execute && (
+																<EditScript serverId={server?.serverId || ""} />
+															)}
 														<DialogAction
 															title={"Setup Server?"}
 															type="default"

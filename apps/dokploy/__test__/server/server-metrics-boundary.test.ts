@@ -558,6 +558,68 @@ describe("server router assigned-server boundary", () => {
 		);
 	});
 
+	it("requires server update permission before changing connection settings", async () => {
+		mocks.checkPermission.mockImplementation(async (_ctx, permissions) => {
+			if (
+				JSON.stringify(permissions) === JSON.stringify({ server: ["update"] })
+			) {
+				throw new Error("missing server update");
+			}
+		});
+
+		await expect(
+			createCaller().update({
+				serverId: "server-1",
+				name: "primary",
+				description: null,
+				ipAddress: "203.0.113.11",
+				port: 2222,
+				username: "deploy",
+				sshKeyId: null,
+				serverType: "build",
+				enableDockerCleanup: true,
+			}),
+		).rejects.toThrow("missing server update");
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			server: ["update"],
+		});
+		expect(mocks.findServerById).not.toHaveBeenCalled();
+		expect(mocks.updateServerById).not.toHaveBeenCalled();
+	});
+
+	it("does not accept server create permission as update permission", async () => {
+		await expect(
+			createCaller().update({
+				serverId: "server-1",
+				name: "primary",
+				description: null,
+				ipAddress: "203.0.113.11",
+				port: 2222,
+				username: "deploy",
+				sshKeyId: null,
+				serverType: "build",
+				enableDockerCleanup: true,
+			}),
+		).resolves.toMatchObject({ serverId: "server-1" });
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			server: ["update"],
+		});
+		expect(mocks.checkPermission).not.toHaveBeenCalledWith(expect.anything(), {
+			server: ["create"],
+		});
+		expect(mocks.updateServerById).toHaveBeenCalledWith(
+			"server-1",
+			expect.objectContaining({
+				ipAddress: "203.0.113.11",
+				port: 2222,
+				username: "deploy",
+				serverType: "build",
+			}),
+		);
+	});
+
 	it("preserves the stored setup command when update receives the redacted placeholder", async () => {
 		await expect(
 			createCaller().update({
