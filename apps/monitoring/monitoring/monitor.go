@@ -266,6 +266,8 @@ func sendAlert(callbackURL string, payload AlertPayload) error {
 	return nil
 }
 
+var lookupCallbackIP = stdnet.LookupIP
+
 func validatePublicCallbackURL(rawURL string) error {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil || parsedURL.Hostname() == "" {
@@ -274,24 +276,21 @@ func validatePublicCallbackURL(rawURL string) error {
 	if parsedURL.Scheme != "https" && parsedURL.Scheme != "http" {
 		return fmt.Errorf("callback URL must use http or https")
 	}
-	isDokployNotificationCallback := parsedURL.Path == "/api/trpc/notification.receiveNotification" &&
-		parsedURL.RawQuery == "" &&
-		parsedURL.User == nil
 
 	hostname := strings.TrimSuffix(strings.ToLower(parsedURL.Hostname()), ".")
 	if hostname == "localhost" {
 		return fmt.Errorf("callback URL host is not allowed")
 	}
-	if !isDokployNotificationCallback && !strings.Contains(hostname, ".") {
+	if !strings.Contains(hostname, ".") {
 		return fmt.Errorf("callback URL host is not allowed")
 	}
 
-	addresses, err := stdnet.LookupIP(hostname)
+	addresses, err := lookupCallbackIP(hostname)
 	if err != nil || len(addresses) == 0 {
 		return fmt.Errorf("callback URL host could not be resolved")
 	}
 	for _, address := range addresses {
-		if !isDokployNotificationCallback && isPrivateCallbackAddress(address) {
+		if isPrivateCallbackAddress(address) {
 			return fmt.Errorf("callback URL resolves to a host that is not allowed")
 		}
 	}
