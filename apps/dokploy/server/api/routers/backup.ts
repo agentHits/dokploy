@@ -29,7 +29,10 @@ import {
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
 import { backups, volumeBackups } from "@dokploy/server/db/schema";
-import { checkServicePermissionAndAccess } from "@dokploy/server/services/permission";
+import {
+	checkPermission,
+	checkServicePermissionAndAccess,
+} from "@dokploy/server/services/permission";
 import { runComposeBackup } from "@dokploy/server/utils/backups/compose";
 import {
 	assertRcloneS3DestinationAllowed,
@@ -932,6 +935,9 @@ export const backupRouter = createTRPCRouter({
 				),
 			);
 			await assertTargetServerAccess(ctx, input.serverId);
+			if (input.serverId) {
+				await checkPermission(ctx, { backup: ["create"] });
+			}
 			try {
 				const allowedPrefixes = await getAccessibleBackupListingPrefixes(
 					ctx,

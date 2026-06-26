@@ -778,6 +778,32 @@ describe("backup restore route boundary", () => {
 		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
 	});
 
+	it("requires backup management permission before remote backup file listing", async () => {
+		mocks.findDestinationById.mockResolvedValue(safeDestination);
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
+		mocks.checkPermission.mockImplementation(async (_ctx, permissions) => {
+			if (
+				JSON.stringify(permissions) === JSON.stringify({ backup: ["create"] })
+			) {
+				throw new TRPCError({ code: "UNAUTHORIZED" });
+			}
+		});
+
+		await expect(
+			createCaller().listBackupFiles({
+				destinationId: "destination-1",
+				search: "prefix/app",
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			backup: ["create"],
+		});
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+		expect(mocks.execAsync).not.toHaveBeenCalled();
+	});
+
 	it("denies inaccessible backup listing servers before remote rclone execution", async () => {
 		mocks.findDestinationById.mockResolvedValue(safeDestination);
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));

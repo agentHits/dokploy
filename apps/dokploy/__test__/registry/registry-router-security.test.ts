@@ -1,4 +1,5 @@
 import { REDACTED_SECRET_VALUE } from "@dokploy/server/utils/security/redaction";
+import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const escapeShell = (value: string | undefined) =>
@@ -264,6 +265,30 @@ describe("registry router remote test login boundary", () => {
 		expect(mocks.execAsyncRemote.mock.calls[0]?.[1]).not.toContain(
 			`echo ${dangerousPassword}`,
 		);
+	});
+
+	it("requires registry management permission before testing stored credentials", async () => {
+		mocks.checkPermission.mockImplementation(async (_ctx, permissions) => {
+			if (
+				JSON.stringify(permissions) === JSON.stringify({ registry: ["create"] })
+			) {
+				throw new TRPCError({ code: "UNAUTHORIZED" });
+			}
+		});
+
+		await expect(
+			createCaller().testRegistryById({
+				registryId: "registry-1",
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			registry: ["create"],
+		});
+		expect(mocks.findRegistryRecord).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+		expect(mocks.execFileAsync).not.toHaveBeenCalled();
 	});
 
 	it("rejects inaccessible stored remote registry tests before remote execution", async () => {

@@ -227,7 +227,7 @@ export const ssoRouter = createTRPCRouter({
 			}
 			return redactSsoProviderSecrets(provider);
 		}),
-	update: enterpriseProcedure
+	update: enterpriseOwnerProcedure
 		.input(ssoProviderBodySchema)
 		.mutation(async ({ ctx, input }) => {
 			const existing = await db.query.ssoProvider.findFirst({
@@ -343,7 +343,7 @@ export const ssoRouter = createTRPCRouter({
 			});
 			return { success: true };
 		}),
-	deleteProvider: enterpriseProcedure
+	deleteProvider: enterpriseOwnerProcedure
 		.input(z.object({ providerId: z.string().min(1) }))
 		.mutation(async ({ ctx, input }) => {
 			// Obtener el provider antes de eliminarlo para obtener sus dominios
@@ -387,7 +387,7 @@ export const ssoRouter = createTRPCRouter({
 
 			return { success: true };
 		}),
-	register: enterpriseProcedure
+	register: enterpriseOwnerProcedure
 		.input(ssoProviderBodySchema)
 		.mutation(async ({ ctx, input }) => {
 			const organizationId = ctx.session.activeOrganizationId;
