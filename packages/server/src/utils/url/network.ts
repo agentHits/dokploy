@@ -83,6 +83,9 @@ const isBlockedIPv6 = (hostname: string) => {
 	const isLinkLocal =
 		Number.isInteger(firstHextetValue) &&
 		(firstHextetValue & 0xffc0) === 0xfe80;
+	const isSiteLocal =
+		Number.isInteger(firstHextetValue) &&
+		(firstHextetValue & 0xffc0) === 0xfec0;
 	const isIpv4TranslationPrefix =
 		lowerHostname.startsWith("64:ff9b:") ||
 		lowerHostname.startsWith("64:ff9b::") ||
@@ -98,6 +101,7 @@ const isBlockedIPv6 = (hostname: string) => {
 		lowerHostname.startsWith("2001:db8:") ||
 		isIpv4TranslationPrefix ||
 		isLinkLocal ||
+		isSiteLocal ||
 		firstHextet.startsWith("fc") ||
 		firstHextet.startsWith("fd") ||
 		firstHextet.startsWith("ff")

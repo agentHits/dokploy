@@ -9,12 +9,14 @@ describe("public egress fetch boundary", () => {
 		vi.unstubAllGlobals();
 	});
 
-	it("blocks the full IPv6 link-local range", () => {
+	it("blocks IPv6 link-local and deprecated site-local ranges", () => {
 		for (const hostname of ["fe80::1", "fe90::1", "fea0::1", "febf::1"]) {
 			expect(isBlockedCloudHost(hostname)).toBe(true);
 		}
 
-		expect(isBlockedCloudHost("fec0::1")).toBe(false);
+		for (const hostname of ["fec0::1", "fed0::1", "feff::1"]) {
+			expect(isBlockedCloudHost(hostname)).toBe(true);
+		}
 	});
 
 	it("rejects public-looking hosts that resolve to private addresses before fetch", async () => {
