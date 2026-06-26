@@ -13,6 +13,11 @@ const mocks = vi.hoisted(() => ({
 	createAuthMiddleware: vi.fn((middleware) => middleware),
 	registerSSOProvider: vi.fn(),
 	select: vi.fn(),
+	ssoPlugin: vi.fn((options) => {
+		mocks.ssoPluginOptions = options;
+		return {};
+	}),
+	ssoPluginOptions: undefined as any,
 	trustedOriginsWhere: vi.fn(),
 	updateSSOProvider: vi.fn(),
 	verifyApiKey: vi.fn(),
@@ -56,7 +61,7 @@ vi.mock("@better-auth/api-key", () => ({
 }));
 
 vi.mock("@better-auth/sso", () => ({
-	sso: vi.fn(() => ({})),
+	sso: mocks.ssoPlugin,
 }));
 
 vi.mock("better-auth/plugins", () => ({
@@ -282,5 +287,15 @@ describe("Better Auth account linking policy", () => {
 		expect(authSource).toContain("allowDifferentEmails: false");
 		expect(authSource).not.toContain("getTrustedProviders");
 		expect(authSource).not.toContain("allowDifferentEmails: true");
+	});
+});
+
+describe("Better Auth SSO domain verification", () => {
+	it("enables Better Auth domain verification for SSO providers", () => {
+		expect(mocks.ssoPluginOptions).toEqual({
+			domainVerification: {
+				enabled: true,
+			},
+		});
 	});
 });

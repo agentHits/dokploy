@@ -338,11 +338,12 @@ export const ssoRouter = createTRPCRouter({
 			}
 
 			const providers = await db.query.ssoProvider.findMany({
-				columns: { id: true, domain: true },
+				columns: { id: true, domain: true, domainVerified: true },
 			});
 
 			for (const provider of providers) {
 				if (provider.id === existing.id) continue;
+				if (provider.domainVerified !== true) continue;
 				const providerDomains = provider.domain
 					.split(",")
 					.map((d) => d.trim().toLowerCase());
@@ -473,10 +474,12 @@ export const ssoRouter = createTRPCRouter({
 			const providers = await db.query.ssoProvider.findMany({
 				columns: {
 					domain: true,
+					domainVerified: true,
 				},
 			});
 
 			for (const provider of providers) {
+				if (provider.domainVerified !== true) continue;
 				const providerDomains = provider.domain
 					.split(",")
 					.map((d) => d.trim().toLowerCase());

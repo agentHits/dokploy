@@ -433,7 +433,11 @@ const { handler, api } = betterAuth({
 			enableMetadata: true,
 			references: "user",
 		}),
-		sso(),
+		sso({
+			domainVerification: {
+				enabled: true,
+			},
+		}),
 		twoFactor(),
 		organization({
 			ac,

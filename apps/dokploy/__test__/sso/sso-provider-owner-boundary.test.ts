@@ -187,6 +187,29 @@ describe("SSO provider owner boundary", () => {
 		);
 	});
 
+	it("does not let unverified SSO provider domains reserve ownership", async () => {
+		mocks.ssoProviderFindMany.mockResolvedValue([
+			{
+				domain: "example.com",
+				domainVerified: false,
+			},
+		]);
+
+		await expect(
+			createCaller("owner").register(providerInput),
+		).resolves.toEqual({
+			success: true,
+		});
+
+		expect(mocks.registerSSOProvider).toHaveBeenCalledWith(
+			expect.objectContaining({
+				body: expect.objectContaining({
+					domain: "example.com",
+				}),
+			}),
+		);
+	});
+
 	it("redacts SAML private-key material from provider reads", async () => {
 		const provider = {
 			id: "provider-row-1",
@@ -327,10 +350,12 @@ describe("SSO provider owner boundary", () => {
 			{
 				id: "provider-row-1",
 				domain: "example.com",
+				domainVerified: true,
 			},
 			{
 				id: "other-org-provider",
 				domain: "shared.example.com",
+				domainVerified: true,
 			},
 		]);
 
@@ -361,6 +386,7 @@ describe("SSO provider owner boundary", () => {
 			{
 				id: "provider-row-1",
 				domain: "example.com",
+				domainVerified: true,
 			},
 		]);
 
