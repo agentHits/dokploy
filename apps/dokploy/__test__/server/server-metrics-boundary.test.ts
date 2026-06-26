@@ -550,6 +550,36 @@ describe("server router assigned-server boundary", () => {
 		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
 			server: ["execute"],
 		});
+		expect(mocks.updateServerById).toHaveBeenCalledWith(
+			"server-1",
+			expect.objectContaining({
+				command: "curl https://example.com/install.sh | sh",
+			}),
+		);
+	});
+
+	it("preserves the stored setup command when update receives the redacted placeholder", async () => {
+		await expect(
+			createCaller().update({
+				serverId: "server-1",
+				name: "primary",
+				description: null,
+				ipAddress: "203.0.113.10",
+				port: 22,
+				username: "root",
+				sshKeyId: null,
+				serverType: "deploy",
+				enableDockerCleanup: true,
+				command: "__DOKPLOY_REDACTED_SECRET__",
+			}),
+		).resolves.toMatchObject({ serverId: "server-1" });
+
+		expect(mocks.updateServerById).toHaveBeenCalledWith(
+			"server-1",
+			expect.not.objectContaining({
+				command: expect.any(String),
+			}),
+		);
 	});
 
 	it("denies inaccessible server validation before remote validation side effects", async () => {

@@ -39,6 +39,7 @@ describe("server secret redaction helpers", () => {
 	it("redacts monitoring tokens and SSH private keys", () => {
 		const redacted = redactServer({
 			serverId: "server-1",
+			command: "curl https://example.com/install.sh | sh",
 			metricsConfig,
 			sshKey: {
 				sshKeyId: "ssh-1",
@@ -47,6 +48,7 @@ describe("server secret redaction helpers", () => {
 			},
 		});
 
+		expect(redacted.command).toBe(REDACTED_SECRET_VALUE);
 		expect(redacted.metricsConfig.server.token).toBe(REDACTED_SECRET_VALUE);
 		expect(redacted.sshKey?.privateKey).toBe(REDACTED_SECRET_VALUE);
 		expect(redacted.sshKey?.publicKey).toBe("public-key");

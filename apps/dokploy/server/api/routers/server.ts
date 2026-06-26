@@ -25,6 +25,7 @@ import { db } from "@dokploy/server/db";
 import { checkPermission } from "@dokploy/server/services/permission";
 import { hasValidLicense } from "@dokploy/server/services/proprietary/license-key";
 import { assertSshKeyAccess } from "@dokploy/server/services/ssh-key";
+import { isRedactedSecretValue } from "@dokploy/server/utils/security/redaction";
 import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
 import { TRPCError } from "@trpc/server";
 import { observable } from "@trpc/server/observable";
@@ -594,8 +595,11 @@ export const serverRouter = createTRPCRouter({
 				if (input.command !== undefined) {
 					await assertServerExecuteAllowed(ctx);
 				}
+				const { command, ...serverData } = input;
 				const currentServer = await updateServerById(input.serverId, {
-					...input,
+					...serverData,
+					...(command !== undefined &&
+						!isRedactedSecretValue(command) && { command }),
 				});
 
 				await applyDockerCleanupSchedule(

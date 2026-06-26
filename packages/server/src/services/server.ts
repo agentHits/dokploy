@@ -18,6 +18,7 @@ import type { z } from "zod";
 export type Server = typeof server.$inferSelect;
 type ServerMetricsConfig = Server["metricsConfig"];
 type ServerLike = {
+	command?: string | null;
 	metricsConfig?: ServerMetricsConfig | null;
 	sshKey?: Record<string, unknown> | null;
 };
@@ -81,6 +82,7 @@ export const redactServer = <T extends ServerLike | null | undefined>(
 					},
 				}
 			: currentServer.metricsConfig,
+		command: redactSecretValue(currentServer.command),
 		sshKey: redactSecretFields(currentServer.sshKey, ["privateKey"]),
 	} as T;
 };
