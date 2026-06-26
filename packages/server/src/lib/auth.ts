@@ -82,6 +82,37 @@ export const resolveTrustedOriginsForAuthRequest = async (
 	}
 };
 
+export const canProvisionSsoMembershipForEmail = (
+	email: string | undefined,
+	provider: {
+		domain?: string | null;
+		domainVerified?: boolean | null;
+		organizationId?: string | null;
+	},
+): provider is {
+	domain: string;
+	domainVerified: true;
+	organizationId: string;
+} => {
+	const emailDomain = email?.split("@")[1]?.trim().toLowerCase();
+	if (
+		!emailDomain ||
+		!provider.organizationId ||
+		provider.domainVerified !== true ||
+		!provider.domain
+	) {
+		return false;
+	}
+
+	return provider.domain
+		.split(",")
+		.map((domain) => domain.trim().toLowerCase())
+		.filter(Boolean)
+		.some(
+			(domain) => emailDomain === domain || emailDomain.endsWith(`.${domain}`),
+		);
+};
+
 const { handler, api } = betterAuth({
 	database: drizzleAdapter(db, {
 		provider: "pg",
@@ -302,9 +333,14 @@ const { handler, api } = betterAuth({
 								message: "Provider not found",
 							});
 						}
+						if (!canProvisionSsoMembershipForEmail(user.email, provider)) {
+							throw new APIError("UNAUTHORIZED", {
+								message: "SSO email domain is not allowed for this provider",
+							});
+						}
 						await db.insert(schema.member).values({
 							userId: user.id,
-							organizationId: provider?.organizationId || "",
+							organizationId: provider.organizationId,
 							role: "member",
 							createdAt: new Date(),
 							isDefault: true,

@@ -6,13 +6,16 @@ const mocks = vi.hoisted(() => ({
 	createApiKey: vi.fn(),
 	getSession: vi.fn(),
 	handler: vi.fn(),
+	insert: vi.fn(),
 	memberFindFirst: vi.fn(),
+	memberInsertValues: vi.fn(),
 	apiKeyFindFirst: vi.fn(),
 	authOptions: undefined as any,
 	checkPermission: vi.fn(),
 	createAuthMiddleware: vi.fn((middleware) => middleware),
 	registerSSOProvider: vi.fn(),
 	select: vi.fn(),
+	ssoProviderFindFirst: vi.fn(),
 	ssoPlugin: vi.fn((options) => {
 		mocks.ssoPluginOptions = options;
 		return {};
@@ -72,6 +75,7 @@ vi.mock("better-auth/plugins", () => ({
 
 vi.mock("@dokploy/server/db", () => ({
 	db: {
+		insert: mocks.insert,
 		select: mocks.select,
 		query: {
 			apikey: {
@@ -82,6 +86,9 @@ vi.mock("@dokploy/server/db", () => ({
 			},
 			member: {
 				findFirst: mocks.memberFindFirst,
+			},
+			ssoProvider: {
+				findFirst: mocks.ssoProviderFindFirst,
 			},
 		},
 	},
@@ -98,6 +105,9 @@ const { shouldBlockEmailPasswordSignIn } = await import(
 	"../../../../packages/server/src/lib/auth"
 );
 const { resolveTrustedOriginsForAuthRequest } = await import(
+	"../../../../packages/server/src/lib/auth"
+);
+const { canProvisionSsoMembershipForEmail } = await import(
 	"../../../../packages/server/src/lib/auth"
 );
 
@@ -145,6 +155,9 @@ describe("validateRequest API key sessions", () => {
 					where: mocks.trustedOriginsWhere,
 				}),
 			}),
+		});
+		mocks.insert.mockReturnValue({
+			values: mocks.memberInsertValues,
 		});
 	});
 
@@ -297,5 +310,93 @@ describe("Better Auth SSO domain verification", () => {
 				enabled: true,
 			},
 		});
+	});
+});
+
+describe("Better Auth SSO membership provisioning", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.memberFindFirst.mockResolvedValue({
+			role: "owner",
+		});
+		mocks.ssoProviderFindFirst.mockResolvedValue({
+			providerId: "acme-sso",
+			organizationId: "org-acme",
+			domain: "acme.com,example.org",
+			domainVerified: true,
+		});
+		mocks.insert.mockReturnValue({
+			values: mocks.memberInsertValues,
+		});
+	});
+
+	it("matches verified SSO provider domains before membership provisioning", () => {
+		expect(
+			canProvisionSsoMembershipForEmail("ada@engineering.acme.com", {
+				organizationId: "org-acme",
+				domain: "acme.com,example.org",
+				domainVerified: true,
+			}),
+		).toBe(true);
+		expect(
+			canProvisionSsoMembershipForEmail("ada@evil.com", {
+				organizationId: "org-acme",
+				domain: "acme.com,example.org",
+				domainVerified: true,
+			}),
+		).toBe(false);
+		expect(
+			canProvisionSsoMembershipForEmail("ada@acme.com", {
+				organizationId: "org-acme",
+				domain: "acme.com",
+				domainVerified: false,
+			}),
+		).toBe(false);
+	});
+
+	it("fails closed before inserting SSO membership when email domain mismatches provider domains", async () => {
+		await expect(
+			mocks.authOptions.databaseHooks.user.create.after(
+				{
+					id: "user-sso",
+					email: "attacker@evil.com",
+				},
+				{
+					path: "/sso/callback/acme-sso",
+					params: {
+						providerId: "acme-sso",
+					},
+				},
+			),
+		).rejects.toThrow("SSO email domain is not allowed for this provider");
+
+		expect(mocks.ssoProviderFindFirst).toHaveBeenCalledTimes(1);
+		expect(mocks.insert).not.toHaveBeenCalled();
+	});
+
+	it("provisions SSO membership only after the local email domain check passes", async () => {
+		await expect(
+			mocks.authOptions.databaseHooks.user.create.after(
+				{
+					id: "user-sso",
+					email: "ada@engineering.acme.com",
+				},
+				{
+					path: "/sso/callback/acme-sso",
+					params: {
+						providerId: "acme-sso",
+					},
+				},
+			),
+		).resolves.toBeUndefined();
+
+		expect(mocks.memberInsertValues).toHaveBeenCalledWith(
+			expect.objectContaining({
+				userId: "user-sso",
+				organizationId: "org-acme",
+				role: "member",
+				isDefault: true,
+			}),
+		);
 	});
 });
