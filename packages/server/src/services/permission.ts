@@ -461,7 +461,7 @@ export const resolvePermissions = async (
 
 export const checkProjectAccess = async (
 	ctx: PermissionCtx,
-	action: "create" | "delete",
+	action: "create" | "update" | "delete",
 	projectId?: string,
 ) => {
 	const userId = ctx.user.id;
@@ -542,7 +542,7 @@ export const checkServiceAccess = async (
 export const checkEnvironmentAccess = async (
 	ctx: PermissionCtx,
 	environmentId: string,
-	action: "read" | "create" | "delete" = "read",
+	action: "read" | "create" | "update" | "delete" = "read",
 ) => {
 	const userId = ctx.user.id;
 	const organizationId = ctx.session.activeOrganizationId;

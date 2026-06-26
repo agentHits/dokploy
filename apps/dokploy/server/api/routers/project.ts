@@ -766,6 +766,7 @@ export const projectRouter = createTRPCRouter({
 						message: "You are not authorized to update this project",
 					});
 				}
+				await checkProjectAccess(ctx, "update", input.projectId);
 
 				if (ctx.user.role !== "owner" && ctx.user.role !== "admin") {
 					const { accessedProjects } = await findMemberByUserId(

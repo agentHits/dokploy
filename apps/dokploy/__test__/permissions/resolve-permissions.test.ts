@@ -125,12 +125,21 @@ describe("free-tier resources for member", () => {
 		memberToReturn = mockMemberData("member");
 		const perms = await resolvePermissions(ctx);
 		expect(perms.project.create).toBe(false);
+		expect((perms.project as any).update).toBe(false);
 	});
 
 	it("member gets project.create=true with canCreateProjects", async () => {
 		memberToReturn = mockMemberData("member", { canCreateProjects: true });
 		const perms = await resolvePermissions(ctx);
 		expect(perms.project.create).toBe(true);
+		expect((perms.project as any).update).toBe(false);
+	});
+
+	it("member gets environment.update=false with read-only environment access", async () => {
+		memberToReturn = mockMemberData("member");
+		const perms = await resolvePermissions(ctx);
+		expect(perms.environment.read).toBe(true);
+		expect((perms.environment as any).update).toBe(false);
 	});
 
 	it("member gets docker.read=false without legacy override", async () => {
@@ -155,10 +164,12 @@ describe("free-tier resources for owner", () => {
 		memberToReturn = mockMemberData("owner");
 		const perms = await resolvePermissions(ctx);
 		expect(perms.project.create).toBe(true);
+		expect((perms.project as any).update).toBe(true);
 		expect(perms.project.delete).toBe(true);
 		expect(perms.service.create).toBe(true);
 		expect(perms.service.read).toBe(true);
 		expect(perms.service.delete).toBe(true);
+		expect((perms.environment as any).update).toBe(true);
 		expect(perms.docker.read).toBe(true);
 		expect((perms.docker as any).execute).toBe(true);
 		expect((perms.docker as any).write).toBe(true);

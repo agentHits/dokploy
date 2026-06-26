@@ -427,7 +427,7 @@ export const environmentRouter = createTRPCRouter({
 			try {
 				const { environmentId, ...updateData } = input;
 
-				await checkEnvironmentAccess(ctx, environmentId, "read");
+				await checkEnvironmentAccess(ctx, environmentId, "update");
 
 				if (updateData.env !== undefined) {
 					await checkPermission(ctx, { environmentEnvVars: ["write"] });

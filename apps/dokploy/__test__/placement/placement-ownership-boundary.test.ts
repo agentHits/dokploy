@@ -359,6 +359,27 @@ describe("project/environment placement ownership boundary", () => {
 			"env-1",
 			expect.not.objectContaining({ projectId: expect.any(String) }),
 		);
+		expect(permissionMocks.checkEnvironmentAccess).toHaveBeenCalledWith(
+			expect.anything(),
+			"env-1",
+			"update",
+		);
+	});
+
+	it("denies environment update before persistence without environment.update", async () => {
+		permissionMocks.checkEnvironmentAccess.mockRejectedValueOnce(
+			new Error("environment update denied"),
+		);
+
+		await expect(
+			environmentRouter.createCaller(createContext()).update({
+				environmentId: "env-1",
+				name: "staging",
+			}),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(serverMocks.findEnvironmentById).not.toHaveBeenCalled();
+		expect(serverMocks.updateEnvironmentById).not.toHaveBeenCalled();
 	});
 
 	it("does not forward organizationId mass assignment during project update", async () => {
@@ -374,6 +395,26 @@ describe("project/environment placement ownership boundary", () => {
 			"project-1",
 			expect.not.objectContaining({ organizationId: expect.any(String) }),
 		);
+		expect(permissionMocks.checkProjectAccess).toHaveBeenCalledWith(
+			expect.anything(),
+			"update",
+			"project-1",
+		);
+	});
+
+	it("denies project update before persistence without project.update", async () => {
+		permissionMocks.checkProjectAccess.mockRejectedValueOnce(
+			new Error("project update denied"),
+		);
+
+		await expect(
+			projectRouter.createCaller(createContext()).update({
+				projectId: "project-1",
+				name: "renamed",
+			}),
+		).rejects.toThrow("project update denied");
+
+		expect(serverMocks.updateProjectById).not.toHaveBeenCalled();
 	});
 
 	it("denies application moves to a target environment outside the active organization before persistence", async () => {
