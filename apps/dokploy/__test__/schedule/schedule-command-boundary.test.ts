@@ -52,9 +52,12 @@ vi.mock("node-schedule", () => ({
 	scheduleJob: vi.fn(),
 }));
 
-const { buildDeleteScheduleCommand, buildScheduleScriptCommand } = await import(
-	"@dokploy/server/services/schedule"
-);
+const {
+	buildDeleteScheduleCommand,
+	buildScheduleScriptCommand,
+	getScheduleDeploymentLogPath,
+	getScheduleDirectory,
+} = await import("@dokploy/server/services/schedule");
 const { runCommand } = await import("@dokploy/server/utils/schedules/utils");
 
 describe("schedule command boundary", () => {
@@ -139,5 +142,49 @@ describe("schedule command boundary", () => {
 		expect(() =>
 			buildDeleteScheduleCommand("/srv schedules", "schedule;id"),
 		).toThrow("Invalid schedule app name");
+	});
+
+	it("rejects dot-segment schedule app names before filesystem path building", () => {
+		for (const appName of [".", ".."]) {
+			expect(() => getScheduleDirectory("/srv schedules", appName)).toThrow(
+				"Invalid schedule app name",
+			);
+			expect(() =>
+				buildScheduleScriptCommand("/srv schedules", {
+					appName,
+					scheduleId: "schedule-1",
+					script: "echo ok",
+				} as never),
+			).toThrow("Invalid schedule app name");
+			expect(() =>
+				buildDeleteScheduleCommand("/srv schedules", appName),
+			).toThrow("Invalid schedule app name");
+			expect(() =>
+				getScheduleDeploymentLogPath(
+					"/srv schedules",
+					appName,
+					"2026-06-26:12:00:00",
+				),
+			).toThrow("Invalid schedule app name");
+		}
+	});
+
+	it("builds schedule deployment logs inside the schedule base directory", () => {
+		expect(getScheduleDirectory("/srv schedules", "schedule.one_2-test")).toBe(
+			"/srv schedules/schedule.one_2-test",
+		);
+		expect(getScheduleDirectory("/srv schedules", "..name")).toBe(
+			"/srv schedules/..name",
+		);
+		expect(getScheduleDirectory("/srv schedules", "...")).toBe(
+			"/srv schedules/...",
+		);
+		expect(
+			getScheduleDeploymentLogPath(
+				"/srv schedules",
+				"schedule-one",
+				"2026-06-26:12:00:00",
+			),
+		).toBe("/srv schedules/schedule-one/schedule-one-2026-06-26:12:00:00.log");
 	});
 });

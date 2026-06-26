@@ -18,6 +18,7 @@ import {
 } from "@dokploy/server/db/schema";
 import { isBackupScheduleTargetBound } from "@dokploy/server/utils/backups/invariant";
 import { removeDirectoryIfExistsContent } from "@dokploy/server/utils/filesystem/directory";
+import { quoteShellArg } from "@dokploy/server/utils/filesystem/safe-path";
 import {
 	execAsync,
 	execAsyncRemote,
@@ -39,7 +40,7 @@ import {
 	updatePreviewDeployment,
 } from "./preview-deployment";
 import { removeRollbackById } from "./rollbacks";
-import { findScheduleById } from "./schedule";
+import { findScheduleById, getScheduleDeploymentLogPath } from "./schedule";
 import { findServerById, type Server } from "./server";
 import { findVolumeBackupById } from "./volume-backups";
 
@@ -483,20 +484,24 @@ export const createDeploymentSchedule = async (
 	try {
 		const { SCHEDULES_PATH } = paths(!!serverId);
 		const formattedDateTime = format(new Date(), "yyyy-MM-dd:HH:mm:ss");
-		const fileName = `${schedule.appName}-${formattedDateTime}.log`;
-		const logFilePath = path.join(SCHEDULES_PATH, schedule.appName, fileName);
+		const logFilePath = getScheduleDeploymentLogPath(
+			SCHEDULES_PATH,
+			schedule.appName,
+			formattedDateTime,
+		);
+		const scheduleDirectory = path.dirname(logFilePath);
 
 		if (serverId) {
 			const server = await findServerById(serverId);
 
 			const command = `
-				mkdir -p ${SCHEDULES_PATH}/${schedule.appName};
-            	echo "Initializing schedule" >> ${logFilePath};
+				mkdir -p ${quoteShellArg(scheduleDirectory)};
+				echo "Initializing schedule" >> ${quoteShellArg(logFilePath)};
 			`;
 
 			await execAsyncRemote(server.serverId, command);
 		} else {
-			await fsPromises.mkdir(path.join(SCHEDULES_PATH, schedule.appName), {
+			await fsPromises.mkdir(scheduleDirectory, {
 				recursive: true,
 			});
 			await fsPromises.writeFile(logFilePath, "Initializing schedule\n");

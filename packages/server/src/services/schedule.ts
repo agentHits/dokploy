@@ -18,22 +18,62 @@ export type ScheduleExtended = Awaited<ReturnType<typeof findScheduleById>>;
 
 export const normalizeScheduleAppName = (appName?: string | null) => {
 	const safeAppName = appName?.trim() || "";
-	if (!APP_NAME_REGEX.test(safeAppName)) {
+	if (
+		!APP_NAME_REGEX.test(safeAppName) ||
+		safeAppName === "." ||
+		safeAppName === ".."
+	) {
 		throw new Error("Invalid schedule app name");
 	}
 
 	return safeAppName;
 };
 
+const resolveSchedulePathInsideBase = (
+	basePath: string,
+	...segments: string[]
+) => {
+	const absoluteBasePath = path.resolve(basePath);
+	const fullPath = path.resolve(absoluteBasePath, ...segments);
+	const relativePath = path.relative(absoluteBasePath, fullPath);
+	if (
+		relativePath === "" ||
+		relativePath === ".." ||
+		relativePath.startsWith(`..${path.sep}`) ||
+		path.isAbsolute(relativePath)
+	) {
+		throw new Error("Invalid schedule app name");
+	}
+	return fullPath;
+};
+
 export const getScheduleDirectory = (
 	basePath: string,
 	appName?: string | null,
-) => path.join(basePath, normalizeScheduleAppName(appName));
+) => resolveSchedulePathInsideBase(basePath, normalizeScheduleAppName(appName));
 
 export const getScheduleScriptPath = (
 	basePath: string,
 	appName?: string | null,
-) => path.join(getScheduleDirectory(basePath, appName), "script.sh");
+) =>
+	resolveSchedulePathInsideBase(
+		basePath,
+		normalizeScheduleAppName(appName),
+		"script.sh",
+	);
+
+export const getScheduleDeploymentLogPath = (
+	basePath: string,
+	appName: string,
+	formattedDateTime: string,
+) => {
+	const safeAppName = normalizeScheduleAppName(appName);
+	return resolveSchedulePathInsideBase(
+		basePath,
+		safeAppName,
+		`${safeAppName}-${formattedDateTime}.log`,
+	);
+};
 
 export const buildDeleteScheduleCommand = (
 	basePath: string,
