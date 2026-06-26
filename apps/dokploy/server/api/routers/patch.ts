@@ -33,6 +33,11 @@ import {
 	apiUpdatePatch,
 } from "@/server/db/schema";
 
+const redactPatchContent = <T extends { content?: string }>(patch: T): T => ({
+	...patch,
+	content: "__DOKPLOY_REDACTED_SECRET__",
+});
+
 /**
  * Resolves the serviceId from a patch record (applicationId or composeId).
  * Throws if neither is set.
@@ -86,7 +91,7 @@ export const patchRouter = createTRPCRouter({
 		const patch = await findPatchById(input.patchId);
 		const serviceId = resolvePatchServiceId(patch);
 		await checkServicePermissionAndAccess(ctx, serviceId, {
-			service: ["read"],
+			service: ["create"],
 		});
 		return patch;
 	}),
@@ -99,7 +104,9 @@ export const patchRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.id, {
 				service: ["read"],
 			});
-			return await findPatchesByEntityId(input.id, input.type);
+			return (await findPatchesByEntityId(input.id, input.type)).map(
+				redactPatchContent,
+			);
 		}),
 
 	update: protectedProcedure
@@ -197,7 +204,7 @@ export const patchRouter = createTRPCRouter({
 		)
 		.query(async ({ input, ctx }) => {
 			await checkServicePermissionAndAccess(ctx, input.id, {
-				service: ["read"],
+				service: ["create"],
 			});
 			let serverId: string | null = null;
 			if (input.type === "application") {
@@ -224,7 +231,7 @@ export const patchRouter = createTRPCRouter({
 		)
 		.query(async ({ input, ctx }) => {
 			await checkServicePermissionAndAccess(ctx, input.id, {
-				service: ["read"],
+				service: ["create"],
 			});
 			let serverId: string | null = null;
 			if (input.type === "application") {
