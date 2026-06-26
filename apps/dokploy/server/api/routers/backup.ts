@@ -478,6 +478,22 @@ const getAccessibleBackupListingPrefixes = async (
 	return [...prefixes];
 };
 
+const isRemoteBackupListingServer = (serverId?: string) => Boolean(serverId);
+
+const assertBackupListingServerAccess = async (
+	ctx: BackupAccessCtx,
+	serverId?: string,
+) => {
+	await assertTargetServerAccess(ctx, serverId);
+
+	if (!isRemoteBackupListingServer(serverId)) {
+		return;
+	}
+
+	await checkPermission(ctx, { server: ["execute"] });
+	await checkPermission(ctx, { backup: ["create"] });
+};
+
 const getBackupListingScopes = (allowedPrefixes: string[], search: string) => {
 	const normalizedSearch = search.trim()
 		? normalizeRelativeFilePath(search.trim())
@@ -928,16 +944,14 @@ export const backupRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
+			await assertBackupListingServerAccess(ctx, input.serverId);
+
 			const destination = await assertRcloneS3DestinationAllowed(
 				await assertDestinationAccess(
 					input.destinationId,
 					ctx.session.activeOrganizationId,
 				),
 			);
-			await assertTargetServerAccess(ctx, input.serverId);
-			if (input.serverId) {
-				await checkPermission(ctx, { backup: ["create"] });
-			}
 			try {
 				const allowedPrefixes = await getAccessibleBackupListingPrefixes(
 					ctx,
@@ -963,7 +977,7 @@ export const backupRouter = createTRPCRouter({
 
 					let stdout = "";
 
-					if (input.serverId) {
+					if (isRemoteBackupListingServer(input.serverId)) {
 						const result = await execAsyncRemote(input.serverId, listCommand);
 						stdout = result.stdout;
 					} else {

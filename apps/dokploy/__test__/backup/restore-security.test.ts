@@ -759,6 +759,12 @@ describe("backup restore route boundary", () => {
 		expect(args).toContain(":s3:bucket$(id);touch/app-one/prefix/");
 		expect(args).toContain("--no-mimetype");
 		expect(args).toContain("--no-modtime");
+		expect(mocks.checkPermission).not.toHaveBeenCalledWith(expect.anything(), {
+			server: ["execute"],
+		});
+		expect(mocks.checkPermission).not.toHaveBeenCalledWith(expect.anything(), {
+			backup: ["create"],
+		});
 	});
 
 	it("denies backup file listing when no accessible schedule prefix exists", async () => {
@@ -779,7 +785,6 @@ describe("backup restore route boundary", () => {
 	});
 
 	it("requires backup management permission before remote backup file listing", async () => {
-		mocks.findDestinationById.mockResolvedValue(safeDestination);
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
 		mocks.checkPermission.mockImplementation(async (_ctx, permissions) => {
 			if (
@@ -798,8 +803,41 @@ describe("backup restore route boundary", () => {
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
 		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			server: ["execute"],
+		});
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
 			backup: ["create"],
 		});
+		expect(mocks.findDestinationById).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+		expect(mocks.execAsync).not.toHaveBeenCalled();
+	});
+
+	it("requires server execute before loading destination credentials for remote backup file listing", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
+		mocks.checkPermission.mockImplementation(async (_ctx, permissions) => {
+			if (
+				JSON.stringify(permissions) === JSON.stringify({ server: ["execute"] })
+			) {
+				throw new TRPCError({ code: "UNAUTHORIZED" });
+			}
+		});
+
+		await expect(
+			createCaller().listBackupFiles({
+				destinationId: "destination-1",
+				search: "prefix/app",
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			server: ["execute"],
+		});
+		expect(mocks.checkPermission).not.toHaveBeenCalledWith(expect.anything(), {
+			backup: ["create"],
+		});
+		expect(mocks.findDestinationById).not.toHaveBeenCalled();
 		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
 		expect(mocks.execAsync).not.toHaveBeenCalled();
 	});
