@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
 	checkPermission: vi.fn(),
 	createAuthMiddleware: vi.fn((middleware) => middleware),
 	registerSSOProvider: vi.fn(),
+	select: vi.fn(),
+	trustedOriginsWhere: vi.fn(),
 	updateSSOProvider: vi.fn(),
 	verifyApiKey: vi.fn(),
 	webServerSettingsFindFirst: vi.fn(),
@@ -65,6 +67,7 @@ vi.mock("better-auth/plugins", () => ({
 
 vi.mock("@dokploy/server/db", () => ({
 	db: {
+		select: mocks.select,
 		query: {
 			apikey: {
 				findFirst: mocks.apiKeyFindFirst,
@@ -87,6 +90,9 @@ const { validateRequest } = await import(
 	"../../../../packages/server/src/lib/auth"
 );
 const { shouldBlockEmailPasswordSignIn } = await import(
+	"../../../../packages/server/src/lib/auth"
+);
+const { resolveTrustedOriginsForAuthRequest } = await import(
 	"../../../../packages/server/src/lib/auth"
 );
 
@@ -125,6 +131,16 @@ describe("validateRequest API key sessions", () => {
 			user: userRecord,
 		});
 		mocks.webServerSettingsFindFirst.mockResolvedValue({ enforceSSO: false });
+		mocks.trustedOriginsWhere.mockResolvedValue([
+			{ trustedOrigins: ["https://8.8.8.8"] },
+		]);
+		mocks.select.mockReturnValue({
+			from: () => ({
+				innerJoin: () => ({
+					where: mocks.trustedOriginsWhere,
+				}),
+			}),
+		});
 	});
 
 	it("rejects API key sessions when the key owner lacks api.read", async () => {
@@ -177,6 +193,52 @@ describe("validateRequest API key sessions", () => {
 			},
 			{ api: ["read"] },
 		);
+	});
+});
+
+describe("Better Auth trusted origins", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.webServerSettingsFindFirst.mockResolvedValue({
+			enforceSSO: false,
+			host: "dokploy.example.com",
+			serverIp: "203.0.113.10",
+		});
+		mocks.trustedOriginsWhere.mockResolvedValue([
+			{ trustedOrigins: ["https://8.8.8.8"] },
+		]);
+		mocks.select.mockReturnValue({
+			from: () => ({
+				innerJoin: () => ({
+					where: mocks.trustedOriginsWhere,
+				}),
+			}),
+		});
+	});
+
+	it("does not apply tenant trusted origins to ordinary Better Auth requests", async () => {
+		await expect(
+			resolveTrustedOriginsForAuthRequest(
+				new Request("https://dokploy.example.com/api/auth/callback/sso"),
+			),
+		).resolves.toEqual([
+			"http://203.0.113.10:3000",
+			"https://dokploy.example.com",
+		]);
+		expect(mocks.trustedOriginsWhere).not.toHaveBeenCalled();
+	});
+
+	it("scopes tenant trusted origins to the SSO register transaction", async () => {
+		await expect(
+			resolveTrustedOriginsForAuthRequest(
+				new Request("https://dokploy.example.com/api/auth/sso/register"),
+			),
+		).resolves.toEqual([
+			"http://203.0.113.10:3000",
+			"https://dokploy.example.com",
+			"https://8.8.8.8",
+		]);
+		expect(mocks.trustedOriginsWhere).toHaveBeenCalledTimes(1);
 	});
 });
 

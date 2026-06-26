@@ -40,6 +40,48 @@ export const shouldBlockEmailPasswordSignIn = async (
 	return settings?.enforceSSO === true;
 };
 
+const isSsoRegisterTrustedOriginsRequest = (request: Request | undefined) => {
+	if (!request) return false;
+	try {
+		return new URL(request.url).pathname.endsWith("/sso/register");
+	} catch {
+		return false;
+	}
+};
+
+export const resolveTrustedOriginsForAuthRequest = async (
+	request?: Request,
+) => {
+	try {
+		const tenantTrustedOrigins = isSsoRegisterTrustedOriginsRequest(request)
+			? await getTrustedOrigins()
+			: [];
+
+		if (IS_CLOUD) {
+			return tenantTrustedOrigins;
+		}
+
+		const settings = await getWebServerSettings();
+		if (!settings) return tenantTrustedOrigins;
+		const devOrigins =
+			process.env.NODE_ENV === "development"
+				? [
+						"http://localhost:3000",
+						"https://absolutely-handy-falcon.ngrok-free.app",
+					]
+				: [];
+		return [
+			...(settings?.serverIp ? [`http://${settings?.serverIp}:3000`] : []),
+			...(settings?.host ? [`https://${settings?.host}`] : []),
+			...devOrigins,
+			...tenantTrustedOrigins,
+		];
+	} catch (error) {
+		console.error("Failed to resolve trusted origins:", error);
+		return [];
+	}
+};
+
 const { handler, api } = betterAuth({
 	database: drizzleAdapter(db, {
 		provider: "pg",
@@ -98,33 +140,8 @@ const { handler, api } = betterAuth({
 			}
 		}),
 	},
-	async trustedOrigins() {
-		try {
-			if (IS_CLOUD) {
-				return await getTrustedOrigins();
-			}
-			const [trustedOrigins, settings] = await Promise.all([
-				getTrustedOrigins(),
-				getWebServerSettings(),
-			]);
-			if (!settings) return [];
-			const devOrigins =
-				process.env.NODE_ENV === "development"
-					? [
-							"http://localhost:3000",
-							"https://absolutely-handy-falcon.ngrok-free.app",
-						]
-					: [];
-			return [
-				...(settings?.serverIp ? [`http://${settings?.serverIp}:3000`] : []),
-				...(settings?.host ? [`https://${settings?.host}`] : []),
-				...devOrigins,
-				...trustedOrigins,
-			];
-		} catch (error) {
-			console.error("Failed to resolve trusted origins:", error);
-			return [];
-		}
+	async trustedOrigins(request) {
+		return resolveTrustedOriginsForAuthRequest(request);
 	},
 	emailVerification: {
 		sendOnSignUp: true,
