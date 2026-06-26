@@ -420,6 +420,33 @@ describe("server router assigned-server boundary", () => {
 		});
 	});
 
+	it("requires server update permission before changing build concurrency", async () => {
+		mocks.checkPermission.mockImplementation(async (_ctx, permissions) => {
+			if (
+				JSON.stringify(permissions) === JSON.stringify({ server: ["update"] })
+			) {
+				throw new Error("missing server update");
+			}
+		});
+
+		await expect(
+			createCaller().updateBuildsConcurrency({
+				serverId: "server-1",
+				buildsConcurrency: 2,
+			}),
+		).rejects.toThrow("missing server update");
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			server: ["update"],
+		});
+		expect(mocks.checkPermission).not.toHaveBeenCalledWith(expect.anything(), {
+			server: ["create"],
+		});
+		expect(mocks.findServerById).not.toHaveBeenCalled();
+		expect(mocks.assertBuildsConcurrencyAllowed).not.toHaveBeenCalled();
+		expect(mocks.updateServerById).not.toHaveBeenCalled();
+	});
+
 	it("denies inaccessible default command reads before server metadata use", async () => {
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
 

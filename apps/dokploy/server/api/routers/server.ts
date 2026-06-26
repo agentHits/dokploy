@@ -619,7 +619,7 @@ export const serverRouter = createTRPCRouter({
 				throw error;
 			}
 		}),
-	updateBuildsConcurrency: withPermission("server", "create")
+	updateBuildsConcurrency: withPermission("server", "update")
 		.input(apiUpdateServerBuildsConcurrency)
 		.mutation(async ({ input, ctx }) => {
 			await assertServerAccess(ctx, input.serverId);
