@@ -140,6 +140,9 @@ export default async function handler(
 					},
 				},
 				bitbucket: true,
+				github: true,
+				gitlab: true,
+				gitea: true,
 			},
 		});
 
@@ -151,6 +154,17 @@ export default async function handler(
 			res.status(400).json({
 				message: "Automatic deployments are disabled for this application",
 			});
+			return;
+		}
+
+		if (
+			await rejectUnauthenticatedProviderDeployWebhook(req, res, {
+				github: application.github,
+				gitlab: application.gitlab,
+				bitbucket: application.bitbucket,
+				gitea: application.gitea,
+			})
+		) {
 			return;
 		}
 
