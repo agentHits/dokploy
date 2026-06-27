@@ -261,7 +261,7 @@ export const registryRouter = createTRPCRouter({
 
 				if (isRemoteRegistryTestServer(input.serverId)) {
 					await execAsyncRemote(
-						input.serverId,
+						input.serverId ?? null,
 						safeDockerLoginCommand(
 							registryData.registryUrl,
 							registryData.username,

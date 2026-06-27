@@ -1,3 +1,4 @@
+import type { SignedScheduledQueueJob } from "@dokploy/server/utils/schedules/signed-job";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -127,14 +128,17 @@ describe("signed scheduled job scope", () => {
 			timezone: "UTC",
 		});
 
+		const tamperedJob: Extract<SignedScheduledQueueJob, { type: "schedule" }> =
+			{
+				...(signed as Extract<SignedScheduledQueueJob, { type: "schedule" }>),
+				timezone: "Europe/Moscow",
+			};
+
 		await expect(
-			assertSignedScheduledQueueJob(
-				{
-					...signed,
-					timezone: "Europe/Moscow",
-				},
-				{ operation: "create", now: 2000 },
-			),
+			assertSignedScheduledQueueJob(tamperedJob, {
+				operation: "create",
+				now: 2000,
+			}),
 		).rejects.toThrow(/timezone/i);
 	});
 

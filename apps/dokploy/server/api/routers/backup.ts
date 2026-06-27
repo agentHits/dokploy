@@ -98,7 +98,7 @@ type BackupAction = "create" | "read" | "update" | "delete" | "restore";
 type BackupScheduleWithRelations = Awaited<ReturnType<typeof findBackupById>>;
 type RestoreBackupInput = z.infer<typeof apiRestoreBackup>;
 type BackupAccessCtx = {
-	session: { activeOrganizationId: string };
+	session: { userId: string; activeOrganizationId: string };
 	user: { id: string; role: string };
 };
 
@@ -995,7 +995,10 @@ export const backupRouter = createTRPCRouter({
 					let stdout = "";
 
 					if (isRemoteBackupListingServer(input.serverId)) {
-						const result = await execAsyncRemote(input.serverId, listCommand);
+						const result = await execAsyncRemote(
+							input.serverId ?? null,
+							listCommand,
+						);
 						stdout = result.stdout;
 					} else {
 						const result = await execAsync(listCommand);
