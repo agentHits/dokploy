@@ -76,7 +76,7 @@ const { ssoRouter } = await import("../../server/api/routers/proprietary/sso");
 
 const providerInput = {
 	providerId: "acme-sso",
-	issuer: "https://idp.example.com",
+	issuer: "https://8.8.8.8",
 	domains: ["example.com"],
 	oidcConfig: {
 		clientId: "client-id",
@@ -151,7 +151,9 @@ describe("SSO provider owner boundary", () => {
 		});
 		mocks.ssoProviderFindMany.mockResolvedValue([]);
 		mocks.deleteReturning.mockResolvedValue([{ id: "provider-row-1" }]);
-		mocks.userFindFirst.mockResolvedValue({ trustedOrigins: [] });
+		mocks.userFindFirst.mockResolvedValue({
+			trustedOrigins: ["https://8.8.8.8"],
+		});
 	});
 
 	it.each([
@@ -182,6 +184,41 @@ describe("SSO provider owner boundary", () => {
 				body: expect.objectContaining({
 					organizationId: "org-1",
 					domain: "example.com",
+				}),
+			}),
+		);
+	});
+
+	it("rejects SSO provider registration when the issuer is not tenant trusted", async () => {
+		mocks.userFindFirst.mockResolvedValue({ trustedOrigins: [] });
+
+		await expect(
+			createCaller("owner").register(providerInput),
+		).rejects.toMatchObject({
+			code: "BAD_REQUEST",
+			message:
+				"The Issuer URL is not in the organization's trusted origins list. Please add it in Manage origins before registering.",
+		});
+
+		expect(mocks.registerSSOProvider).not.toHaveBeenCalled();
+	});
+
+	it("allows SSO provider registration when the issuer path uses a trusted origin", async () => {
+		mocks.userFindFirst.mockResolvedValue({
+			trustedOrigins: ["https://8.8.8.8"],
+		});
+
+		await expect(
+			createCaller("owner").register({
+				...providerInput,
+				issuer: "https://8.8.8.8/realms/acme",
+			}),
+		).resolves.toEqual({ success: true });
+
+		expect(mocks.registerSSOProvider).toHaveBeenCalledWith(
+			expect.objectContaining({
+				body: expect.objectContaining({
+					issuer: "https://8.8.8.8/realms/acme",
 				}),
 			}),
 		);
@@ -417,6 +454,8 @@ describe("SSO provider owner boundary", () => {
 	});
 
 	it("stores only public HTTPS tenant trusted origins", async () => {
+		mocks.userFindFirst.mockResolvedValue({ trustedOrigins: [] });
+
 		await expect(
 			createCaller("owner").addTrustedOrigin({
 				origin: "https://8.8.8.8",

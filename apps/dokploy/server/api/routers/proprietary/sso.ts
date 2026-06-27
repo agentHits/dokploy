@@ -217,6 +217,45 @@ const resolveTenantTrustedOriginInput = async (origin: string) => {
 	}
 };
 
+const assertIssuerInTenantTrustedOrigins = async (
+	organizationId: string,
+	issuer: string,
+	message: string,
+) => {
+	let issuerOrigin: string;
+	try {
+		issuerOrigin = new URL(normalizeTrustedOrigin(issuer)).origin;
+	} catch {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Issuer URL must be a valid URL",
+		});
+	}
+	const ownerId = await getOrganizationOwnerId(organizationId);
+	if (!ownerId) {
+		throw new TRPCError({
+			code: "INTERNAL_SERVER_ERROR",
+			message: "Organization owner not found",
+		});
+	}
+	const ownerUser = await db.query.user.findFirst({
+		where: eq(user.id, ownerId),
+		columns: { trustedOrigins: true },
+	});
+	const trustedOrigins = await filterTenantTrustedOrigins(
+		ownerUser?.trustedOrigins ?? [],
+	);
+	const isInTrustedOrigins = trustedOrigins.some(
+		(origin) => origin.toLowerCase() === issuerOrigin.toLowerCase(),
+	);
+	if (!isInTrustedOrigins) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message,
+		});
+	}
+};
+
 export const ssoRouter = createTRPCRouter({
 	showSignInWithSSO: publicProcedure.query(async () => {
 		if (IS_CLOUD) {
@@ -361,33 +400,11 @@ export const ssoRouter = createTRPCRouter({
 				normalizeTrustedOrigin(existing.issuer) !==
 				normalizeTrustedOrigin(input.issuer);
 			if (issuerChanged) {
-				const ownerId = await getOrganizationOwnerId(
+				await assertIssuerInTenantTrustedOrigins(
 					ctx.session.activeOrganizationId,
+					input.issuer,
+					"The new Issuer URL is not in the organization's trusted origins list. Please add it in Manage origins before saving.",
 				);
-				if (!ownerId) {
-					throw new TRPCError({
-						code: "INTERNAL_SERVER_ERROR",
-						message: "Organization owner not found",
-					});
-				}
-				const ownerUser = await db.query.user.findFirst({
-					where: eq(user.id, ownerId),
-					columns: { trustedOrigins: true },
-				});
-				const trustedOrigins = await filterTenantTrustedOrigins(
-					ownerUser?.trustedOrigins ?? [],
-				);
-				const newOrigin = normalizeTrustedOrigin(input.issuer);
-				const isInTrustedOrigins = trustedOrigins.some(
-					(o) => o.toLowerCase() === newOrigin.toLowerCase(),
-				);
-				if (!isInTrustedOrigins) {
-					throw new TRPCError({
-						code: "BAD_REQUEST",
-						message:
-							"The new Issuer URL is not in the organization's trusted origins list. Please add it in Manage origins before saving.",
-					});
-				}
 			}
 
 			const domain = input.domains.join(",");
@@ -493,6 +510,12 @@ export const ssoRouter = createTRPCRouter({
 				}
 			}
 			const domain = input.domains.join(",");
+
+			await assertIssuerInTenantTrustedOrigins(
+				organizationId,
+				input.issuer,
+				"The Issuer URL is not in the organization's trusted origins list. Please add it in Manage origins before registering.",
+			);
 
 			await auth.registerSSOProvider({
 				body: {

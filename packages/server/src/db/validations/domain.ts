@@ -46,7 +46,7 @@ const isValidTraefikPath = (path: string | null | undefined) => {
 	);
 };
 
-const hostSchema = z
+export const domainHostSchema = z
 	.string()
 	.min(1, { message: "Add a hostname" })
 	.refine((val) => val === val.trim(), {
@@ -108,7 +108,7 @@ const nullableTraefikMiddlewareReferencesSchema = z.preprocess(
 
 export const domain = z
 	.object({
-		host: hostSchema,
+		host: domainHostSchema,
 		path: pathSchema,
 		internalPath: pathSchema,
 		stripPath: z.boolean().optional(),
@@ -154,7 +154,7 @@ export const domain = z
 
 export const domainCompose = z
 	.object({
-		host: hostSchema,
+		host: domainHostSchema,
 		path: pathSchema,
 		internalPath: pathSchema,
 		stripPath: z.boolean().optional(),
