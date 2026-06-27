@@ -25,14 +25,18 @@ const mocks = vi.hoisted(() => ({
 	findRedisById: vi.fn(),
 	findServerById: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
+	isCloud: true,
 	myQueueGetJobs: vi.fn(),
 	removeDeployment: vi.fn(),
+	resolveServicePath: vi.fn(),
 	serverFindMany: vi.fn(),
 	updateDeploymentStatus: vi.fn(),
 }));
 
 vi.mock("@dokploy/server", () => ({
-	IS_CLOUD: true,
+	get IS_CLOUD() {
+		return mocks.isCloud;
+	},
 	execAsync: mocks.execAsync,
 	execAsyncRemote: mocks.execAsyncRemote,
 	findAllDeploymentsByApplicationId: mocks.findAllDeploymentsByApplicationId,
@@ -52,7 +56,7 @@ vi.mock("@dokploy/server", () => ({
 	findRedisById: mocks.findRedisById,
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
 	removeDeployment: mocks.removeDeployment,
-	resolveServicePath: vi.fn(),
+	resolveServicePath: mocks.resolveServicePath,
 	updateDeploymentStatus: mocks.updateDeploymentStatus,
 }));
 
@@ -112,6 +116,7 @@ const createCaller = () =>
 describe("deployment router assigned-server boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mocks.isCloud = true;
 		mocks.checkPermission.mockResolvedValue(undefined);
 		mocks.checkServicePermissionAndAccess.mockResolvedValue(undefined);
 		mocks.findMemberByUserId.mockResolvedValue({
@@ -133,6 +138,7 @@ describe("deployment router assigned-server boundary", () => {
 		mocks.fetchDeployApiJobs.mockImplementation((serverId: string) =>
 			Promise.resolve([{ id: `${serverId}-job`, serverId }]),
 		);
+		mocks.resolveServicePath.mockResolvedValue(undefined);
 		mocks.findDeploymentById.mockResolvedValue({
 			deploymentId: "deployment-1",
 			logPath: "/tmp/deployment.log",
@@ -162,6 +168,51 @@ describe("deployment router assigned-server boundary", () => {
 
 		expect(mocks.fetchDeployApiJobs).toHaveBeenCalledTimes(1);
 		expect(mocks.fetchDeployApiJobs).toHaveBeenCalledWith("server-1");
+	});
+
+	it("filters self-hosted deployment queue jobs to the active organization", async () => {
+		mocks.isCloud = false;
+		mocks.myQueueGetJobs.mockResolvedValue([
+			{
+				id: "job-1",
+				name: "deployments",
+				data: { applicationId: "app-1", applicationType: "application" },
+				timestamp: 200,
+				getState: vi.fn().mockResolvedValue("waiting"),
+			},
+			{
+				id: "job-2",
+				name: "deployments",
+				data: { applicationId: "foreign-app", applicationType: "application" },
+				timestamp: 100,
+				getState: vi.fn().mockResolvedValue("waiting"),
+			},
+		]);
+		mocks.resolveServicePath.mockImplementation(
+			(_orgId: string, data: Record<string, unknown>) =>
+				Promise.resolve(
+					data.applicationId === "app-1"
+						? { href: "/dashboard/project/project-1", label: "Application" }
+						: { href: null, label: "Application" },
+				),
+		);
+
+		await expect(createCaller().queueList()).resolves.toEqual([
+			{
+				id: "job-1",
+				name: "deployments",
+				data: { applicationId: "app-1", applicationType: "application" },
+				timestamp: 200,
+				finishedOn: undefined,
+				processedOn: undefined,
+				failedReason: undefined,
+				state: "waiting",
+				servicePath: {
+					href: "/dashboard/project/project-1",
+					label: "Application",
+				},
+			},
+		]);
 	});
 
 	it("denies schedule-backed deployment logs on inaccessible servers before remote tail", async () => {

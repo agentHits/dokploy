@@ -64,6 +64,21 @@ const signedDeploymentClaimSchema = z.object({
 	signature: z.string().min(1),
 });
 
+const signedDeploymentJobsReadScopeSchema = z.object({
+	version: z.literal(1),
+	operation: z.literal("read-jobs"),
+	serverId: z.string().min(1),
+	organizationId: z.string().nullable(),
+	expiresAt: z.number().int(),
+	nonce: z.string().min(1),
+});
+
+export const signedDeploymentJobsReadSchema = z.object({
+	serverId: z.string().min(1),
+	scope: signedDeploymentJobsReadScopeSchema,
+	signature: z.string().min(1),
+});
+
 export const signedDeployJobSchema = deployJobSchema.and(
 	signedDeploymentClaimSchema,
 );

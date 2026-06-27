@@ -41,6 +41,7 @@ export type DeploymentCancelJob =
 	| { composeId: string; applicationType: "compose" };
 
 export type DeploymentJobOperation = "deploy" | "cancel";
+export type DeploymentJobsReadOperation = "read-jobs";
 
 export type DeploymentJobScope = {
 	version: 1;
@@ -62,6 +63,21 @@ export type SignedDeploymentQueueJob = DeploymentQueueJob & {
 
 export type SignedDeploymentCancelJob = DeploymentCancelJob & {
 	scope: DeploymentJobScope;
+	signature: string;
+};
+
+export type DeploymentJobsReadScope = {
+	version: 1;
+	operation: DeploymentJobsReadOperation;
+	serverId: string;
+	organizationId: string | null;
+	expiresAt: number;
+	nonce: string;
+};
+
+export type SignedDeploymentJobsReadRequest = {
+	serverId: string;
+	scope: DeploymentJobsReadScope;
 	signature: string;
 };
 
@@ -105,6 +121,21 @@ const canonicalScope = (scope: DeploymentJobScope) =>
 const signScope = (scope: DeploymentJobScope) =>
 	createHmac("sha256", getSigningKey())
 		.update(canonicalScope(scope))
+		.digest("base64url");
+
+const canonicalReadScope = (scope: DeploymentJobsReadScope) =>
+	JSON.stringify({
+		version: scope.version,
+		operation: scope.operation,
+		serverId: scope.serverId,
+		organizationId: scope.organizationId,
+		expiresAt: scope.expiresAt,
+		nonce: scope.nonce,
+	});
+
+const signReadScope = (scope: DeploymentJobsReadScope) =>
+	createHmac("sha256", getSigningKey())
+		.update(canonicalReadScope(scope))
 		.digest("base64url");
 
 const assertEqual = (field: string, expected: unknown, actual: unknown) => {
@@ -216,6 +247,23 @@ const buildScope = async (
 	};
 };
 
+const buildReadScope = async (
+	serverId: string,
+	options: ScopeOptions,
+): Promise<DeploymentJobsReadScope> => {
+	const now = options.now ?? Date.now();
+	const expiresAt = now + (options.ttlMs ?? DEFAULT_SCOPE_TTL_MS);
+	const server = await findServerById(serverId);
+	return {
+		version: 1,
+		operation: "read-jobs",
+		serverId: server.serverId,
+		organizationId: server.organizationId,
+		expiresAt,
+		nonce: randomUUID(),
+	};
+};
+
 const assertScopeMatchesJob = (
 	job: DeploymentQueueJob | DeploymentCancelJob,
 	scope: DeploymentJobScope,
@@ -243,6 +291,13 @@ const assertScopeMatchesJob = (
 	}
 };
 
+const assertReadScopeMatchesRequest = (
+	request: SignedDeploymentJobsReadRequest,
+) => {
+	assertEqual("operation", request.scope.operation, "read-jobs");
+	assertEqual("server scope", request.scope.serverId, request.serverId);
+};
+
 const verifySignature = (
 	job: SignedDeploymentQueueJob | SignedDeploymentCancelJob,
 ) => {
@@ -254,6 +309,18 @@ const verifySignature = (
 		!timingSafeEqual(expectedBuffer, actualBuffer)
 	) {
 		throw new Error("Deployment job scoped claim signature is invalid");
+	}
+};
+
+const verifyReadSignature = (request: SignedDeploymentJobsReadRequest) => {
+	const expected = signReadScope(request.scope);
+	const expectedBuffer = Buffer.from(expected);
+	const actualBuffer = Buffer.from(request.signature);
+	if (
+		expectedBuffer.length !== actualBuffer.length ||
+		!timingSafeEqual(expectedBuffer, actualBuffer)
+	) {
+		throw new Error("Deployment jobs read scoped claim signature is invalid");
 	}
 };
 
@@ -278,6 +345,18 @@ export const signDeploymentCancelJob = async (
 		...job,
 		scope,
 		signature: signScope(scope),
+	};
+};
+
+export const signDeploymentJobsReadRequest = async (
+	serverId: string,
+	options: ScopeOptions = {},
+): Promise<SignedDeploymentJobsReadRequest> => {
+	const scope = await buildReadScope(serverId, options);
+	return {
+		serverId,
+		scope,
+		signature: signReadScope(scope),
 	};
 };
 
@@ -331,4 +410,28 @@ export const assertSignedDeploymentCancelJob = async (
 
 	const { scope: _scope, signature: _signature, ...cancelJob } = job;
 	return cancelJob;
+};
+
+export const assertSignedDeploymentJobsReadRequest = async (
+	request: SignedDeploymentJobsReadRequest,
+	options: ScopeOptions & { requireFreshScope?: boolean } = {},
+): Promise<string> => {
+	assertReadScopeMatchesRequest(request);
+	verifyReadSignature(request);
+	if (request.scope.expiresAt <= (options.now ?? Date.now())) {
+		throw new Error("Deployment jobs read scoped claim has expired");
+	}
+	if (options.requireFreshScope ?? true) {
+		const freshScope = await buildReadScope(request.serverId, {
+			...options,
+			ttlMs: request.scope.expiresAt - (options.now ?? Date.now()),
+		});
+		assertEqual("server scope", freshScope.serverId, request.scope.serverId);
+		assertEqual(
+			"organization scope",
+			freshScope.organizationId,
+			request.scope.organizationId,
+		);
+	}
+	return request.serverId;
 };

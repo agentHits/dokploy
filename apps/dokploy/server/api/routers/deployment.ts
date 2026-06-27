@@ -199,15 +199,24 @@ export const deploymentRouter = createTRPCRouter({
 			rows = jobRows;
 		}
 
-		return Promise.all(
-			rows.map(async (row) => ({
-				...row,
-				servicePath: await resolveServicePath(
+		const rowsWithServicePath = await Promise.all(
+			rows.map(async (row) => {
+				const servicePath = await resolveServicePath(
 					orgId,
 					(row.data ?? {}) as Record<string, unknown>,
-				),
-			})),
+				);
+				return {
+					...row,
+					servicePath,
+				};
+			}),
 		);
+
+		if (IS_CLOUD) {
+			return rowsWithServicePath;
+		}
+
+		return rowsWithServicePath.filter((row) => row.servicePath.href !== null);
 	}),
 
 	allByType: protectedProcedure

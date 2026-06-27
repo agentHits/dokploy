@@ -2,6 +2,7 @@ import { findServerById } from "@dokploy/server";
 import {
 	type DeploymentQueueJob,
 	signDeploymentCancelJob,
+	signDeploymentJobsReadRequest,
 	signDeploymentQueueJob,
 } from "@dokploy/server/utils/deployments/signed-job";
 import type { DeploymentJob } from "../queues/queue-types";
@@ -91,15 +92,15 @@ export const fetchDeployApiJobs = async (
 	serverId: string,
 ): Promise<QueueJobRow[]> => {
 	try {
-		const res = await fetch(
-			`${process.env.SERVER_URL}/jobs?serverId=${encodeURIComponent(serverId)}`,
-			{
-				headers: {
-					"Content-Type": "application/json",
-					"X-API-Key": process.env.API_KEY || "NO-DEFINED",
-				},
+		const signedRequest = await signDeploymentJobsReadRequest(serverId);
+		const res = await fetch(`${process.env.SERVER_URL}/jobs`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"X-API-Key": process.env.API_KEY || "NO-DEFINED",
 			},
-		);
+			body: JSON.stringify(signedRequest),
+		});
 		if (!res.ok) return [];
 		return (await res.json()) as QueueJobRow[];
 	} catch {

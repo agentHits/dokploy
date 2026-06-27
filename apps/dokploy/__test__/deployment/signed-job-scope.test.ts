@@ -16,8 +16,10 @@ vi.mock("@dokploy/server", () => ({
 
 const {
 	assertSignedDeploymentCancelJob,
+	assertSignedDeploymentJobsReadRequest,
 	assertSignedDeploymentQueueJob,
 	signDeploymentCancelJob,
+	signDeploymentJobsReadRequest,
 	signDeploymentQueueJob,
 } = await import("@dokploy/server/utils/deployments/signed-job");
 
@@ -53,6 +55,7 @@ describe("signed deployment job scope", () => {
 		});
 		mocks.findServerById.mockResolvedValue({
 			serverId: "server-1",
+			organizationId: "org-1",
 			serverStatus: "active",
 		});
 	});
@@ -268,5 +271,41 @@ describe("signed deployment job scope", () => {
 				now: 2000,
 			}),
 		).resolves.toEqual(job);
+	});
+
+	it("signs deployment job read requests with server and organization scope", async () => {
+		const signed = await signDeploymentJobsReadRequest("server-1", {
+			now: 1000,
+			ttlMs: 60_000,
+		});
+
+		expect(signed.scope).toMatchObject({
+			operation: "read-jobs",
+			serverId: "server-1",
+			organizationId: "org-1",
+			expiresAt: 61_000,
+			nonce: expect.any(String),
+		});
+		await expect(
+			assertSignedDeploymentJobsReadRequest(signed, {
+				now: 2000,
+			}),
+		).resolves.toBe("server-1");
+	});
+
+	it("rejects deployment job read requests when the server id is tampered", async () => {
+		const signed = await signDeploymentJobsReadRequest("server-1", {
+			now: 1000,
+		});
+
+		await expect(
+			assertSignedDeploymentJobsReadRequest(
+				{
+					...signed,
+					serverId: "server-2",
+				},
+				{ now: 2000 },
+			),
+		).rejects.toThrow(/server scope/i);
 	});
 });

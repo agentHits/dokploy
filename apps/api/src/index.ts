@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import "dotenv/config";
 import {
 	assertSignedDeploymentCancelJob,
+	assertSignedDeploymentJobsReadRequest,
 	assertSignedDeploymentQueueJob,
 } from "@dokploy/server/utils/deployments/signed-job";
 import { zValidator } from "@hono/zod-validator";
@@ -14,6 +15,7 @@ import {
 	type DeployJob,
 	signedCancelDeploymentSchema,
 	signedDeployJobSchema,
+	signedDeploymentJobsReadSchema,
 } from "./schema.js";
 import { fetchDeploymentJobs } from "./service.js";
 import { deploy } from "./utils.js";
@@ -216,28 +218,33 @@ app.get("/health", async (c) => {
 	return c.json({ status: "ok" });
 });
 
-// List deployment jobs (Inngest runs) for a server - same shape as BullMQ queue for the UI
-app.get("/jobs", async (c) => {
-	const serverId = c.req.query("serverId");
-	if (!serverId) {
-		return c.json({ message: "serverId is required" }, 400);
-	}
+app.post(
+	"/jobs",
+	zValidator("json", signedDeploymentJobsReadSchema),
+	async (c) => {
+		const signedData = c.req.valid("json");
+		const serverId = await assertSignedDeploymentJobsReadRequest(signedData);
+		consumeDeploymentSignature(
+			signedData.signature,
+			signedData.scope.expiresAt,
+		);
 
-	try {
-		const rows = await fetchDeploymentJobs(serverId);
-		return c.json(rows);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		if (message.includes("INNGEST_BASE_URL")) {
-			return c.json(
-				{ message: "INNGEST_BASE_URL is required to list deployment jobs" },
-				503,
-			);
+		try {
+			const rows = await fetchDeploymentJobs(serverId);
+			return c.json(rows);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (message.includes("INNGEST_BASE_URL")) {
+				return c.json(
+					{ message: "INNGEST_BASE_URL is required to list deployment jobs" },
+					503,
+				);
+			}
+			logger.error({ serverId, error }, "Failed to fetch jobs from Inngest");
+			return c.json([], 200);
 		}
-		logger.error({ serverId, error }, "Failed to fetch jobs from Inngest");
-		return c.json([], 200);
-	}
-});
+	},
+);
 
 // Serve Inngest functions endpoint
 app.on(
