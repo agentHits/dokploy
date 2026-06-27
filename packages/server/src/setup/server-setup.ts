@@ -20,6 +20,10 @@ import {
 import slug from "slugify";
 import { Client } from "ssh2";
 import { recreateDirectory } from "../utils/filesystem/directory";
+import {
+	assertServerDestinationAllowed,
+	resolveServerDestinationHost,
+} from "../utils/servers/destination";
 import { setupMonitoring } from "./monitoring-setup";
 
 const generateToken = () => {
@@ -49,6 +53,7 @@ export const serverSetup = async (
 	onData?: (data: any) => void,
 ) => {
 	const server = await findServerById(serverId);
+	await assertServerDestinationAllowed(server);
 	const { LOGS_PATH } = paths();
 
 	const slugifyName = slugify(`server ${server.name}`);
@@ -269,6 +274,7 @@ const installRequirements = async (
 		onData?.("❌ No SSH Key found, please assign one to this server");
 		throw new Error("No SSH Key found");
 	}
+	const host = await resolveServerDestinationHost(server);
 
 	const isBuildServer = server.serverType === "build";
 
@@ -338,7 +344,7 @@ const installRequirements = async (
 				}
 			})
 			.connect({
-				host: server.ipAddress,
+				host,
 				port: server.port,
 				username: server.username,
 				privateKey: server.sshKey?.privateKey,

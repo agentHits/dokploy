@@ -11,6 +11,7 @@ import {
 	checkServicePermissionAndAccess,
 } from "@dokploy/server/services/permission";
 import { encodeBase64 } from "@dokploy/server/utils/docker/utils";
+import { resolveServerDestinationHost } from "@dokploy/server/utils/servers/destination";
 import {
 	type DeploymentLogPathRoot,
 	readValidDeploymentLogPath,
@@ -248,6 +249,7 @@ export const setupDeploymentLogsWebSocketServer = (
 					return;
 				}
 
+				const host = await resolveServerDestinationHost(server);
 				sshClient = new Client();
 				sshClient
 					.on("ready", () => {
@@ -287,7 +289,7 @@ export const setupDeploymentLogsWebSocketServer = (
 						}
 					})
 					.connect({
-						host: server.ipAddress,
+						host,
 						port: server.port,
 						username: server.username,
 						privateKey: server.sshKey?.privateKey,

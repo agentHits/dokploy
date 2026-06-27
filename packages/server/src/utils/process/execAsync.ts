@@ -1,6 +1,7 @@
 import { exec, execFile } from "node:child_process";
 import util from "node:util";
 import { findServerById } from "@dokploy/server/services/server";
+import { resolveServerDestinationHost } from "@dokploy/server/utils/servers/destination";
 import { Client } from "ssh2";
 import { ExecError } from "./ExecError";
 
@@ -147,6 +148,7 @@ export const execAsyncRemote = async (
 	if (!serverId) return { stdout: "", stderr: "" };
 	const server = await findServerById(serverId);
 	if (!server.sshKeyId) throw new Error("No SSH key available for this server");
+	const host = await resolveServerDestinationHost(server);
 
 	let stdout = "";
 	let stderr = "";
@@ -240,7 +242,7 @@ export const execAsyncRemote = async (
 				}
 			})
 			.connect({
-				host: server.ipAddress,
+				host,
 				port: server.port,
 				username: server.username,
 				privateKey: server.sshKey?.privateKey,

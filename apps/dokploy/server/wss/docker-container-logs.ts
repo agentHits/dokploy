@@ -1,5 +1,6 @@
 import type http from "node:http";
 import { findServerById, IS_CLOUD, validateRequest } from "@dokploy/server";
+import { resolveServerDestinationHost } from "@dokploy/server/utils/servers/destination";
 import { spawn } from "node-pty";
 import { Client } from "ssh2";
 import { WebSocketServer } from "ws";
@@ -100,6 +101,7 @@ export const setupDockerContainerLogsWebSocketServer = (
 				}
 
 				if (!server.sshKeyId) return;
+				const host = await resolveServerDestinationHost(server);
 				const client = new Client();
 				client
 					.once("ready", () => {
@@ -142,7 +144,7 @@ export const setupDockerContainerLogsWebSocketServer = (
 						client.end();
 					})
 					.connect({
-						host: server.ipAddress,
+						host,
 						port: server.port,
 						username: server.username,
 						privateKey: server.sshKey?.privateKey,

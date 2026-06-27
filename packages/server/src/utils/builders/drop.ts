@@ -4,6 +4,7 @@ import { paths } from "@dokploy/server/constants";
 import type { Application } from "@dokploy/server/services/application";
 import { findServerById } from "@dokploy/server/services/server";
 import { resolveFilePathInsideDirectory } from "@dokploy/server/utils/filesystem/safe-path";
+import { resolveServerDestinationHost } from "@dokploy/server/utils/servers/destination";
 import AdmZip from "adm-zip";
 import { Client, type SFTPWrapper } from "ssh2";
 import {
@@ -115,6 +116,7 @@ export const unzipDrop = async (zipFile: File, application: Application) => {
 const getSFTPConnection = async (serverId: string): Promise<SFTPWrapper> => {
 	const server = await findServerById(serverId);
 	if (!server.sshKeyId) throw new Error("No SSH key available for this server");
+	const host = await resolveServerDestinationHost(server);
 
 	return new Promise((resolve, reject) => {
 		const conn = new Client();
@@ -126,7 +128,7 @@ const getSFTPConnection = async (serverId: string): Promise<SFTPWrapper> => {
 				});
 			})
 			.connect({
-				host: server.ipAddress,
+				host,
 				port: server.port,
 				username: server.username,
 				privateKey: server.sshKey?.privateKey,

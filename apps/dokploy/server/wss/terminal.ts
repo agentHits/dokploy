@@ -5,6 +5,7 @@ import {
 	IS_CLOUD,
 	validateRequest,
 } from "@dokploy/server";
+import { resolveServerDestinationHost } from "@dokploy/server/utils/servers/destination";
 import { publicIpv4, publicIpv6 } from "public-ip";
 import { Client, type ConnectConfig } from "ssh2";
 import { WebSocketServer } from "ws";
@@ -172,8 +173,9 @@ export const setupTerminalWebSocketServer = (
 				throw new Error("No SSH key available for this server");
 			}
 
+			const resolvedHost = await resolveServerDestinationHost(server);
 			connectionDetails = {
-				host,
+				host: resolvedHost,
 				port,
 				username,
 				privateKey: sshKey?.privateKey,

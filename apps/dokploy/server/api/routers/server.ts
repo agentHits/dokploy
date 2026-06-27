@@ -26,6 +26,7 @@ import { checkPermission } from "@dokploy/server/services/permission";
 import { hasValidLicense } from "@dokploy/server/services/proprietary/license-key";
 import { assertSshKeyAccess } from "@dokploy/server/services/ssh-key";
 import { isRedactedSecretValue } from "@dokploy/server/utils/security/redaction";
+import { assertServerDestinationAllowed } from "@dokploy/server/utils/servers/destination";
 import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
 import { TRPCError } from "@trpc/server";
 import { observable } from "@trpc/server/observable";
@@ -129,6 +130,22 @@ const assertServerExecuteAllowed = async (ctx: {
 	await checkPermission(ctx, { server: ["execute"] });
 };
 
+const assertServerCloudDestinationAllowed = async (input: {
+	ipAddress: string;
+}) => {
+	try {
+		await assertServerDestinationAllowed(input);
+	} catch (error) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message:
+				error instanceof Error
+					? error.message
+					: "Server address is not allowed in cloud deployments",
+		});
+	}
+};
+
 const buildMetricsRequest = ({
 	host,
 	port,
@@ -183,6 +200,7 @@ export const serverRouter = createTRPCRouter({
 						message: "You cannot create more servers",
 					});
 				}
+				await assertServerCloudDestinationAllowed(input);
 				await assertServerSshKeyUseAllowed(ctx, input.sshKeyId);
 				const project = await createServer(
 					input,
@@ -595,6 +613,7 @@ export const serverRouter = createTRPCRouter({
 				if (input.command !== undefined) {
 					await assertServerExecuteAllowed(ctx);
 				}
+				await assertServerCloudDestinationAllowed(input);
 				const { command, ...serverData } = input;
 				const currentServer = await updateServerById(input.serverId, {
 					...serverData,
