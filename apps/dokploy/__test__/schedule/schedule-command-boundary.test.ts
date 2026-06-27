@@ -85,6 +85,10 @@ describe("schedule command boundary", () => {
 		expect(command).toContain(
 			"docker exec container-one bash -c \"echo 'done'; touch /tmp/pwn \\$(id)\"",
 		);
+		expect(command).toContain(
+			"Running schedule command for application container container-one",
+		);
+		expect(command).not.toContain("Running command:");
 		expect(command).toContain(">> '/tmp/deployment log;id.log'");
 		expect(command).not.toMatch(/(^|[^\\])\$\(/);
 		expect(command).not.toContain("bash -c 'echo 'done'; touch /tmp/pwn");

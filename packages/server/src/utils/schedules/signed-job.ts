@@ -35,6 +35,7 @@ export type ScheduledJobScope = {
 	type: ScheduledQueueJob["type"];
 	objectId: string;
 	cronSchedule: string;
+	timezone: string | null;
 	serverId: string | null;
 	organizationId: string | null;
 	expiresAt: number;
@@ -78,6 +79,7 @@ const canonicalScope = (scope: ScheduledJobScope) =>
 		type: scope.type,
 		objectId: scope.objectId,
 		cronSchedule: scope.cronSchedule,
+		timezone: scope.timezone,
 		serverId: scope.serverId,
 		organizationId: scope.organizationId,
 		expiresAt: scope.expiresAt,
@@ -174,6 +176,7 @@ const buildScope = async (
 			type: job.type,
 			objectId: job.backupId,
 			cronSchedule: job.cronSchedule,
+			timezone: null,
 			serverId,
 			organizationId: server.organizationId,
 			expiresAt,
@@ -191,6 +194,7 @@ const buildScope = async (
 			type: job.type,
 			objectId: job.serverId,
 			cronSchedule: job.cronSchedule,
+			timezone: null,
 			serverId: job.serverId,
 			organizationId: server.organizationId,
 			expiresAt,
@@ -213,6 +217,7 @@ const buildScope = async (
 			type: job.type,
 			objectId: job.scheduleId,
 			cronSchedule: job.cronSchedule,
+			timezone: job.timezone ?? null,
 			serverId,
 			organizationId: getScheduleOrganizationId(schedule),
 			expiresAt,
@@ -238,6 +243,7 @@ const buildScope = async (
 		type: job.type,
 		objectId: job.volumeBackupId,
 		cronSchedule: job.cronSchedule,
+		timezone: null,
 		serverId,
 		organizationId: service?.environment?.project?.organizationId ?? null,
 		expiresAt,
@@ -252,6 +258,11 @@ const assertScopeMatchesJob = (
 	assertEqual("operation", scope.operation, options.operation);
 	assertEqual("type", scope.type, job.type);
 	assertEqual("cron schedule", scope.cronSchedule, job.cronSchedule);
+	assertEqual(
+		"timezone",
+		scope.timezone,
+		job.type === "schedule" ? (job.timezone ?? null) : null,
+	);
 	if (job.type === "backup") {
 		assertEqual("object id", scope.objectId, job.backupId);
 	} else if (job.type === "server") {

@@ -91,7 +91,9 @@ export const runCommand = async (scheduleId: string) => {
 					serverId,
 					`
 					set -e
-					echo ${quoteShellArg(`Running command: ${dockerExecCommand}`)} >> ${quotedLogPath};
+					echo ${quoteShellArg(
+						`Running schedule command for ${scheduleType} container ${containerId}`,
+					)} >> ${quotedLogPath};
 					${dockerExecCommand} >> ${quotedLogPath} 2>> ${quotedLogPath} || { 
 						echo "❌ Command failed" >> ${quotedLogPath};
 						exit 1;
@@ -115,7 +117,7 @@ export const runCommand = async (scheduleId: string) => {
 					return;
 				}
 				writeStream.write(
-					`docker exec ${containerId} ${shellType} -c ${command}\n`,
+					`Running schedule command for ${scheduleType} container ${containerId}\n`,
 				);
 				await spawnAsync(
 					"docker",

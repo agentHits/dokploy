@@ -34,6 +34,7 @@ export const signedJobQueueSchema = jobQueueSchema.and(
 			type: z.enum(["backup", "server", "schedule", "volume-backup"]),
 			objectId: z.string().min(1),
 			cronSchedule: z.string(),
+			timezone: z.string().nullable(),
 			serverId: z.string().nullable(),
 			organizationId: z.string().nullable(),
 			expiresAt: z.number().int(),

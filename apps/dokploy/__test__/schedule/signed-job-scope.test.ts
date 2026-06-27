@@ -67,6 +67,7 @@ describe("signed scheduled job scope", () => {
 			objectId: "server-1",
 			serverId: "server-1",
 			organizationId: "org-1",
+			timezone: null,
 			expiresAt: 61_000,
 		});
 		await expect(
@@ -99,6 +100,42 @@ describe("signed scheduled job scope", () => {
 				{ operation: "create", now: 2000 },
 			),
 		).rejects.toThrow(/object id/i);
+	});
+
+	it("rejects schedule jobs when timezone is tampered", async () => {
+		mocks.findScheduleById.mockResolvedValue({
+			scheduleId: "schedule-1",
+			cronExpression: "0 0 * * *",
+			enabled: true,
+			timezone: "UTC",
+			organizationId: "org-1",
+			application: {
+				serverId: "server-1",
+			},
+		});
+		const signed = await signScheduledQueueJob(
+			{
+				type: "schedule",
+				scheduleId: "schedule-1",
+				cronSchedule: "0 0 * * *",
+				timezone: "UTC",
+			},
+			{ operation: "create", now: 1000 },
+		);
+
+		expect(signed.scope).toMatchObject({
+			timezone: "UTC",
+		});
+
+		await expect(
+			assertSignedScheduledQueueJob(
+				{
+					...signed,
+					timezone: "Europe/Moscow",
+				},
+				{ operation: "create", now: 2000 },
+			),
+		).rejects.toThrow(/timezone/i);
 	});
 
 	it("fails closed without a distinct schedule signing key", async () => {
