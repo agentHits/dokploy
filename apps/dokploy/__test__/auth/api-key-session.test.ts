@@ -258,6 +258,41 @@ describe("Better Auth trusted origins", () => {
 		]);
 		expect(mocks.trustedOriginsWhere).toHaveBeenCalledTimes(1);
 	});
+
+	it("skips database-backed origins during the Next production build", async () => {
+		vi.stubEnv("NEXT_PHASE", "phase-production-build");
+
+		try {
+			await expect(
+				resolveTrustedOriginsForAuthRequest(
+					new Request("https://dokploy.example.com/api/auth/sso/register"),
+				),
+			).resolves.toEqual([]);
+		} finally {
+			vi.unstubAllEnvs();
+		}
+
+		expect(mocks.webServerSettingsFindFirst).not.toHaveBeenCalled();
+		expect(mocks.trustedOriginsWhere).not.toHaveBeenCalled();
+	});
+
+	it("skips database-backed origins during the build-next lifecycle", async () => {
+		vi.stubEnv("npm_lifecycle_event", "build-next");
+		vi.stubEnv("npm_lifecycle_script", "next build --webpack");
+
+		try {
+			await expect(
+				resolveTrustedOriginsForAuthRequest(
+					new Request("https://dokploy.example.com/api/auth/sso/register"),
+				),
+			).resolves.toEqual([]);
+		} finally {
+			vi.unstubAllEnvs();
+		}
+
+		expect(mocks.webServerSettingsFindFirst).not.toHaveBeenCalled();
+		expect(mocks.trustedOriginsWhere).not.toHaveBeenCalled();
+	});
 });
 
 describe("Better Auth SSO enforcement", () => {
