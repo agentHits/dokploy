@@ -15,12 +15,14 @@ The installer is fork-specific and does not patch the upstream
 
 ## Requirements
 
-- Fresh Linux VPS with root SSH access.
+- Fresh x86_64 / amd64 Linux VPS with root SSH access.
 - Ports `80`, `443`, and `3000` free.
 - Public network access to GitHub, GHCR, Docker, Traefik, Postgres, and Redis
   images.
 - Default dependency images: `traefik:v3.7.5`, `postgres:18.4`, and
   `redis:8.8.0`.
+- The current AgentHits image workflow publishes `linux/amd64`. ARM64 VPS
+  hosts need a separate image build before using this installer.
 - Do not run on a server that already has an important Docker Swarm. The
   installer follows the upstream Dokploy behavior and runs
   `docker swarm leave --force` before initializing a new single-node Swarm.
@@ -69,6 +71,12 @@ Expected image:
 ghcr.io/agenthits/dokploy:agenthits-dev
 ```
 
+To verify the published image from any machine with Docker Buildx:
+
+```bash
+docker buildx imagetools inspect ghcr.io/agenthits/dokploy:agenthits-dev
+```
+
 ## Update
 
 When a new image is published from `AgentHits-Dev`, update the VPS with:
@@ -88,14 +96,8 @@ bash install-agenthits.sh update
 
 ## GHCR visibility
 
-After the first successful workflow run, make the package public if anonymous
-VPS installs must work:
-
-1. Open the `agentHits/dokploy` repository on GitHub.
-2. Open `Packages`.
-3. Select the `dokploy` container package.
-4. Open package settings.
-5. Change visibility to public.
+The `agentHits/dokploy` GHCR package is expected to be public so anonymous VPS
+installs can pull the image.
 
 If the package stays private, log in to GHCR on the VPS before installing:
 

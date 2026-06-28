@@ -54,12 +54,15 @@ RUN curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh --ver
 ARG NIXPACKS_VERSION=1.41.0
 RUN curl -sSL https://nixpacks.com/install.sh -o install.sh \
     && chmod +x install.sh \
-    && ./install.sh \
+    && NIXPACKS_VERSION="$NIXPACKS_VERSION" ./install.sh -y \
+    && rm install.sh \
     && pnpm install -g tsx
 
 # Install Railpack
 ARG RAILPACK_VERSION=0.15.4
-RUN curl -sSL https://railpack.com/install.sh | bash
+RUN curl -sSL https://railpack.com/install.sh -o install-railpack.sh \
+    && RAILPACK_VERSION="$RAILPACK_VERSION" bash install-railpack.sh -y \
+    && rm install-railpack.sh
 
 # Install buildpacks
 COPY --from=buildpacksio/pack:0.39.1 /usr/local/bin/pack /usr/local/bin/pack
