@@ -42,9 +42,6 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "cache=${IMAGE}:buildcache" >> "$GITHUB_OUTPUT"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -60,7 +57,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=registry,ref=${{ steps.tags.outputs.cache }}
