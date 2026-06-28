@@ -25,6 +25,8 @@ jobs:
         run: |
           cp apps/dokploy/.env.production.example .env.production
           cp apps/dokploy/.env.production.example apps/dokploy/.env.production
+          echo "POSTGRES_PASSWORD=build-time-postgres-password" >> .env.production
+          echo "POSTGRES_PASSWORD=build-time-postgres-password" >> apps/dokploy/.env.production
 
       - name: Set image tags
         id: tags
