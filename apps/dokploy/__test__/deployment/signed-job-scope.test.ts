@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -28,6 +31,7 @@ describe("signed deployment job scope", () => {
 		vi.clearAllMocks();
 		vi.stubEnv("API_KEY", "global-api-key");
 		vi.stubEnv("DEPLOYMENTS_SIGNING_KEY", "deployment-signing-key");
+		vi.stubEnv("DEPLOYMENTS_SIGNING_KEY_FILE", "");
 		mocks.findApplicationById.mockResolvedValue({
 			applicationId: "app-1",
 			serverId: "server-1",
@@ -242,6 +246,41 @@ describe("signed deployment job scope", () => {
 				{ operation: "cancel", requireActiveServer: false },
 			),
 		).rejects.toThrow(/must differ from the API key/i);
+	});
+
+	it("can read the deployment signing key from a secret file", async () => {
+		const secretDir = mkdtempSync(join(tmpdir(), "dokploy-deployment-key-"));
+		const secretPath = join(secretDir, "deployment-key");
+		writeFileSync(secretPath, "deployment-signing-key-from-file", "utf8");
+		vi.stubEnv("DEPLOYMENTS_SIGNING_KEY", "");
+		vi.stubEnv("DEPLOYMENTS_SIGNING_KEY_FILE", secretPath);
+
+		try {
+			const signed = await signDeploymentQueueJob(
+				{
+					applicationId: "app-1",
+					applicationType: "application",
+					descriptionLog: "",
+					server: true,
+					serverId: "server-1",
+					titleLog: "Manual deployment",
+					type: "deploy",
+				},
+				{ operation: "deploy", now: 1000 },
+			);
+
+			await expect(
+				assertSignedDeploymentQueueJob(signed, {
+					operation: "deploy",
+					now: 2000,
+				}),
+			).resolves.toMatchObject({
+				applicationId: "app-1",
+				applicationType: "application",
+			});
+		} finally {
+			rmSync(secretDir, { recursive: true, force: true });
+		}
 	});
 
 	it("signs and verifies cancel jobs with object scope", async () => {

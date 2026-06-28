@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { CLEANUP_CRON_JOB } from "@dokploy/server/constants";
+import { readSecret } from "@dokploy/server/db/constants";
 import { findBackupById } from "@dokploy/server/services/backup";
 import { findScheduleById } from "@dokploy/server/services/schedule";
 import { findServerById } from "@dokploy/server/services/server";
@@ -62,7 +63,9 @@ type SigningOptions = ScopeOptions & {
 const DEFAULT_SCOPE_TTL_MS = 5 * 60_000;
 
 const getSigningKey = () => {
-	const key = process.env.SCHEDULES_SIGNING_KEY;
+	const key = process.env.SCHEDULES_SIGNING_KEY_FILE
+		? readSecret(process.env.SCHEDULES_SIGNING_KEY_FILE)
+		: process.env.SCHEDULES_SIGNING_KEY;
 	if (!key || key.trim().length === 0) {
 		throw new Error("Schedule job signing key is not configured");
 	}

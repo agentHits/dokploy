@@ -5,6 +5,7 @@ import {
 	findPreviewDeploymentById,
 	findServerById,
 } from "@dokploy/server";
+import { readSecret } from "@dokploy/server/db/constants";
 
 export type DeploymentQueueJob =
 	| {
@@ -94,7 +95,9 @@ type SigningOptions = ScopeOptions & {
 const DEFAULT_SCOPE_TTL_MS = 5 * 60_000;
 
 const getSigningKey = () => {
-	const key = process.env.DEPLOYMENTS_SIGNING_KEY;
+	const key = process.env.DEPLOYMENTS_SIGNING_KEY_FILE
+		? readSecret(process.env.DEPLOYMENTS_SIGNING_KEY_FILE)
+		: process.env.DEPLOYMENTS_SIGNING_KEY;
 	if (!key || key.trim().length === 0) {
 		throw new Error("Deployment job signing key is not configured");
 	}

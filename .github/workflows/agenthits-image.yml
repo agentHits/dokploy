@@ -1,0 +1,67 @@
+name: AgentHits Dokploy Image
+
+on:
+  push:
+    branches: [AgentHits-Dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: agenthits/dokploy
+  STABLE_TAG: agenthits-dev
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare production env file
+        run: |
+          cp apps/dokploy/.env.production.example .env.production
+          cp apps/dokploy/.env.production.example apps/dokploy/.env.production
+
+      - name: Set image tags
+        id: tags
+        run: |
+          SHORT_SHA="${GITHUB_SHA::12}"
+          IMAGE="${REGISTRY}/${IMAGE_NAME}"
+          {
+            echo "tags<<EOF"
+            echo "${IMAGE}:${STABLE_TAG}"
+            echo "${IMAGE}:${STABLE_TAG}-${SHORT_SHA}"
+            echo "${IMAGE}:sha-${GITHUB_SHA}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "cache=${IMAGE}:buildcache" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=registry,ref=${{ steps.tags.outputs.cache }}
+          cache-to: type=registry,ref=${{ steps.tags.outputs.cache }},mode=max
+          provenance: true
+          sbom: true
