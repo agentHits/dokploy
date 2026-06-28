@@ -6,6 +6,7 @@ DOKPLOY_RELEASE_TAG="${DOKPLOY_RELEASE_TAG:-agenthits-dev}"
 TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.7.5}"
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18.4}"
 REDIS_IMAGE="${REDIS_IMAGE:-redis:8.8.0}"
+POSTGRES_DATA_TARGET="${POSTGRES_DATA_TARGET:-}"
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -42,6 +43,35 @@ create_secret_if_missing() {
 	else
 		echo "$value" | docker secret create "$name" - >/dev/null
 		echo "Docker secret $name created"
+	fi
+}
+
+get_postgres_major_version() {
+	local tag="${POSTGRES_IMAGE##*:}"
+	tag="${tag%%-*}"
+	tag="${tag%%.*}"
+
+	case "$tag" in
+		"" | *[!0-9]*)
+			return 1
+			;;
+		*)
+			echo "$tag"
+			;;
+	esac
+}
+
+get_postgres_data_target() {
+	if [ -n "$POSTGRES_DATA_TARGET" ]; then
+		echo "$POSTGRES_DATA_TARGET"
+		return 0
+	fi
+
+	local major=""
+	if major="$(get_postgres_major_version)" && [ "$major" -ge 18 ]; then
+		echo "/var/lib/postgresql"
+	else
+		echo "/var/lib/postgresql/data"
 	fi
 }
 
@@ -235,6 +265,9 @@ install_agenthits_dokploy() {
 	create_secret_if_missing dokploy_schedules_signing_key "$(generate_random_secret)"
 	create_secret_if_missing dokploy_deployments_signing_key "$(generate_random_secret)"
 
+	local postgres_data_target
+	postgres_data_target="$(get_postgres_data_target)"
+
 	docker service create \
 		--name dokploy-postgres \
 		--constraint 'node.role==manager' \
@@ -243,7 +276,7 @@ install_agenthits_dokploy() {
 		--env POSTGRES_DB=dokploy \
 		--secret source=dokploy_postgres_password,target=/run/secrets/postgres_password \
 		--env POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password \
-		--mount type=volume,source=dokploy-postgres,target=/var/lib/postgresql/data \
+		--mount type=volume,source=dokploy-postgres,target="$postgres_data_target" \
 		$endpoint_mode \
 		"$POSTGRES_IMAGE"
 
