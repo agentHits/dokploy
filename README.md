@@ -74,13 +74,39 @@ DOKPLOY_RELEASE_TAG=agenthits-dev \
 bash install-agenthits.sh
 ```
 
-Обновление до последней сборки:
+## Обновление установленного Dokploy
+
+Если Dokploy уже установлен на VPS, не запускайте installer без аргументов.
+Для установленного сервера используйте только команду `update`: она обновляет
+Docker service `dokploy` на новый image и не переинициализирует окружение.
+
+Обновление до последней сборки из `AgentHits-Dev`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev/install-agenthits.sh -o install-agenthits.sh
 chmod +x install-agenthits.sh
 
 bash install-agenthits.sh update
+```
+
+Обновление до конкретной сборки:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev/install-agenthits.sh -o install-agenthits.sh
+chmod +x install-agenthits.sh
+
+DOKPLOY_IMAGE=ghcr.io/agenthits/dokploy:agenthits-dev-<short-sha> \
+DOKPLOY_RELEASE_TAG=agenthits-dev \
+bash install-agenthits.sh update
+```
+
+После обновления проверьте, что сервис запущен и использует ожидаемый image:
+
+```bash
+docker service ps dokploy --no-trunc
+docker service logs --tail 80 dokploy
+curl -i http://127.0.0.1:3000/api/trpc/settings.health
+docker service inspect dokploy --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}'
 ```
 
 Подробная инструкция: [docs/agenthits-install.md](docs/agenthits-install.md).
@@ -147,13 +173,40 @@ DOKPLOY_RELEASE_TAG=agenthits-dev \
 bash install-agenthits.sh
 ```
 
-Update to the latest build:
+## Updating an existing Dokploy installation
+
+If Dokploy is already installed on the VPS, do not run the installer without
+arguments. For an existing server, use only the `update` command: it updates the
+`dokploy` Docker service to a new image and does not reinitialize the
+environment.
+
+Update to the latest `AgentHits-Dev` build:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev/install-agenthits.sh -o install-agenthits.sh
 chmod +x install-agenthits.sh
 
 bash install-agenthits.sh update
+```
+
+Update to a specific build:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev/install-agenthits.sh -o install-agenthits.sh
+chmod +x install-agenthits.sh
+
+DOKPLOY_IMAGE=ghcr.io/agenthits/dokploy:agenthits-dev-<short-sha> \
+DOKPLOY_RELEASE_TAG=agenthits-dev \
+bash install-agenthits.sh update
+```
+
+After updating, verify that the service is running and uses the expected image:
+
+```bash
+docker service ps dokploy --no-trunc
+docker service logs --tail 80 dokploy
+curl -i http://127.0.0.1:3000/api/trpc/settings.health
+docker service inspect dokploy --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}'
 ```
 
 Full guide: [docs/agenthits-install.md](docs/agenthits-install.md).
