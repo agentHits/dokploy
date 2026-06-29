@@ -25,6 +25,8 @@ const writeFakeDocker = (
 		currentDigest: string;
 		latestIndexDigest: string;
 		latestPlatformDigest: string;
+		latestOfficialVersion?: string;
+		latestForkVersion?: string;
 		serviceEnv: string[];
 	},
 ) => {
@@ -71,6 +73,46 @@ exit 1
 	chmodSync(dockerPath, 0o755);
 };
 
+const writeFakeCurl = (
+	dir: string,
+	options: {
+		latestPlatformDigest: string;
+		latestOfficialVersion?: string;
+		latestForkVersion?: string;
+	},
+) => {
+	const curlPath = path.join(dir, "curl");
+	const latestOfficialVersion = options.latestOfficialVersion ?? "v0.29.8";
+	const latestForkVersion =
+		options.latestForkVersion ?? "off_v0.29.8/Fork_160+latest";
+	const fakeCurl = `#!/bin/sh
+for arg do
+	url="$arg"
+done
+
+case "$url" in
+	*"/token?"*)
+		printf '%s\\n' '{"token":"token"}'
+		;;
+	*"/manifests/${options.latestPlatformDigest}")
+		printf '%s\\n' '{"config":{"digest":"sha256:config"}}'
+		;;
+	*"/blobs/sha256:config")
+		cat <<'EOF'
+{"config":{"Env":["DOKPLOY_OFFICIAL_VERSION=${latestOfficialVersion}","DOKPLOY_FORK_VERSION=${latestForkVersion}"]}}
+EOF
+		;;
+	*)
+		echo "unexpected curl url: $url" >&2
+		exit 1
+		;;
+esac
+`;
+
+	writeFileSync(curlPath, fakeCurl);
+	chmodSync(curlPath, 0o755);
+};
+
 const runUpdateScript = (
 	fakeDockerOptions: Parameters<typeof writeFakeDocker>[1],
 ) => {
@@ -79,6 +121,7 @@ const runUpdateScript = (
 		const callLog = path.join(tempDir, "docker-calls.log");
 		writeFileSync(callLog, "");
 		writeFakeDocker(tempDir, fakeDockerOptions);
+		writeFakeCurl(tempDir, fakeDockerOptions);
 
 		const result = spawnSync("bash", [updateScript], {
 			env: {
@@ -108,6 +151,7 @@ describe("AgentHits update script", () => {
 			serviceEnv: [
 				"RELEASE_TAG=agenthits-dev",
 				"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+				"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_160+latest",
 			],
 		});
 
@@ -141,13 +185,19 @@ describe("AgentHits update script", () => {
 			currentDigest: "sha256:index",
 			latestIndexDigest: "sha256:index",
 			latestPlatformDigest: "sha256:platform",
-			serviceEnv: ["RELEASE_TAG=old", "DOKPLOY_OFFICIAL_VERSION=v0.29.8"],
+			serviceEnv: [
+				"RELEASE_TAG=agenthits-dev",
+				"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+				"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_159+old",
+			],
 		});
 
 		expect(result.status).toBe(0);
 		expect(result.stdout).toContain("Updating AgentHits Dokploy");
 		expect(calls).toContain("service update");
-		expect(calls).toContain("--env-add RELEASE_TAG=agenthits-dev");
+		expect(calls).toContain(
+			"--env-add DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_160+latest",
+		);
 		expect(calls).not.toContain("pull ");
 	});
 

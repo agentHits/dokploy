@@ -3,7 +3,10 @@ set -euo pipefail
 
 DOKPLOY_IMAGE="${DOKPLOY_IMAGE:-ghcr.io/agenthits/dokploy:agenthits-dev}"
 DOKPLOY_RELEASE_TAG="${DOKPLOY_RELEASE_TAG:-agenthits-dev}"
-DOKPLOY_OFFICIAL_VERSION="${DOKPLOY_OFFICIAL_VERSION:-v0.29.8}"
+DOKPLOY_OFFICIAL_VERSION_OVERRIDE="${DOKPLOY_OFFICIAL_VERSION:-}"
+DOKPLOY_FORK_VERSION_OVERRIDE="${DOKPLOY_FORK_VERSION:-}"
+DOKPLOY_OFFICIAL_VERSION="${DOKPLOY_OFFICIAL_VERSION_OVERRIDE:-v0.29.8}"
+DOKPLOY_FORK_VERSION="${DOKPLOY_FORK_VERSION_OVERRIDE:-}"
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -87,6 +90,79 @@ get_remote_image_digests() {
 	printf '%s %s\n' "$index_digest" "$platform_digest"
 }
 
+extract_json_string_value() {
+	local key="$1"
+	sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1
+}
+
+extract_config_env_value() {
+	local name="$1"
+	tr ',' '\n' | sed -n "s/.*\"${name}=\\([^\"]*\\)\".*/\\1/p" | head -n1
+}
+
+get_ghcr_repository() {
+	case "$DOKPLOY_IMAGE" in
+		ghcr.io/*)
+			local without_registry="${DOKPLOY_IMAGE#ghcr.io/}"
+			echo "${without_registry%%:*}"
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+get_remote_image_metadata() {
+	local platform_digest="$1"
+	local repository=""
+	repository="$(get_ghcr_repository)" || return 1
+
+	if ! command_exists curl; then
+		return 1
+	fi
+
+	local token_response=""
+	token_response="$(curl -fsSL "https://ghcr.io/token?service=ghcr.io&scope=repository:${repository}:pull")" || return 1
+
+	local token=""
+	token="$(printf '%s\n' "$token_response" | extract_json_string_value token)"
+	if [ -z "$token" ]; then
+		return 1
+	fi
+
+	local manifest=""
+	manifest="$(
+		curl -fsSL \
+			-H "Authorization: Bearer $token" \
+			-H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+			"https://ghcr.io/v2/${repository}/manifests/${platform_digest}"
+	)" || return 1
+
+	local config_digest=""
+	config_digest="$(printf '%s\n' "$manifest" | tr ',' '\n' | extract_json_string_value digest)"
+	if [ -z "$config_digest" ]; then
+		return 1
+	fi
+
+	local config=""
+	config="$(
+		curl -fsSL \
+			-H "Authorization: Bearer $token" \
+			"https://ghcr.io/v2/${repository}/blobs/${config_digest}"
+	)" || return 1
+
+	local official_version=""
+	local fork_version=""
+	official_version="$(printf '%s\n' "$config" | extract_config_env_value DOKPLOY_OFFICIAL_VERSION)"
+	fork_version="$(printf '%s\n' "$config" | extract_config_env_value DOKPLOY_FORK_VERSION)"
+
+	if [ -z "$official_version" ] && [ -z "$fork_version" ]; then
+		return 1
+	fi
+
+	printf '%s\n%s\n' "$official_version" "$fork_version"
+}
+
 metadata_matches() {
 	local service_env="$1"
 
@@ -95,10 +171,6 @@ metadata_matches() {
 
 	if [ -n "${DOKPLOY_FORK_VERSION:-}" ]; then
 		printf '%s\n' "$service_env" | grep -qx "DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION" || return 1
-	else
-		if printf '%s\n' "$service_env" | grep -q '^DOKPLOY_FORK_VERSION='; then
-			return 1
-		fi
 	fi
 
 	return 0
@@ -126,6 +198,21 @@ update_agenthits_dokploy() {
 	if remote_digests="$(get_remote_image_digests)"; then
 		latest_index_digest="${remote_digests%% *}"
 		latest_platform_digest="${remote_digests#* }"
+	fi
+
+	local remote_metadata=""
+	if [ -n "$latest_platform_digest" ] && remote_metadata="$(get_remote_image_metadata "$latest_platform_digest")"; then
+		local latest_official_version=""
+		local latest_fork_version=""
+		latest_official_version="$(printf '%s\n' "$remote_metadata" | sed -n '1p')"
+		latest_fork_version="$(printf '%s\n' "$remote_metadata" | sed -n '2p')"
+
+		if [ -z "$DOKPLOY_OFFICIAL_VERSION_OVERRIDE" ] && [ -n "$latest_official_version" ]; then
+			DOKPLOY_OFFICIAL_VERSION="$latest_official_version"
+		fi
+		if [ -z "$DOKPLOY_FORK_VERSION_OVERRIDE" ] && [ -n "$latest_fork_version" ]; then
+			DOKPLOY_FORK_VERSION="$latest_fork_version"
+		fi
 	fi
 
 	if [ -n "$current_digest" ] &&

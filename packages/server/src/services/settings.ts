@@ -229,15 +229,22 @@ export const getAgentHitsLatestImageData = async () => {
 	};
 };
 
-export const getAgentHitsUpdateData = async (): Promise<IUpdateData> => {
+export const getAgentHitsUpdateData = async (
+	currentVersion: string,
+): Promise<IUpdateData> => {
 	const currentDigest = await getServiceImageDigest();
 	const latestImageData = await getAgentHitsLatestImageData();
+	const currentVersionData = getDokployVersionData(currentVersion);
+	const metadataUpdateAvailable =
+		currentVersionData.forkVersion !== latestImageData.forkVersion ||
+		currentVersionData.officialVersion !== latestImageData.officialVersion;
 
 	return {
 		latestVersion: latestImageData.forkVersion,
 		updateAvailable:
-			currentDigest !== latestImageData.latestDigest &&
-			currentDigest !== latestImageData.latestPlatformDigest,
+			(currentDigest !== latestImageData.latestDigest &&
+				currentDigest !== latestImageData.latestPlatformDigest) ||
+			metadataUpdateAvailable,
 		updateSource: "agenthits",
 		latestImage: latestImageData.image,
 		latestOfficialVersion: latestImageData.officialVersion,
@@ -294,7 +301,7 @@ export const getUpdateData = async (
 ): Promise<IUpdateData> => {
 	try {
 		if (isAgentHitsUpdateChannel(currentVersion)) {
-			return await getAgentHitsUpdateData();
+			return await getAgentHitsUpdateData(currentVersion);
 		}
 
 		const baseUrl =

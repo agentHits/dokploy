@@ -153,7 +153,7 @@ describe("AgentHits fork version metadata", () => {
 			}),
 		);
 
-		expect(await getAgentHitsUpdateData()).toEqual({
+		expect(await getAgentHitsUpdateData("v0.29.8")).toEqual({
 			latestVersion: "off_v0.29.8/Fork_159+next",
 			updateAvailable: true,
 			updateSource: "agenthits",
@@ -165,7 +165,7 @@ describe("AgentHits fork version metadata", () => {
 		});
 	});
 
-	it("routes generic update checks to GHCR for AgentHits installs", async () => {
+	it("routes generic update checks to GHCR and detects stale fork metadata", async () => {
 		process.env.RELEASE_TAG = "agenthits-dev";
 		const { execAsync } = await import(
 			"@dokploy/server/utils/process/execAsync"
@@ -213,13 +213,14 @@ describe("AgentHits fork version metadata", () => {
 
 		expect(await getUpdateData("v0.29.8")).toMatchObject({
 			latestVersion: "off_v0.29.8/Fork_159+next",
-			updateAvailable: false,
+			updateAvailable: true,
 			updateSource: "agenthits",
 		});
 	});
 
 	it("treats the AgentHits platform manifest digest as up to date", async () => {
 		process.env.RELEASE_TAG = "agenthits-dev";
+		process.env.DOKPLOY_FORK_VERSION = "off_v0.29.8/Fork_159+next";
 		const { execAsync } = await import(
 			"@dokploy/server/utils/process/execAsync"
 		);
