@@ -100,6 +100,9 @@ chmod +x install-agenthits.sh
 bash install-agenthits.sh update
 ```
 
+Если установленный service уже указывает на актуальный digest и metadata,
+`update` быстро завершится без повторного pull и без перезапуска `dokploy`.
+
 Обновление до конкретной сборки:
 
 ```bash
@@ -213,6 +216,10 @@ chmod +x install-agenthits.sh
 
 bash install-agenthits.sh update
 ```
+
+If the installed service already points to the current digest and metadata,
+`update` exits quickly without pulling the same image again or restarting
+`dokploy`.
 
 Update to a specific build:
 

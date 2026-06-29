@@ -51,7 +51,9 @@ Fork: off_v0.29.8/Fork_<commits-since-official>+<short-sha>
 
 Форк остается отдельной линией сборки поверх официального Dokploy. Для обычного
 обновления используйте dashboard update button или `install-agenthits.sh
-update`. Для rollback используйте pinned image tag из
+update`. CLI update использует отдельный `update.sh` и пропускает повторный pull,
+если текущий service уже стоит на актуальном digest. Для rollback используйте
+pinned image tag из
 `ghcr.io/agenthits/dokploy`.
 
 ## English
@@ -106,5 +108,7 @@ commits, the fork version looks like `off_v0.29.8/Fork_157+abc123def456`.
 ### Important
 
 This fork is a separate build line on top of official Dokploy. For normal
-updates, use the dashboard update button or `install-agenthits.sh update`. For
-rollback, use a pinned image tag from `ghcr.io/agenthits/dokploy`.
+updates, use the dashboard update button or `install-agenthits.sh update`. The
+CLI update path uses the separate `update.sh` module and skips pulling again
+when the current service already runs the latest digest. For rollback, use a
+pinned image tag from `ghcr.io/agenthits/dokploy`.

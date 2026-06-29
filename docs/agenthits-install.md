@@ -127,6 +127,10 @@ chmod +x install-agenthits.sh
 bash install-agenthits.sh update
 ```
 
+`update` сначала проверяет текущий Docker service digest и metadata через
+`update.sh`. Если установлен тот же image digest, команда завершается без
+повторного `docker pull` и без перезапуска `dokploy`.
+
 В dashboard кнопка `Check for updates` для AgentHits fork сравнивает текущий
 Docker service image digest с `ghcr.io/agenthits/dokploy:agenthits-dev`.
 Если digest отличается, обновление через UI запускает `docker service update`

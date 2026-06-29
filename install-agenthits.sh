@@ -8,6 +8,7 @@ TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.7.5}"
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18.4}"
 REDIS_IMAGE="${REDIS_IMAGE:-redis:8.8.0}"
 POSTGRES_DATA_TARGET="${POSTGRES_DATA_TARGET:-}"
+AGENTHITS_SCRIPT_BASE_URL="${AGENTHITS_SCRIPT_BASE_URL:-https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev}"
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -345,26 +346,20 @@ install_agenthits_dokploy() {
 }
 
 update_agenthits_dokploy() {
-	require_root_linux_host
-	install_docker_if_missing
+	local script_dir=""
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
-	local fork_version_update_args=()
-	if [ -n "${DOKPLOY_FORK_VERSION:-}" ]; then
-		fork_version_update_args=(--env-add "DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION")
-	elif docker service inspect dokploy --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' 2>/dev/null | grep -q '^DOKPLOY_FORK_VERSION='; then
-		fork_version_update_args=(--env-rm DOKPLOY_FORK_VERSION)
+	if [ -f "$script_dir/update.sh" ]; then
+		bash "$script_dir/update.sh"
+		return
 	fi
 
-	docker pull "$DOKPLOY_IMAGE"
-	docker service update \
-		--force \
-		--image "$DOKPLOY_IMAGE" \
-		--env-add RELEASE_TAG="$DOKPLOY_RELEASE_TAG" \
-		--env-add "DOKPLOY_OFFICIAL_VERSION=$DOKPLOY_OFFICIAL_VERSION" \
-		"${fork_version_update_args[@]}" \
-		dokploy
+	local update_script=""
+	update_script="$(mktemp)"
+	trap 'rm -f "$update_script"' RETURN
 
-	echo "AgentHits Dokploy updated to $DOKPLOY_IMAGE"
+	curl -fsSL "$AGENTHITS_SCRIPT_BASE_URL/update.sh" -o "$update_script"
+	bash "$update_script"
 }
 
 case "${1:-install}" in
