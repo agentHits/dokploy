@@ -238,13 +238,14 @@ export const getAgentHitsUpdateData = async (
 	const metadataUpdateAvailable =
 		currentVersionData.forkVersion !== latestImageData.forkVersion ||
 		currentVersionData.officialVersion !== latestImageData.officialVersion;
+	const digestUpdateAvailable =
+		Boolean(currentDigest) &&
+		currentDigest !== latestImageData.latestDigest &&
+		currentDigest !== latestImageData.latestPlatformDigest;
 
 	return {
 		latestVersion: latestImageData.forkVersion,
-		updateAvailable:
-			(currentDigest !== latestImageData.latestDigest &&
-				currentDigest !== latestImageData.latestPlatformDigest) ||
-			metadataUpdateAvailable,
+		updateAvailable: digestUpdateAvailable || metadataUpdateAvailable,
 		updateSource: "agenthits",
 		latestImage: latestImageData.image,
 		latestOfficialVersion: latestImageData.officialVersion,
@@ -289,7 +290,7 @@ export const getServiceImageDigest = async () => {
 	const currentDigest = stdout.trim().split("@")[1];
 
 	if (!currentDigest) {
-		throw new Error("Could not get current service image digest");
+		return null;
 	}
 
 	return currentDigest;
@@ -339,7 +340,7 @@ export const getUpdateData = async (
 			if (!latestDigest) {
 				return DEFAULT_UPDATE_DATA;
 			}
-			if (currentDigest !== latestDigest) {
+			if (currentDigest && currentDigest !== latestDigest) {
 				return {
 					latestVersion: currentImageTag,
 					updateAvailable: true,

@@ -218,6 +218,171 @@ describe("AgentHits fork version metadata", () => {
 		});
 	});
 
+	it("detects stale AgentHits metadata when the current service image is tag-only", async () => {
+		process.env.RELEASE_TAG = "agenthits-dev";
+		process.env.DOKPLOY_FORK_VERSION = "off_v0.29.8/Fork_162+73ae6bcdf8b4";
+		const { execAsync } = await import(
+			"@dokploy/server/utils/process/execAsync"
+		);
+		vi.mocked(execAsync).mockResolvedValue({
+			stdout: "ghcr.io/agenthits/dokploy:agenthits-dev\n",
+			stderr: "",
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = input.toString();
+				if (url.includes("/token")) {
+					return createJsonResponse({ token: "token" });
+				}
+				if (url.endsWith("/manifests/agenthits-dev")) {
+					return createJsonResponse(
+						{
+							manifests: [
+								{
+									digest: "sha256:image",
+									platform: { architecture: "amd64", os: "linux" },
+								},
+							],
+						},
+						{ "docker-content-digest": "sha256:latest" },
+					);
+				}
+				if (url.endsWith("/manifests/sha256:image")) {
+					return createJsonResponse({
+						config: { digest: "sha256:config" },
+					});
+				}
+				if (url.endsWith("/blobs/sha256:config")) {
+					return createJsonResponse({
+						config: {
+							Env: [
+								"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+								"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_164+0944dc204f55",
+							],
+						},
+					});
+				}
+
+				throw new Error(`Unexpected URL: ${url}`);
+			}),
+		);
+
+		expect(await getUpdateData("v0.29.8")).toMatchObject({
+			latestVersion: "off_v0.29.8/Fork_164+0944dc204f55",
+			updateAvailable: true,
+			updateSource: "agenthits",
+			currentDigest: null,
+			latestDigest: "sha256:latest",
+			latestPlatformDigest: "sha256:image",
+		});
+	});
+
+	it("keeps tag-only AgentHits services up to date when metadata already matches", async () => {
+		process.env.RELEASE_TAG = "agenthits-dev";
+		process.env.DOKPLOY_FORK_VERSION = "off_v0.29.8/Fork_164+0944dc204f55";
+		process.env.DOKPLOY_OFFICIAL_VERSION = "v0.29.8";
+		const { execAsync } = await import(
+			"@dokploy/server/utils/process/execAsync"
+		);
+		vi.mocked(execAsync).mockResolvedValue({
+			stdout: "ghcr.io/agenthits/dokploy:agenthits-dev\n",
+			stderr: "",
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = input.toString();
+				if (url.includes("/token")) {
+					return createJsonResponse({ token: "token" });
+				}
+				if (url.endsWith("/manifests/agenthits-dev")) {
+					return createJsonResponse(
+						{
+							manifests: [
+								{
+									digest: "sha256:image",
+									platform: { architecture: "amd64", os: "linux" },
+								},
+							],
+						},
+						{ "docker-content-digest": "sha256:latest" },
+					);
+				}
+				if (url.endsWith("/manifests/sha256:image")) {
+					return createJsonResponse({
+						config: { digest: "sha256:config" },
+					});
+				}
+				if (url.endsWith("/blobs/sha256:config")) {
+					return createJsonResponse({
+						config: {
+							Env: [
+								"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+								"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_164+0944dc204f55",
+							],
+						},
+					});
+				}
+
+				throw new Error(`Unexpected URL: ${url}`);
+			}),
+		);
+
+		expect(await getUpdateData("v0.29.8")).toMatchObject({
+			latestVersion: "off_v0.29.8/Fork_164+0944dc204f55",
+			updateAvailable: false,
+			updateSource: "agenthits",
+			currentDigest: null,
+		});
+	});
+
+	it("falls back to default update data when AgentHits update metadata cannot be fetched", async () => {
+		process.env.RELEASE_TAG = "agenthits-dev";
+		process.env.DOKPLOY_FORK_VERSION = "off_v0.29.8/Fork_162+73ae6bcdf8b4";
+		const { execAsync } = await import(
+			"@dokploy/server/utils/process/execAsync"
+		);
+		vi.mocked(execAsync).mockRejectedValue(new Error("inspect failed"));
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => undefined);
+
+		expect(await getUpdateData("v0.29.8")).toEqual({
+			latestVersion: null,
+			updateAvailable: false,
+		});
+		expect(consoleError).toHaveBeenCalledWith(
+			"Error fetching update data:",
+			expect.any(Error),
+		);
+	});
+
+	it("keeps tag-only official canary services marked as up to date", async () => {
+		process.env.RELEASE_TAG = "canary";
+		const { execAsync } = await import(
+			"@dokploy/server/utils/process/execAsync"
+		);
+		vi.mocked(execAsync).mockResolvedValue({
+			stdout: "dokploy/dokploy:canary\n",
+			stderr: "",
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () =>
+				createJsonResponse({
+					next: null,
+					results: [{ name: "canary", digest: "sha256:latest" }],
+				}),
+			),
+		);
+
+		expect(await getUpdateData("v0.29.8")).toEqual({
+			latestVersion: "canary",
+			updateAvailable: false,
+		});
+	});
+
 	it("treats the AgentHits platform manifest digest as up to date", async () => {
 		process.env.RELEASE_TAG = "agenthits-dev";
 		process.env.DOKPLOY_FORK_VERSION = "off_v0.29.8/Fork_159+next";
