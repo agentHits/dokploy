@@ -18,6 +18,12 @@ import {
 export interface IUpdateData {
 	latestVersion: string | null;
 	updateAvailable: boolean;
+	updateSource?: "official" | "agenthits";
+	latestImage?: string | null;
+	latestOfficialVersion?: string | null;
+	currentDigest?: string | null;
+	latestDigest?: string | null;
+	latestPlatformDigest?: string | null;
 }
 
 export const DEFAULT_UPDATE_DATA: IUpdateData = {
@@ -35,6 +41,19 @@ export interface IDokployVersionData {
 /** Returns current Dokploy docker image tag or `latest` by default. */
 export const getDokployImageTag = () => {
 	return process.env.RELEASE_TAG || "latest";
+};
+
+export const getAgentHitsUpdateTag = () => {
+	return process.env.DOKPLOY_AGENTHITS_UPDATE_TAG?.trim() || "agenthits-dev";
+};
+
+export const getAgentHitsUpdateImage = () => {
+	const explicitImage = process.env.DOKPLOY_AGENTHITS_UPDATE_IMAGE?.trim();
+	if (explicitImage) {
+		return explicitImage;
+	}
+
+	return `ghcr.io/agenthits/dokploy:${getAgentHitsUpdateTag()}`;
 };
 
 export const getOfficialDokployVersion = (currentVersion: string) => {
@@ -69,6 +88,191 @@ export const getDokployVersionData = (
 	};
 };
 
+export const isAgentHitsUpdateChannel = (currentVersion: string) => {
+	const updateSource = process.env.DOKPLOY_UPDATE_SOURCE?.trim().toLowerCase();
+	if (updateSource === "official") {
+		return false;
+	}
+	if (updateSource === "agenthits") {
+		return true;
+	}
+
+	const versionData = getDokployVersionData(currentVersion);
+	return (
+		versionData.releaseTag.startsWith("agenthits") ||
+		versionData.forkVersion.startsWith("off_") ||
+		Boolean(process.env.DOKPLOY_FORK_VERSION?.trim())
+	);
+};
+
+const getGhcrPullToken = async () => {
+	const response = await fetch(
+		"https://ghcr.io/token?service=ghcr.io&scope=repository:agenthits/dokploy:pull",
+	);
+	if (!response.ok) {
+		throw new Error(`Could not request GHCR pull token: ${response.status}`);
+	}
+
+	const data = (await response.json()) as { token?: string };
+	if (!data.token) {
+		throw new Error("GHCR pull token response did not include a token");
+	}
+
+	return data.token;
+};
+
+const fetchGhcrJson = async <T>(
+	token: string,
+	path: string,
+	accept: string,
+): Promise<{ digest: string | null; data: T }> => {
+	const response = await fetch(`https://ghcr.io/v2/agenthits/dokploy/${path}`, {
+		headers: {
+			Accept: accept,
+			Authorization: `Bearer ${token}`,
+		},
+	});
+	if (!response.ok) {
+		throw new Error(`Could not fetch GHCR ${path}: ${response.status}`);
+	}
+
+	return {
+		digest: response.headers.get("docker-content-digest"),
+		data: (await response.json()) as T,
+	};
+};
+
+type RegistryManifestList = {
+	manifests?: {
+		digest: string;
+		mediaType?: string;
+		platform?: {
+			architecture?: string;
+			os?: string;
+		};
+	}[];
+};
+
+type RegistryImageManifest = {
+	config?: {
+		digest: string;
+		mediaType?: string;
+	};
+};
+
+type RegistryImageConfig = {
+	config?: {
+		Env?: string[];
+	};
+};
+
+const MANIFEST_LIST_ACCEPT = [
+	"application/vnd.oci.image.index.v1+json",
+	"application/vnd.docker.distribution.manifest.list.v2+json",
+	"application/vnd.oci.image.manifest.v1+json",
+	"application/vnd.docker.distribution.manifest.v2+json",
+].join(", ");
+
+const IMAGE_MANIFEST_ACCEPT = [
+	"application/vnd.oci.image.manifest.v1+json",
+	"application/vnd.docker.distribution.manifest.v2+json",
+].join(", ");
+
+const findEnvValue = (env: string[] | undefined, name: string) => {
+	const prefix = `${name}=`;
+	return env?.find((item) => item.startsWith(prefix))?.slice(prefix.length);
+};
+
+export const getAgentHitsLatestImageData = async () => {
+	const token = await getGhcrPullToken();
+	const tag = getAgentHitsUpdateTag();
+	const indexResult = await fetchGhcrJson<RegistryManifestList>(
+		token,
+		`manifests/${tag}`,
+		MANIFEST_LIST_ACCEPT,
+	);
+	const latestDigest = indexResult.digest;
+	const imageManifestDigest =
+		indexResult.data.manifests?.find(
+			(manifest) =>
+				manifest.platform?.os === "linux" &&
+				manifest.platform.architecture === "amd64",
+		)?.digest ?? indexResult.data.manifests?.[0]?.digest;
+
+	if (!latestDigest || !imageManifestDigest) {
+		throw new Error("Could not resolve AgentHits image manifest digest");
+	}
+
+	const imageManifestResult = await fetchGhcrJson<RegistryImageManifest>(
+		token,
+		`manifests/${imageManifestDigest}`,
+		IMAGE_MANIFEST_ACCEPT,
+	);
+	const configDigest = imageManifestResult.data.config?.digest;
+	if (!configDigest) {
+		throw new Error("Could not resolve AgentHits image config digest");
+	}
+
+	const configResult = await fetchGhcrJson<RegistryImageConfig>(
+		token,
+		`blobs/${configDigest}`,
+		"application/octet-stream",
+	);
+	const env = configResult.data.config?.Env;
+
+	return {
+		image: getAgentHitsUpdateImage(),
+		latestDigest,
+		latestPlatformDigest: imageManifestDigest,
+		forkVersion: findEnvValue(env, "DOKPLOY_FORK_VERSION") || tag,
+		officialVersion: findEnvValue(env, "DOKPLOY_OFFICIAL_VERSION") || "v0.29.8",
+	};
+};
+
+export const getAgentHitsUpdateData = async (): Promise<IUpdateData> => {
+	const currentDigest = await getServiceImageDigest();
+	const latestImageData = await getAgentHitsLatestImageData();
+
+	return {
+		latestVersion: latestImageData.forkVersion,
+		updateAvailable:
+			currentDigest !== latestImageData.latestDigest &&
+			currentDigest !== latestImageData.latestPlatformDigest,
+		updateSource: "agenthits",
+		latestImage: latestImageData.image,
+		latestOfficialVersion: latestImageData.officialVersion,
+		currentDigest,
+		latestDigest: latestImageData.latestDigest,
+		latestPlatformDigest: latestImageData.latestPlatformDigest,
+	};
+};
+
+export const getAgentHitsUpdateCommand = (
+	currentVersion: string,
+	forkVersion?: string | null,
+	officialVersion?: string | null,
+) => {
+	const forkVersionArg = forkVersion?.trim()
+		? `--env-add ${quoteShellArg(`DOKPLOY_FORK_VERSION=${forkVersion.trim()}`)}`
+		: "$fork_version_env_arg";
+	const officialVersionArg = officialVersion?.trim()
+		? officialVersion.trim()
+		: getOfficialDokployVersion(currentVersion);
+
+	return `
+fork_version_env_arg=""
+if docker service inspect dokploy --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' 2>/dev/null | grep -q '^DOKPLOY_FORK_VERSION='; then
+	fork_version_env_arg="--env-rm DOKPLOY_FORK_VERSION"
+fi
+docker service update --force \\
+	--image ${quoteShellArg(getAgentHitsUpdateImage())} \\
+	--env-add ${quoteShellArg(`RELEASE_TAG=${getAgentHitsUpdateTag()}`)} \\
+	--env-add ${quoteShellArg(`DOKPLOY_OFFICIAL_VERSION=${officialVersionArg}`)} \\
+	${forkVersionArg} \\
+	dokploy
+`;
+};
+
 /** Returns Dokploy docker service image digest */
 export const getServiceImageDigest = async () => {
 	const { stdout } = await execAsync(
@@ -89,6 +293,10 @@ export const getUpdateData = async (
 	currentVersion: string,
 ): Promise<IUpdateData> => {
 	try {
+		if (isAgentHitsUpdateChannel(currentVersion)) {
+			return await getAgentHitsUpdateData();
+		}
+
 		const baseUrl =
 			"https://hub.docker.com/v2/repositories/dokploy/dokploy/tags";
 		let url: string | null = `${baseUrl}?page_size=100`;
@@ -169,6 +377,8 @@ export const getUpdateData = async (
 		return {
 			latestVersion,
 			updateAvailable,
+			updateSource: "official",
+			latestImage: `dokploy/dokploy:${latestVersion}`,
 		};
 	} catch (error) {
 		console.error("Error fetching update data:", error);
@@ -358,7 +568,9 @@ export const reloadDockerResource = async (
 				imageTag = currentImageTag;
 			}
 
-			command = `docker service update --force --image dokploy/dokploy:${imageTag} ${resourceName}`;
+			command = isAgentHitsUpdateChannel(version || "")
+				? getAgentHitsUpdateCommand(version || "")
+				: `docker service update --force --image dokploy/dokploy:${imageTag} ${resourceName}`;
 		} else {
 			command = `docker service update --force ${resourceName}`;
 		}

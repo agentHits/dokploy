@@ -16,6 +16,7 @@ import {
 	execAsync,
 	findServerById,
 	getAccessibleServerIds,
+	getAgentHitsUpdateCommand,
 	getDockerDiskUsage,
 	getDokployImageTag,
 	getDokployVersionData,
@@ -642,14 +643,25 @@ export const settingsRouter = createTRPCRouter({
 
 		const data = await getUpdateData(packageInfo.version);
 		if (data.updateAvailable) {
-			void spawnAsync("docker", [
-				"service",
-				"update",
-				"--force",
-				"--image",
-				`dokploy/dokploy:${data.latestVersion}`,
-				"dokploy",
-			]);
+			if (data.updateSource === "agenthits") {
+				void spawnAsync("sh", [
+					"-c",
+					getAgentHitsUpdateCommand(
+						packageInfo.version,
+						data.latestVersion,
+						data.latestOfficialVersion,
+					),
+				]);
+			} else {
+				void spawnAsync("docker", [
+					"service",
+					"update",
+					"--force",
+					"--image",
+					`dokploy/dokploy:${data.latestVersion}`,
+					"dokploy",
+				]);
+			}
 			await audit(ctx, {
 				action: "update",
 				resourceType: "settings",

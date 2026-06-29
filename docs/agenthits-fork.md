@@ -26,6 +26,9 @@ Fork: off_v0.29.8/Fork_<commits-since-official>+<short-sha>
 - Можно безопаснее сверять VPS, GitHub Actions build и pinned Docker image tag.
 - Официальный `package.json` version остается semver-версией Dokploy, поэтому
   стандартная логика проверки upstream releases не смешивается с fork metadata.
+- Dashboard update check для форка сравнивает текущий Docker service digest с
+  `ghcr.io/agenthits/dokploy:agenthits-dev`, поэтому UI обновляет установленный
+  сервер из ветки `AgentHits-Dev`.
 
 ### Преимущества форка
 
@@ -46,10 +49,10 @@ Fork: off_v0.29.8/Fork_<commits-since-official>+<short-sha>
 
 ### Важно
 
-Форк остается отдельной линией сборки поверх официального Dokploy. Если нужно
-оставаться на AgentHits build, обновляйте сервер через `install-agenthits.sh
-update` или pinned image tag из `ghcr.io/agenthits/dokploy`. Официальная кнопка
-upstream update ориентирована на официальный image Dokploy.
+Форк остается отдельной линией сборки поверх официального Dokploy. Для обычного
+обновления используйте dashboard update button или `install-agenthits.sh
+update`. Для rollback используйте pinned image tag из
+`ghcr.io/agenthits/dokploy`.
 
 ## English
 
@@ -78,6 +81,9 @@ commits, the fork version looks like `off_v0.29.8/Fork_157+abc123def456`.
   compare.
 - The official `package.json` version remains Dokploy's semver version, so
   upstream release checks are not mixed with fork metadata.
+- The fork dashboard update check compares the current Docker service digest
+  with `ghcr.io/agenthits/dokploy:agenthits-dev`, so the UI updates installed
+  servers from the `AgentHits-Dev` branch.
 
 ### Fork advantages
 
@@ -99,7 +105,6 @@ commits, the fork version looks like `off_v0.29.8/Fork_157+abc123def456`.
 
 ### Important
 
-This fork is a separate build line on top of official Dokploy. To stay on the
-AgentHits build, update through `install-agenthits.sh update` or a pinned image
-tag from `ghcr.io/agenthits/dokploy`. The official upstream update button is
-oriented around the official Dokploy image.
+This fork is a separate build line on top of official Dokploy. For normal
+updates, use the dashboard update button or `install-agenthits.sh update`. For
+rollback, use a pinned image tag from `ghcr.io/agenthits/dokploy`.

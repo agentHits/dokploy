@@ -120,6 +120,9 @@ curl -i http://127.0.0.1:3000/api/trpc/settings.health
 docker service inspect dokploy --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}'
 ```
 
+Dashboard update button в AgentHits fork проверяет и обновляет image из
+`ghcr.io/agenthits/dokploy:agenthits-dev`.
+
 Подробная инструкция: [docs/agenthits-install.md](docs/agenthits-install.md).
 
 <details>
@@ -230,6 +233,9 @@ docker service logs --tail 80 dokploy
 curl -i http://127.0.0.1:3000/api/trpc/settings.health
 docker service inspect dokploy --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}'
 ```
+
+The dashboard update button in the AgentHits fork checks and updates the image
+from `ghcr.io/agenthits/dokploy:agenthits-dev`.
 
 Full guide: [docs/agenthits-install.md](docs/agenthits-install.md).
 

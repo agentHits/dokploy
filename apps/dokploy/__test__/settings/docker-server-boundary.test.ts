@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 	findServerById: vi.fn(),
 	generateOpenApiDocument: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
+	getAgentHitsUpdateCommand: vi.fn(),
 	getDockerDiskUsage: vi.fn(),
 	getDokployImageTag: vi.fn(),
 	getDokployVersionData: vi.fn(),
@@ -79,6 +80,7 @@ vi.mock("@dokploy/server", () => ({
 	execAsync: mocks.execAsync,
 	findServerById: mocks.findServerById,
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
+	getAgentHitsUpdateCommand: mocks.getAgentHitsUpdateCommand,
 	getDockerDiskUsage: mocks.getDockerDiskUsage,
 	getDokployImageTag: mocks.getDokployImageTag,
 	getDokployVersionData: mocks.getDokployVersionData,
@@ -378,6 +380,48 @@ describe("settings Docker server boundary", () => {
 		});
 
 		expect(mocks.cleanupAllBackground).toHaveBeenCalledWith("server-1");
+	});
+
+	it("updates AgentHits installs through the AgentHits update command", async () => {
+		mocks.getUpdateData.mockResolvedValue({
+			latestVersion: "off_v0.29.8/Fork_159+next",
+			updateAvailable: true,
+			updateSource: "agenthits",
+			latestOfficialVersion: "v0.30.0",
+		});
+		mocks.getAgentHitsUpdateCommand.mockReturnValue("agenthits update command");
+
+		await expect(createCaller().updateServer()).resolves.toBe(true);
+
+		expect(mocks.getAgentHitsUpdateCommand).toHaveBeenCalledWith(
+			"v0.29.8",
+			"off_v0.29.8/Fork_159+next",
+			"v0.30.0",
+		);
+		expect(mocks.spawnAsync).toHaveBeenCalledWith("sh", [
+			"-c",
+			"agenthits update command",
+		]);
+	});
+
+	it("keeps official updates on the official Dokploy image path", async () => {
+		mocks.getUpdateData.mockResolvedValue({
+			latestVersion: "v0.30.0",
+			updateAvailable: true,
+			updateSource: "official",
+		});
+
+		await expect(createCaller().updateServer()).resolves.toBe(true);
+
+		expect(mocks.spawnAsync).toHaveBeenCalledWith("docker", [
+			"service",
+			"update",
+			"--force",
+			"--image",
+			"dokploy/dokploy:v0.30.0",
+			"dokploy",
+		]);
+		expect(mocks.getAgentHitsUpdateCommand).not.toHaveBeenCalled();
 	});
 
 	it("requires api.read before generating the OpenAPI document", async () => {

@@ -127,6 +127,11 @@ chmod +x install-agenthits.sh
 bash install-agenthits.sh update
 ```
 
+В dashboard кнопка `Check for updates` для AgentHits fork сравнивает текущий
+Docker service image digest с `ghcr.io/agenthits/dokploy:agenthits-dev`.
+Если digest отличается, обновление через UI запускает `docker service update`
+на AgentHits GHCR image, а не на официальный `dokploy/dokploy`.
+
 Обновление на конкретный immutable tag:
 
 ```bash
@@ -170,7 +175,7 @@ echo "YOUR_GITHUB_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --passwo
   deployment jobs.
 - Fork version обычно зашита в GitHub image build. Передавайте
   `DOKPLOY_FORK_VERSION` вручную только для custom/local images.
-- Не используйте upstream Dokploy update button, если хотите оставаться на
-  форке. Для обновления используйте `install-agenthits.sh update`.
+- Dashboard update button в AgentHits fork обновляет из
+  `ghcr.io/agenthits/dokploy:agenthits-dev`.
 - Для rollback храните конкретный tag `agenthits-dev-<short-sha>` или
   `sha-<full-sha>` после успешной проверки.
