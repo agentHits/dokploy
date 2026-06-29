@@ -301,6 +301,12 @@ export interface DockerDiskUsageVerboseDetails {
 	buildCache: DockerDiskUsageDetailItem[];
 }
 
+export type DockerDiskUsageDetailLimit = 5 | 10 | 15 | null;
+
+export const resolveDockerDiskUsageDetailLimit = (
+	detailLimit?: DockerDiskUsageDetailLimit,
+): DockerDiskUsageDetailLimit => (detailLimit === undefined ? 10 : detailLimit);
+
 const parseSizeToBytes = (size: string): number => {
 	const match = size.match(/^([\d.]+)\s*([KMGT]?B)$/i);
 	if (!match) return 0;
@@ -334,6 +340,157 @@ const splitDockerTableRow = (line: string) =>
 
 const sortDiskUsageDetails = (items: DockerDiskUsageDetailItem[]) =>
 	items.sort((a, b) => b.sizeBytes - a.sizeBytes);
+
+interface DockerDiskUsageContainerReference {
+	id: string;
+	image: string;
+	name: string;
+}
+
+interface DockerImageInspect {
+	Id?: string;
+	RepoDigests?: string[];
+	RepoTags?: string[];
+	GraphDriver?: {
+		Data?: Record<string, string>;
+	};
+}
+
+interface DockerVolumeInspect {
+	Driver?: string;
+	Mountpoint?: string;
+	Name?: string;
+}
+
+interface DockerDiskUsageEnrichment {
+	containers?: DockerDiskUsageContainerReference[];
+	imageInspects?: Map<string, DockerImageInspect>;
+	volumeInspects?: Map<string, DockerVolumeInspect>;
+}
+
+const parseJsonLines = <T>(stdout: string): T[] =>
+	stdout
+		.trim()
+		.split("\n")
+		.filter(Boolean)
+		.flatMap((line) => {
+			try {
+				return [JSON.parse(line) as T];
+			} catch {
+				return [];
+			}
+		});
+
+const parseJsonArray = <T>(stdout: string): T[] => {
+	try {
+		const parsed = JSON.parse(stdout);
+		return Array.isArray(parsed) ? (parsed as T[]) : [];
+	} catch {
+		return [];
+	}
+};
+
+const isDanglingImageName = (name: string) => name === "<none>:<none>";
+
+const isSameImageReference = (
+	containerImage: string,
+	detail: DockerDiskUsageDetailItem,
+	inspect?: DockerImageInspect,
+) => {
+	const fullId = inspect?.Id ?? "";
+	const shortId = detail.id;
+
+	return (
+		containerImage === detail.name ||
+		containerImage === shortId ||
+		containerImage.startsWith(shortId) ||
+		(Boolean(fullId) && containerImage === fullId) ||
+		(Boolean(fullId) && fullId.startsWith(`sha256:${containerImage}`))
+	);
+};
+
+const formatListValue = (items: string[], emptyValue = "--") =>
+	items.length > 0 ? items.join(", ") : emptyValue;
+
+const getImagePathFromInspect = (inspect?: DockerImageInspect) => {
+	const data = inspect?.GraphDriver?.Data;
+	return data?.MergedDir ?? data?.UpperDir ?? data?.WorkDir;
+};
+
+export const enrichDockerDiskUsageDetails = (
+	details: DockerDiskUsageVerboseDetails,
+	enrichment: DockerDiskUsageEnrichment,
+): DockerDiskUsageVerboseDetails => {
+	const containers = enrichment.containers ?? [];
+	const imageInspects = enrichment.imageInspects ?? new Map();
+	const volumeInspects = enrichment.volumeInspects ?? new Map();
+
+	return {
+		...details,
+		images: details.images.map((detail) => {
+			const inspect = imageInspects.get(detail.id);
+			const fullId = inspect?.Id ?? detail.id;
+			const repoTags =
+				inspect?.RepoTags?.filter((tag: string) => tag !== "<none>:<none>") ??
+				[];
+			const repoDigests = inspect?.RepoDigests ?? [];
+			const usedBy = containers
+				.filter((container) =>
+					isSameImageReference(container.image, detail, inspect),
+				)
+				.map((container) => container.name);
+			const imagePath = getImagePathFromInspect(inspect);
+			const extraMeta = [
+				{ label: "Full image id", value: fullId },
+				{
+					label: "Source",
+					value: isDanglingImageName(detail.name)
+						? "dangling local image"
+						: detail.name,
+				},
+				...(repoTags.length > 0
+					? [{ label: "Tags", value: formatListValue(repoTags) }]
+					: []),
+				...(repoDigests.length > 0
+					? [{ label: "Digests", value: formatListValue(repoDigests) }]
+					: []),
+				...(imagePath ? [{ label: "Docker path", value: imagePath }] : []),
+				{
+					label: "Used by",
+					value: formatListValue(usedBy, "no containers reported"),
+				},
+			];
+
+			return {
+				...detail,
+				meta: [
+					...extraMeta,
+					...detail.meta.filter(
+						(meta) => meta.label !== "Containers" || usedBy.length === 0,
+					),
+				],
+				subtitle: isDanglingImageName(detail.name)
+					? "Dangling local image"
+					: detail.subtitle,
+			};
+		}),
+		volumes: details.volumes.map((detail) => {
+			const inspect = volumeInspects.get(detail.id);
+			return {
+				...detail,
+				meta: [
+					...(inspect?.Mountpoint
+						? [{ label: "Mountpoint", value: inspect.Mountpoint }]
+						: []),
+					...(inspect?.Driver
+						? [{ label: "Driver", value: inspect.Driver }]
+						: []),
+					...detail.meta,
+				],
+			};
+		}),
+	};
+};
 
 export const parseDockerDiskUsageSummary = (
 	stdout: string,
@@ -498,7 +655,97 @@ export const parseDockerDiskUsageVerbose = (
 	};
 };
 
-export const getDockerDiskUsage = async (): Promise<DockerDiskUsageItem[]> => {
+const limitDiskUsageDetailItems = (
+	items: DockerDiskUsageDetailItem[],
+	detailLimit: DockerDiskUsageDetailLimit,
+) => (typeof detailLimit === "number" ? items.slice(0, detailLimit) : items);
+
+export const limitDockerDiskUsageDetails = (
+	details: DockerDiskUsageVerboseDetails,
+	detailLimit: DockerDiskUsageDetailLimit = 10,
+): DockerDiskUsageVerboseDetails => ({
+	buildCache: limitDiskUsageDetailItems(details.buildCache, detailLimit),
+	containers: limitDiskUsageDetailItems(details.containers, detailLimit),
+	images: limitDiskUsageDetailItems(details.images, detailLimit),
+	volumes: limitDiskUsageDetailItems(details.volumes, detailLimit),
+});
+
+const getDockerDiskUsageContainerReferences = async (): Promise<
+	DockerDiskUsageContainerReference[]
+> => {
+	const { stdout } = await execAsync(
+		"docker ps -a --no-trunc --format '{{json .}}'",
+	);
+
+	return parseJsonLines<{
+		ID?: string;
+		Image?: string;
+		Names?: string;
+	}>(stdout).flatMap((container) => {
+		if (!container.ID || !container.Image || !container.Names) {
+			return [];
+		}
+
+		return {
+			id: container.ID,
+			image: container.Image,
+			name: container.Names,
+		};
+	});
+};
+
+const inspectDockerImages = async (
+	images: DockerDiskUsageDetailItem[],
+): Promise<Map<string, DockerImageInspect>> => {
+	const imageIds = images.map((image) => image.id).filter(Boolean);
+	if (imageIds.length === 0) {
+		return new Map();
+	}
+
+	const command = `docker image inspect ${imageIds
+		.map((imageId) => quoteShellArg(imageId))
+		.join(" ")}`;
+	const { stdout } = await execAsync(command);
+	const inspectedImages = parseJsonArray<DockerImageInspect>(stdout);
+
+	return new Map(
+		inspectedImages.flatMap((image) => {
+			const matchingId = imageIds.find(
+				(imageId) =>
+					image.Id === imageId ||
+					Boolean(image.Id?.startsWith(`sha256:${imageId}`)),
+			);
+
+			return matchingId ? [[matchingId, image] as const] : [];
+		}),
+	);
+};
+
+const inspectDockerVolumes = async (
+	volumes: DockerDiskUsageDetailItem[],
+): Promise<Map<string, DockerVolumeInspect>> => {
+	const volumeNames = volumes.map((volume) => volume.id).filter(Boolean);
+	if (volumeNames.length === 0) {
+		return new Map();
+	}
+
+	const command = `docker volume inspect ${volumeNames
+		.map((volumeName) => quoteShellArg(volumeName))
+		.join(" ")}`;
+	const { stdout } = await execAsync(command);
+	const inspectedVolumes = parseJsonArray<DockerVolumeInspect>(stdout);
+
+	return new Map(
+		inspectedVolumes.flatMap((volume) => {
+			const name = volume.Name;
+			return name ? [[name, volume] as const] : [];
+		}),
+	);
+};
+
+export const getDockerDiskUsage = async (
+	detailLimit: DockerDiskUsageDetailLimit = 10,
+): Promise<DockerDiskUsageItem[]> => {
 	const summaryCommand = "docker system df --format '{{json .}}'";
 	const verboseCommand = "docker system df -v";
 	const [summaryResult, verboseResult] = await Promise.all([
@@ -506,12 +753,27 @@ export const getDockerDiskUsage = async (): Promise<DockerDiskUsageItem[]> => {
 		execAsync(verboseCommand).catch(() => ({ stdout: "" })),
 	]);
 
-	const details = parseDockerDiskUsageVerbose(verboseResult.stdout);
+	const parsedDetails = parseDockerDiskUsageVerbose(verboseResult.stdout);
+	const limitedDetails = limitDockerDiskUsageDetails(
+		parsedDetails,
+		detailLimit,
+	);
+	const [containers, imageInspects, volumeInspects] = await Promise.all([
+		getDockerDiskUsageContainerReferences().catch(() => []),
+		inspectDockerImages(limitedDetails.images).catch(() => new Map()),
+		inspectDockerVolumes(limitedDetails.volumes).catch(() => new Map()),
+	]);
+	const details = enrichDockerDiskUsageDetails(limitedDetails, {
+		containers,
+		imageInspects,
+		volumeInspects,
+	});
+
 	return parseDockerDiskUsageSummary(summaryResult.stdout).map((item) => {
 		const detailsKey = dockerDiskUsageTypeToDetailsKey[item.type];
 		return {
 			...item,
-			details: detailsKey ? details[detailsKey].slice(0, 10) : [],
+			details: detailsKey ? details[detailsKey] : [],
 		};
 	});
 };

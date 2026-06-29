@@ -38,6 +38,7 @@ import {
 	recreateDirectory,
 	redactWebServerSettings,
 	reloadDockerResource,
+	resolveDockerDiskUsageDetailLimit,
 	sendDockerCleanupNotifications,
 	setupGPUSupport,
 	spawnAsync,
@@ -336,12 +337,25 @@ export const settingsRouter = createTRPCRouter({
 		});
 		return true;
 	}),
-	getDockerDiskUsage: adminProcedure.query(async () => {
-		if (IS_CLOUD) {
-			return [];
-		}
-		return getDockerDiskUsage();
-	}),
+	getDockerDiskUsage: adminProcedure
+		.input(
+			z
+				.object({
+					detailLimit: z
+						.union([z.literal(5), z.literal(10), z.literal(15)])
+						.nullable()
+						.optional(),
+				})
+				.optional(),
+		)
+		.query(async ({ input }) => {
+			if (IS_CLOUD) {
+				return [];
+			}
+			return getDockerDiskUsage(
+				resolveDockerDiskUsageDetailLimit(input?.detailLimit),
+			);
+		}),
 	saveSSHPrivateKey: adminProcedure
 		.input(apiSaveSSHKey)
 		.mutation(async ({ input, ctx }) => {

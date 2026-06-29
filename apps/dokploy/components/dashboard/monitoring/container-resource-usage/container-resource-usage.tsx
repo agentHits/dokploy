@@ -259,19 +259,22 @@ export const ContainerResourceUsage = () => {
 						topNetworkContainer &&
 						topNetworkValues && (
 							<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-								<div className="rounded-md border p-3">
+								<div className="min-w-0 overflow-hidden rounded-md border p-3">
 									<div className="flex items-center gap-2 text-xs text-muted-foreground">
 										<Activity className="size-3.5" />
 										Top CPU
 									</div>
-									<p className="mt-1 text-sm font-medium">
+									<p
+										className="mt-1 truncate text-sm font-medium"
+										title={topCpuContainer.Name}
+									>
 										{topCpuContainer.Name}
 									</p>
 									<p className="text-xs text-muted-foreground">
 										{topCpuValues.cpuPercent.toFixed(1)}%
 									</p>
 								</div>
-								<div className="rounded-md border p-3">
+								<div className="min-w-0 overflow-hidden rounded-md border p-3">
 									<div className="flex items-center gap-2 text-xs text-muted-foreground">
 										<MemoryStick className="size-3.5" />
 										Memory Used
@@ -279,11 +282,14 @@ export const ContainerResourceUsage = () => {
 									<p className="mt-1 text-sm font-medium">
 										{formatDockerStatSize(topMemoryValues.memoryUsedBytes)}
 									</p>
-									<p className="text-xs text-muted-foreground">
+									<p
+										className="truncate text-xs text-muted-foreground"
+										title={`${topMemoryContainer.Name} - ${topMemoryContainer.MemUsage}`}
+									>
 										{topMemoryContainer.Name} - {topMemoryContainer.MemUsage}
 									</p>
 								</div>
-								<div className="rounded-md border p-3">
+								<div className="min-w-0 overflow-hidden rounded-md border p-3">
 									<div className="flex items-center gap-2 text-xs text-muted-foreground">
 										<HardDrive className="size-3.5" />
 										Disk Size
@@ -291,11 +297,14 @@ export const ContainerResourceUsage = () => {
 									<p className="mt-1 text-sm font-medium">
 										{formatDockerStatSize(topSizeValues.diskSizeBytes)}
 									</p>
-									<p className="text-xs text-muted-foreground">
+									<p
+										className="truncate text-xs text-muted-foreground"
+										title={`${topSizeContainer.Name} - ${topSizeContainer.Size || "--"}`}
+									>
 										{topSizeContainer.Name} - {topSizeContainer.Size || "--"}
 									</p>
 								</div>
-								<div className="rounded-md border p-3">
+								<div className="min-w-0 overflow-hidden rounded-md border p-3">
 									<div className="flex items-center gap-2 text-xs text-muted-foreground">
 										<HardDrive className="size-3.5" />
 										Disk I/O
@@ -303,11 +312,14 @@ export const ContainerResourceUsage = () => {
 									<p className="mt-1 text-sm font-medium">
 										{formatDockerStatSize(topBlockValues.blockTotalBytes)}
 									</p>
-									<p className="text-xs text-muted-foreground">
+									<p
+										className="truncate text-xs text-muted-foreground"
+										title={`${topBlockContainer.Name} - ${topBlockContainer.BlockIO}`}
+									>
 										{topBlockContainer.Name} - {topBlockContainer.BlockIO}
 									</p>
 								</div>
-								<div className="rounded-md border p-3">
+								<div className="min-w-0 overflow-hidden rounded-md border p-3">
 									<div className="flex items-center gap-2 text-xs text-muted-foreground">
 										<Network className="size-3.5" />
 										Network I/O
@@ -315,7 +327,10 @@ export const ContainerResourceUsage = () => {
 									<p className="mt-1 text-sm font-medium">
 										{formatDockerStatSize(topNetworkValues.networkTotalBytes)}
 									</p>
-									<p className="text-xs text-muted-foreground">
+									<p
+										className="truncate text-xs text-muted-foreground"
+										title={`${topNetworkContainer.Name} - ${topNetworkContainer.NetIO}`}
+									>
 										{topNetworkContainer.Name} - {topNetworkContainer.NetIO}
 									</p>
 								</div>
