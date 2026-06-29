@@ -120,7 +120,8 @@ esac
 };
 
 const runUpdateScript = (
-	fakeDockerOptions: Parameters<typeof writeFakeDocker>[1],
+	fakeDockerOptions: Parameters<typeof writeFakeDocker>[1] &
+		Parameters<typeof writeFakeCurl>[1],
 ) => {
 	const tempDir = mkdtempSync(path.join(tmpdir(), "agenthits-update-script-"));
 	try {
