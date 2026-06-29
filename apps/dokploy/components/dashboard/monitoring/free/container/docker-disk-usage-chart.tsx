@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, Loader2, RefreshCw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Cell, Label, Pie, PieChart } from "recharts";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +16,16 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/utils/api";
+import {
+	getDockerDiskUsageChartClassName,
+	getDockerDiskUsageControlsClassName,
+	getDockerDiskUsageHeaderClassName,
+	getDockerDiskUsageLegendClassName,
+	getDockerDiskUsageLegendItemClassName,
+	getDockerDiskUsageLegendTextClassName,
+	getDockerDiskUsageSelectTriggerClassName,
+	getDockerDiskUsageToggleClassName,
+} from "./docker-disk-usage-layout";
 
 const TYPE_TO_KEY: Record<string, string> = {
 	Images: "images",
@@ -104,7 +114,13 @@ const DetailMeta = ({
 	</div>
 );
 
-export const DockerDiskUsageChart = () => {
+type DockerDiskUsageChartProps = {
+	onDetailsVisibilityChange?: (showDetails: boolean) => void;
+};
+
+export const DockerDiskUsageChart = ({
+	onDetailsVisibilityChange,
+}: DockerDiskUsageChartProps) => {
 	const [showDetails, setShowDetails] = useState(true);
 	const [detailLimit, setDetailLimit] = useState<DetailLimitOption>("10");
 	const { data, isLoading, refetch, isRefetching } =
@@ -114,6 +130,10 @@ export const DockerDiskUsageChart = () => {
 				refetchOnWindowFocus: false,
 			},
 		);
+
+	useEffect(() => {
+		onDetailsVisibilityChange?.(showDetails);
+	}, [onDetailsVisibilityChange, showDetails]);
 
 	const { chartData, totalBytes } = useMemo(() => {
 		const items =
@@ -156,11 +176,11 @@ export const DockerDiskUsageChart = () => {
 
 	return (
 		<div className="flex flex-col gap-2 w-full">
-			<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-				<span className="text-sm text-muted-foreground">
+			<div className={getDockerDiskUsageHeaderClassName(showDetails)}>
+				<span className="whitespace-nowrap text-sm text-muted-foreground">
 					Total: {formatSize(totalBytes)}
 				</span>
-				<div className="flex flex-wrap items-center gap-2">
+				<div className={getDockerDiskUsageControlsClassName(showDetails)}>
 					<Select
 						value={detailLimit}
 						onValueChange={(value) =>
@@ -168,7 +188,7 @@ export const DockerDiskUsageChart = () => {
 						}
 					>
 						<SelectTrigger
-							className="h-8 w-[116px]"
+							className={getDockerDiskUsageSelectTriggerClassName(showDetails)}
 							aria-label="Docker disk usage detail limit"
 						>
 							<SelectValue />
@@ -195,7 +215,7 @@ export const DockerDiskUsageChart = () => {
 					<Button
 						variant="outline"
 						size="sm"
-						className="shrink-0"
+						className={getDockerDiskUsageToggleClassName(showDetails)}
 						onClick={() => setShowDetails((value) => !value)}
 					>
 						{showDetails ? (
@@ -209,7 +229,7 @@ export const DockerDiskUsageChart = () => {
 			</div>
 			<ChartContainer
 				config={chartConfig}
-				className="mx-auto w-full max-h-[250px] [&_.recharts-pie-label-text]:fill-foreground"
+				className={getDockerDiskUsageChartClassName(showDetails)}
 			>
 				<PieChart>
 					<ChartTooltip
@@ -273,14 +293,19 @@ export const DockerDiskUsageChart = () => {
 					</Pie>
 				</PieChart>
 			</ChartContainer>
-			<div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+			<div className={getDockerDiskUsageLegendClassName(showDetails)}>
 				{chartData.map((item) => (
-					<div key={`legend-${item.name}`} className="flex items-center gap-2">
+					<div
+						key={`legend-${item.name}`}
+						className={getDockerDiskUsageLegendItemClassName(showDetails)}
+					>
 						<span
-							className="size-2.5 rounded-sm"
+							className="size-2.5 shrink-0 rounded-sm"
 							style={{ backgroundColor: item.fill }}
 						/>
-						<span>
+						<span
+							className={getDockerDiskUsageLegendTextClassName(showDetails)}
+						>
 							{getChartLabel(item.name)} - {item.size}
 						</span>
 					</div>

@@ -7,6 +7,7 @@ import { DockerBlockChart } from "./docker-block-chart";
 import { DockerCpuChart } from "./docker-cpu-chart";
 import { DockerDiskChart } from "./docker-disk-chart";
 import { DockerDiskUsageChart } from "./docker-disk-usage-chart";
+import { getDockerDiskUsageCardClassName } from "./docker-disk-usage-layout";
 import { DockerMemoryChart } from "./docker-memory-chart";
 import { DockerNetworkChart } from "./docker-network-chart";
 
@@ -159,6 +160,8 @@ export const ContainerFreeMonitoring = ({
 		disk: [],
 	});
 	const [currentData, setCurrentData] = useState<DockerStats>(defaultData);
+	const [isDockerDiskUsageExpanded, setIsDockerDiskUsageExpanded] =
+		useState(true);
 
 	useEffect(() => {
 		setCurrentData(defaultData);
@@ -327,14 +330,20 @@ export const ContainerFreeMonitoring = ({
 					</Card>
 				)}
 				{appName === "dokploy" && (
-					<Card className="bg-background">
+					<Card
+						className={getDockerDiskUsageCardClassName(
+							isDockerDiskUsageExpanded,
+						)}
+					>
 						<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
 							<CardTitle className="text-sm font-medium">
 								Docker Disk Usage
 							</CardTitle>
 						</CardHeader>
 						<CardContent>
-							<DockerDiskUsageChart />
+							<DockerDiskUsageChart
+								onDetailsVisibilityChange={setIsDockerDiskUsageExpanded}
+							/>
 						</CardContent>
 					</Card>
 				)}
