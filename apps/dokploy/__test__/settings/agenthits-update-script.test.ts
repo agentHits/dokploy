@@ -22,7 +22,8 @@ const installerScript = path.join(repoRoot, "install-agenthits.sh");
 const writeFakeDocker = (
 	dir: string,
 	options: {
-		currentDigest: string;
+		currentDigest?: string;
+		currentImage?: string;
 		latestIndexDigest: string;
 		latestPlatformDigest: string;
 		latestOfficialVersion?: string;
@@ -31,13 +32,16 @@ const writeFakeDocker = (
 	},
 ) => {
 	const dockerPath = path.join(dir, "docker");
+	const currentImage =
+		options.currentImage ??
+		`ghcr.io/agenthits/dokploy:agenthits-dev@${options.currentDigest}`;
 	const fakeDocker = `#!/bin/sh
 printf '%s\\n' "$*" >> "$DOCKER_CALL_LOG"
 
 if [ "$1" = "service" ] && [ "$2" = "inspect" ]; then
 	case "$5" in
 		*ContainerSpec.Image*)
-			printf '%s\\n' "ghcr.io/agenthits/dokploy:agenthits-dev@${options.currentDigest}"
+			printf '%s\\n' "${currentImage}"
 			exit 0
 			;;
 		*ContainerSpec.Env*)
@@ -79,6 +83,7 @@ const writeFakeCurl = (
 		latestPlatformDigest: string;
 		latestOfficialVersion?: string;
 		latestForkVersion?: string;
+		failMetadataFetch?: boolean;
 	},
 ) => {
 	const curlPath = path.join(dir, "curl");
@@ -92,6 +97,7 @@ done
 
 case "$url" in
 	*"/token?"*)
+		${options.failMetadataFetch ? "exit 1" : ""}
 		printf '%s\\n' '{"token":"token"}'
 		;;
 	*"/manifests/${options.latestPlatformDigest}")
@@ -161,6 +167,45 @@ describe("AgentHits update script", () => {
 		expect(calls).toContain("buildx imagetools inspect");
 		expect(calls).not.toContain("pull ");
 		expect(calls).not.toContain("service update");
+	});
+
+	it("skips service update when the installed service uses the current tag without a pinned digest", () => {
+		const { result, calls } = runUpdateScript({
+			currentImage: "ghcr.io/agenthits/dokploy:agenthits-dev",
+			latestIndexDigest: "sha256:index",
+			latestPlatformDigest: "sha256:platform",
+			serviceEnv: [
+				"RELEASE_TAG=agenthits-dev",
+				"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+				"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_160+latest",
+			],
+		});
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain("metadata matches latest image");
+		expect(calls).toContain("service inspect dokploy");
+		expect(calls).toContain("buildx imagetools inspect");
+		expect(calls).not.toContain("pull ");
+		expect(calls).not.toContain("service update");
+	});
+
+	it("does not trust a mutable image tag as up to date when remote metadata cannot be loaded", () => {
+		const { result, calls } = runUpdateScript({
+			currentImage: "ghcr.io/agenthits/dokploy:agenthits-dev",
+			latestIndexDigest: "sha256:index",
+			latestPlatformDigest: "sha256:platform",
+			failMetadataFetch: true,
+			serviceEnv: [
+				"RELEASE_TAG=agenthits-dev",
+				"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+				"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_160+latest",
+			],
+		});
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain("Updating AgentHits Dokploy");
+		expect(calls).toContain("service update");
+		expect(calls).not.toContain("pull ");
 	});
 
 	it("updates the service without a separate docker pull when the digest changed", () => {

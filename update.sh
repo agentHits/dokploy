@@ -56,6 +56,18 @@ extract_digest() {
 	esac
 }
 
+image_reference_matches_update_target() {
+	local image="$1"
+	case "$image" in
+		"$DOKPLOY_IMAGE"|"$DOKPLOY_IMAGE"@sha256:*)
+			return 0
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
 get_remote_image_digests() {
 	local inspect_output=""
 	if ! inspect_output="$(docker buildx imagetools inspect "$DOKPLOY_IMAGE" 2>/dev/null)"; then
@@ -201,7 +213,9 @@ update_agenthits_dokploy() {
 	fi
 
 	local remote_metadata=""
+	local remote_metadata_loaded="0"
 	if [ -n "$latest_platform_digest" ] && remote_metadata="$(get_remote_image_metadata "$latest_platform_digest")"; then
+		remote_metadata_loaded="1"
 		local latest_official_version=""
 		local latest_fork_version=""
 		latest_official_version="$(printf '%s\n' "$remote_metadata" | sed -n '1p')"
@@ -215,11 +229,19 @@ update_agenthits_dokploy() {
 		fi
 	fi
 
-	if [ -n "$current_digest" ] &&
-		{ [ "$current_digest" = "$latest_index_digest" ] || [ "$current_digest" = "$latest_platform_digest" ]; } &&
-		metadata_matches "$service_env"; then
-		echo "AgentHits Dokploy is already up to date: $DOKPLOY_IMAGE@$current_digest"
-		exit 0
+	if metadata_matches "$service_env"; then
+		if [ -n "$current_digest" ] &&
+			{ [ "$current_digest" = "$latest_index_digest" ] || [ "$current_digest" = "$latest_platform_digest" ]; }; then
+			echo "AgentHits Dokploy is already up to date: $DOKPLOY_IMAGE@$current_digest"
+			exit 0
+		fi
+
+		if [ -z "$current_digest" ] &&
+			[ "$remote_metadata_loaded" = "1" ] &&
+			image_reference_matches_update_target "$current_image"; then
+			echo "AgentHits Dokploy is already up to date: $DOKPLOY_IMAGE (metadata matches latest image)"
+			exit 0
+		fi
 	fi
 
 	echo "Updating AgentHits Dokploy to $DOKPLOY_IMAGE"
