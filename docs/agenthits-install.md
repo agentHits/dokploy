@@ -13,6 +13,16 @@ ghcr.io/agenthits/dokploy:agenthits-dev
 `AgentHits-Dev`. Для воспроизводимой установки можно использовать immutable
 тег вида `agenthits-dev-<short-sha>`.
 
+В dashboard отображаются две версии:
+
+```text
+Official: v0.29.8
+Fork: off_v0.29.8/Fork_<commits-since-official>+<short-sha>
+```
+
+`Official` показывает официальный Dokploy base, а `Fork` показывает сборку
+AgentHits поверх этой базы. Подробнее: [AgentHits fork](agenthits-fork.md).
+
 ## Требования
 
 - Чистый Linux VPS с root или sudo доступом.
@@ -158,6 +168,8 @@ echo "YOUR_GITHUB_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --passwo
 
 - Installer создает Docker secrets для Postgres, Better Auth, schedule jobs и
   deployment jobs.
+- Fork version обычно зашита в GitHub image build. Передавайте
+  `DOKPLOY_FORK_VERSION` вручную только для custom/local images.
 - Не используйте upstream Dokploy update button, если хотите оставаться на
   форке. Для обновления используйте `install-agenthits.sh update`.
 - Для rollback храните конкретный tag `agenthits-dev-<short-sha>` или

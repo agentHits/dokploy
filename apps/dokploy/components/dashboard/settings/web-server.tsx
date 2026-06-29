@@ -19,7 +19,8 @@ export const WebServer = () => {
 	const { data: webServerSettings } =
 		api.settings.getWebServerSettings.useQuery();
 
-	const { data: dokployVersion } = api.settings.getDokployVersion.useQuery();
+	const { data: dokployVersionData } =
+		api.settings.getDokployVersionData.useQuery();
 
 	return (
 		<div className="w-full">
@@ -63,9 +64,22 @@ export const WebServer = () => {
 									/>
 								)}
 							</span>
-							<span className="text-sm text-muted-foreground">
-								Version: {dokployVersion}
-							</span>
+							{dokployVersionData && (
+								<div className="min-w-0 text-sm text-muted-foreground">
+									<div className="flex min-w-0 items-center gap-1.5">
+										<span>Official:</span>
+										<span className="truncate font-medium">
+											{dokployVersionData.officialVersion}
+										</span>
+									</div>
+									<div className="flex min-w-0 items-center gap-1.5">
+										<span>Fork:</span>
+										<span className="truncate font-medium">
+											{dokployVersionData.forkVersion}
+										</span>
+									</div>
+								</div>
+							)}
 
 							<ToggleDockerCleanup />
 						</div>

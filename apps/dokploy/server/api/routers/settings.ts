@@ -18,6 +18,7 @@ import {
 	getAccessibleServerIds,
 	getDockerDiskUsage,
 	getDokployImageTag,
+	getDokployVersionData,
 	getLogCleanupStatus,
 	getUpdateData,
 	getWebServerSettings,
@@ -661,6 +662,9 @@ export const settingsRouter = createTRPCRouter({
 
 	getDokployVersion: protectedProcedure.query(() => {
 		return packageInfo.version;
+	}),
+	getDokployVersionData: protectedProcedure.query(() => {
+		return getDokployVersionData(packageInfo.version);
 	}),
 	getReleaseTag: protectedProcedure.query(() => {
 		return getDokployImageTag();

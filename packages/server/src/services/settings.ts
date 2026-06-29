@@ -25,9 +25,48 @@ export const DEFAULT_UPDATE_DATA: IUpdateData = {
 	updateAvailable: false,
 };
 
+export interface IDokployVersionData {
+	officialVersion: string;
+	forkVersion: string;
+	releaseTag: string;
+	isFork: boolean;
+}
+
 /** Returns current Dokploy docker image tag or `latest` by default. */
 export const getDokployImageTag = () => {
 	return process.env.RELEASE_TAG || "latest";
+};
+
+export const getOfficialDokployVersion = (currentVersion: string) => {
+	return process.env.DOKPLOY_OFFICIAL_VERSION?.trim() || currentVersion;
+};
+
+export const getForkDokployVersion = (currentVersion: string) => {
+	const forkVersion = process.env.DOKPLOY_FORK_VERSION?.trim();
+	if (forkVersion) {
+		return forkVersion;
+	}
+
+	const releaseTag = getDokployImageTag();
+	if (releaseTag === "latest") {
+		return currentVersion;
+	}
+
+	return releaseTag;
+};
+
+export const getDokployVersionData = (
+	currentVersion: string,
+): IDokployVersionData => {
+	const officialVersion = getOfficialDokployVersion(currentVersion);
+	const forkVersion = getForkDokployVersion(currentVersion);
+
+	return {
+		officialVersion,
+		forkVersion,
+		releaseTag: getDokployImageTag(),
+		isFork: forkVersion !== officialVersion,
+	};
 };
 
 /** Returns Dokploy docker service image digest */

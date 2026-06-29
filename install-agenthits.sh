@@ -3,6 +3,7 @@ set -euo pipefail
 
 DOKPLOY_IMAGE="${DOKPLOY_IMAGE:-ghcr.io/agenthits/dokploy:agenthits-dev}"
 DOKPLOY_RELEASE_TAG="${DOKPLOY_RELEASE_TAG:-agenthits-dev}"
+DOKPLOY_OFFICIAL_VERSION="${DOKPLOY_OFFICIAL_VERSION:-v0.29.8}"
 TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.7.5}"
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18.4}"
 REDIS_IMAGE="${REDIS_IMAGE:-redis:8.8.0}"
@@ -267,6 +268,10 @@ install_agenthits_dokploy() {
 
 	local postgres_data_target
 	postgres_data_target="$(get_postgres_data_target)"
+	local fork_version_env_args=()
+	if [ -n "${DOKPLOY_FORK_VERSION:-}" ]; then
+		fork_version_env_args=(-e "DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION")
+	fi
 
 	docker service create \
 		--name dokploy-postgres \
@@ -305,6 +310,8 @@ install_agenthits_dokploy() {
 		--constraint 'node.role == manager' \
 		$endpoint_mode \
 		-e RELEASE_TAG="$DOKPLOY_RELEASE_TAG" \
+		-e DOKPLOY_OFFICIAL_VERSION="$DOKPLOY_OFFICIAL_VERSION" \
+		"${fork_version_env_args[@]}" \
 		-e ADVERTISE_ADDR="$advertise_addr" \
 		-e API_KEY="$(generate_random_secret)" \
 		-e POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password \
@@ -341,11 +348,20 @@ update_agenthits_dokploy() {
 	require_root_linux_host
 	install_docker_if_missing
 
+	local fork_version_update_args=()
+	if [ -n "${DOKPLOY_FORK_VERSION:-}" ]; then
+		fork_version_update_args=(--env-add "DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION")
+	elif docker service inspect dokploy --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' 2>/dev/null | grep -q '^DOKPLOY_FORK_VERSION='; then
+		fork_version_update_args=(--env-rm DOKPLOY_FORK_VERSION)
+	fi
+
 	docker pull "$DOKPLOY_IMAGE"
 	docker service update \
 		--force \
 		--image "$DOKPLOY_IMAGE" \
 		--env-add RELEASE_TAG="$DOKPLOY_RELEASE_TAG" \
+		--env-add "DOKPLOY_OFFICIAL_VERSION=$DOKPLOY_OFFICIAL_VERSION" \
+		"${fork_version_update_args[@]}" \
 		dokploy
 
 	echo "AgentHits Dokploy updated to $DOKPLOY_IMAGE"

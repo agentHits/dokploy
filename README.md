@@ -20,6 +20,17 @@ GitHub Container Registry:
 ghcr.io/agenthits/dokploy:agenthits-dev
 ```
 
+Dashboard показывает две версии:
+
+```text
+Official: v0.29.8
+Fork: off_v0.29.8/Fork_<commits-since-official>+<short-sha>
+```
+
+`Official` - официальная база Dokploy, а `Fork` - сборка AgentHits поверх этой
+базы. Преимущества форка описаны в
+[docs/agenthits-fork.md](docs/agenthits-fork.md).
+
 ## Установка последней версии на VPS
 
 Требования:
@@ -120,6 +131,17 @@ latest image is published to GitHub Container Registry:
 ```text
 ghcr.io/agenthits/dokploy:agenthits-dev
 ```
+
+The dashboard shows two versions:
+
+```text
+Official: v0.29.8
+Fork: off_v0.29.8/Fork_<commits-since-official>+<short-sha>
+```
+
+`Official` is the official Dokploy base, and `Fork` is the AgentHits build on
+top of that base. Fork advantages are documented in
+[docs/agenthits-fork.md](docs/agenthits-fork.md).
 
 Requirements:
 

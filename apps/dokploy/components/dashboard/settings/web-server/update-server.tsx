@@ -47,8 +47,8 @@ export const UpdateServer = ({
 	);
 	const { mutateAsync: getUpdateData, isPending } =
 		api.settings.getUpdateData.useMutation();
-	const { data: dokployVersion } = api.settings.getDokployVersion.useQuery();
-	const { data: releaseTag } = api.settings.getReleaseTag.useQuery();
+	const { data: dokployVersionData } =
+		api.settings.getDokployVersionData.useQuery();
 	const [latestVersion, setLatestVersion] = useState(
 		updateData?.latestVersion ?? "",
 	);
@@ -131,14 +131,23 @@ export const UpdateServer = ({
 					<DialogTitle className="text-2xl font-semibold">
 						Web Server Update
 					</DialogTitle>
-					{dokployVersion && (
-						<div className="flex items-center gap-1.5 rounded-full px-3 py-1 mr-2 bg-muted">
-							<Server className="h-4 w-4 text-muted-foreground" />
-							<span className="text-sm text-muted-foreground">
-								{dokployVersion}{" "}
-								{(releaseTag === "canary" || releaseTag === "feature") &&
-									`(${releaseTag})`}
-							</span>
+					{dokployVersionData && (
+						<div className="mr-2 flex max-w-[16rem] items-start gap-2 rounded-md bg-muted px-3 py-2">
+							<Server className="mt-0.5 h-4 w-4 flex-shrink-0 text-muted-foreground" />
+							<div className="min-w-0 text-xs leading-5 text-muted-foreground">
+								<div className="flex min-w-0 items-center gap-1.5">
+									<span>Official</span>
+									<span className="truncate font-medium">
+										{dokployVersionData.officialVersion}
+									</span>
+								</div>
+								<div className="flex min-w-0 items-center gap-1.5">
+									<span>Fork</span>
+									<span className="truncate font-medium">
+										{dokployVersionData.forkVersion}
+									</span>
+								</div>
+							</div>
 						</div>
 					)}
 				</div>
