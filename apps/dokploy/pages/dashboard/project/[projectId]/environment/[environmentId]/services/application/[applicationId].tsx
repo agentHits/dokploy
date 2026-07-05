@@ -173,7 +173,7 @@ const Service = (
 													</Label>
 												</TooltipTrigger>
 												<TooltipContent
-													className="z-[999] w-[300px]"
+													className="z-999 w-[300px]"
 													align="start"
 													side="top"
 												>
@@ -356,7 +356,7 @@ const Service = (
 									)}
 									{permissions?.deployment.read && (
 										<TabsContent value="deployments" className="w-full pt-2.5">
-											<div className="flex flex-col gap-4 border rounded-lg">
+											<div className="flex flex-col gap-4 ">
 												<ShowDeployments
 													id={applicationId}
 													type="application"
@@ -371,7 +371,7 @@ const Service = (
 											value="volume-backups"
 											className="w-full pt-2.5"
 										>
-											<div className="flex flex-col gap-4 border rounded-lg">
+											<div className="flex flex-col gap-4 ">
 												<ShowVolumeBackups
 													id={applicationId}
 													type="application"

@@ -1,7 +1,7 @@
+import { assertSignedScheduledQueueJob } from "@dokploy/server";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import "dotenv/config";
-import { assertSignedScheduledQueueJob } from "@dokploy/server/utils/schedules/signed-job";
 import { zValidator } from "@hono/zod-validator";
 import { isValidApiKey } from "./auth.js";
 import { logger } from "./logger.js";

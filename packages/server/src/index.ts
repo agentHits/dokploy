@@ -126,6 +126,7 @@ export * from "./utils/providers/gitlab";
 export * from "./utils/providers/oauth-state";
 export * from "./utils/providers/raw";
 export * from "./utils/schedules/index";
+export * from "./utils/schedules/signed-job";
 export * from "./utils/schedules/utils";
 export * from "./utils/security/redaction";
 export * from "./utils/servers/destination";

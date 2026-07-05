@@ -195,7 +195,7 @@ export const ShowPaidMonitoring = ({ serverId }: Props) => {
 
 			{/* Stats Cards */}
 			<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
-				<div className="rounded-lg border text-card-foreground shadow-sm p-6">
+				<div className="rounded-lg border text-card-foreground shadow-xs p-6">
 					<div className="flex items-center gap-2">
 						<Clock className="h-4 w-4 text-muted-foreground" />
 						<h3 className="text-sm font-medium">Uptime</h3>
@@ -205,7 +205,7 @@ export const ShowPaidMonitoring = ({ serverId }: Props) => {
 					</p>
 				</div>
 
-				<div className="rounded-lg border text-card-foreground shadow-sm p-6">
+				<div className="rounded-lg border text-card-foreground shadow-xs p-6">
 					<div className="flex items-center gap-2">
 						<Cpu className="h-4 w-4 text-muted-foreground" />
 						<h3 className="text-sm font-medium">CPU Usage</h3>
@@ -213,7 +213,7 @@ export const ShowPaidMonitoring = ({ serverId }: Props) => {
 					<p className="mt-2 text-2xl font-bold">{metrics.cpu}%</p>
 				</div>
 
-				<div className="rounded-lg border text-card-foreground bg-transparent shadow-sm p-6">
+				<div className="rounded-lg border text-card-foreground bg-transparent shadow-xs p-6">
 					<div className="flex items-center gap-2">
 						<MemoryStick className="h-4 w-4 text-muted-foreground" />
 						<h3 className="text-sm font-medium">Memory Usage</h3>
@@ -223,7 +223,7 @@ export const ShowPaidMonitoring = ({ serverId }: Props) => {
 					</p>
 				</div>
 
-				<div className="rounded-lg border text-card-foreground shadow-sm p-6">
+				<div className="rounded-lg border text-card-foreground shadow-xs p-6">
 					<div className="flex items-center gap-2">
 						<HardDrive className="h-4 w-4 text-muted-foreground" />
 						<h3 className="text-sm font-medium">Disk Usage</h3>
@@ -233,7 +233,7 @@ export const ShowPaidMonitoring = ({ serverId }: Props) => {
 			</div>
 
 			{/* System Information */}
-			<div className="rounded-lg border text-card-foreground shadow-sm p-6">
+			<div className="rounded-lg border text-card-foreground shadow-xs p-6">
 				<h3 className="text-lg font-medium mb-4">System Information</h3>
 				<div className="grid gap-4 md:grid-cols-2">
 					<div>

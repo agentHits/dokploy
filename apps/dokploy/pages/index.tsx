@@ -37,7 +37,12 @@ import {
 	FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { InputOTP } from "@/components/ui/input-otp";
+import {
+	InputOTP,
+	InputOTPGroup,
+	InputOTPSeparator,
+	InputOTPSlot,
+} from "@/components/ui/input-otp";
 import { Label } from "@/components/ui/label";
 import { authClient } from "@/lib/auth-client";
 import { api } from "@/utils/api";
@@ -181,6 +186,7 @@ export default function Home({ IS_CLOUD, enforceSSO }: Props) {
 			{IS_CLOUD && <SignInWithGoogle />}
 			<Form {...loginForm}>
 				<form
+					method="post"
 					onSubmit={loginForm.handleSubmit(onSubmit)}
 					className="space-y-4"
 					id="login-form"
@@ -262,6 +268,7 @@ export default function Home({ IS_CLOUD, enforceSSO }: Props) {
 				) : (
 					<>
 						<form
+							method="post"
 							onSubmit={onTwoFactorSubmit}
 							className="space-y-4"
 							id="two-factor-form"
@@ -275,10 +282,21 @@ export default function Home({ IS_CLOUD, enforceSSO }: Props) {
 									value={twoFactorCode}
 									onChange={setTwoFactorCode}
 									maxLength={6}
-									placeholder="••••••"
 									pattern={REGEXP_ONLY_DIGITS}
 									autoFocus
-								/>
+								>
+									<InputOTPGroup>
+										<InputOTPSlot index={0} />
+										<InputOTPSlot index={1} />
+										<InputOTPSlot index={2} />
+									</InputOTPGroup>
+									<InputOTPSeparator />
+									<InputOTPGroup>
+										<InputOTPSlot index={3} />
+										<InputOTPSlot index={4} />
+										<InputOTPSlot index={5} />
+									</InputOTPGroup>
+								</InputOTP>
 								<CardDescription>
 									Enter the 6-digit code from your authenticator app
 								</CardDescription>
@@ -325,7 +343,11 @@ export default function Home({ IS_CLOUD, enforceSSO }: Props) {
 									</DialogDescription>
 								</DialogHeader>
 
-								<form onSubmit={onBackupCodeSubmit} className="space-y-4">
+								<form
+									method="post"
+									onSubmit={onBackupCodeSubmit}
+									className="space-y-4"
+								>
 									<div className="flex flex-col gap-2">
 										<Label>Backup Code</Label>
 										<Input

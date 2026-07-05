@@ -311,7 +311,7 @@ export const ShowBilling = () => {
 											<Button
 												variant={!updateFormAnnual ? "default" : "outline"}
 												size="sm"
-												className="min-w-[6rem]"
+												className="min-w-24"
 												onClick={() => setUpdateFormAnnual(false)}
 											>
 												Monthly
@@ -319,7 +319,7 @@ export const ShowBilling = () => {
 											<Button
 												variant={updateFormAnnual ? "default" : "outline"}
 												size="sm"
-												className="min-w-[6rem]"
+												className="min-w-24"
 												onClick={() => setUpdateFormAnnual(true)}
 											>
 												Annual (20% off)
@@ -333,7 +333,7 @@ export const ShowBilling = () => {
 													upgradeTier === "hobby" ? "default" : "outline"
 												}
 												size="sm"
-												className="min-w-[6rem]"
+												className="min-w-24"
 												onClick={() => setUpgradeTier("hobby")}
 											>
 												Hobby
@@ -343,7 +343,7 @@ export const ShowBilling = () => {
 													upgradeTier === "startup" ? "default" : "outline"
 												}
 												size="sm"
-												className="min-w-[6rem]"
+												className="min-w-24"
 												onClick={() => setUpgradeTier("startup")}
 											>
 												Startup
@@ -526,7 +526,7 @@ export const ShowBilling = () => {
 											<Button
 												variant={!updateFormAnnual ? "default" : "outline"}
 												size="sm"
-												className="min-w-[6rem]"
+												className="min-w-24"
 												onClick={() => setUpdateFormAnnual(false)}
 											>
 												Monthly
@@ -534,7 +534,7 @@ export const ShowBilling = () => {
 											<Button
 												variant={updateFormAnnual ? "default" : "outline"}
 												size="sm"
-												className="min-w-[6rem]"
+												className="min-w-24"
 												onClick={() => setUpdateFormAnnual(true)}
 											>
 												Annual (20% off)
@@ -548,7 +548,7 @@ export const ShowBilling = () => {
 													upgradeTier === "hobby" ? "default" : "outline"
 												}
 												size="sm"
-												className="min-w-[6rem]"
+												className="min-w-24"
 												onClick={() => setUpgradeTier("hobby")}
 											>
 												Hobby
@@ -558,7 +558,7 @@ export const ShowBilling = () => {
 													upgradeTier === "startup" ? "default" : "outline"
 												}
 												size="sm"
-												className="min-w-[6rem]"
+												className="min-w-24"
 												onClick={() => setUpgradeTier("startup")}
 											>
 												Startup
@@ -762,7 +762,7 @@ export const ShowBilling = () => {
 									</Tabs>
 									<div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
 										{/* Hobby */}
-										<section className="flex flex-col rounded-2xl border border-border px-5 py-6 shadow-sm">
+										<section className="flex flex-col rounded-2xl border border-border px-5 py-6 shadow-xs">
 											{isAnnual && (
 												<Badge className="mb-3 w-fit" variant="secondary">
 													20% off
@@ -886,7 +886,7 @@ export const ShowBilling = () => {
 										</section>
 
 										{/* Startup - Recommended */}
-										<section className="flex flex-col rounded-2xl border-2 border-primary px-5 py-6 shadow-sm">
+										<section className="flex flex-col rounded-2xl border-2 border-primary px-5 py-6 shadow-xs">
 											<div className="mb-3 flex flex-wrap gap-2">
 												<Badge className="w-fit" variant="default">
 													Recommended
@@ -1037,7 +1037,7 @@ export const ShowBilling = () => {
 										</section>
 
 										{/* Enterprise */}
-										<section className="flex flex-col rounded-2xl border border-border px-5 py-6 shadow-sm">
+										<section className="flex flex-col rounded-2xl border border-border px-5 py-6 shadow-xs">
 											<h3 className="text-xl font-bold tracking-tight text-foreground">
 												Enterprise
 											</h3>
@@ -1091,7 +1091,7 @@ export const ShowBilling = () => {
 										className="w-full"
 										onValueChange={(e) => setIsAnnual(e === "annual")}
 									>
-										<TabsList className="grid w-full max-w-[14rem] grid-cols-2">
+										<TabsList className="grid w-full max-w-56 grid-cols-2">
 											<TabsTrigger value="monthly">Monthly</TabsTrigger>
 											<TabsTrigger value="annual">Annual (20% off)</TabsTrigger>
 										</TabsList>
@@ -1104,7 +1104,7 @@ export const ShowBilling = () => {
 													className={clsx(
 														"flex flex-col rounded-3xl  border-dashed border-2 px-4 max-w-sm",
 														featured
-															? "order-first  border py-8 lg:order-none"
+															? "order-first  border py-8 lg:order-0"
 															: "lg:py-8",
 													)}
 												>

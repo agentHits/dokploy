@@ -29,19 +29,30 @@ const Dashboard = () => {
 				</a>{" "}
 				to get more features.
 			</AlertBlock> */}
-			{toggleMonitoring ? (
-				<Card className="bg-sidebar  p-2.5 rounded-xl  mx-auto">
-					<div className="rounded-xl bg-background shadow-md">
-						<ShowPaidMonitoring />
-					</div>
-				</Card>
-			) : (
-				<Card className="h-full bg-sidebar  p-2.5 rounded-xl">
-					<div className="rounded-xl bg-background shadow-md p-6">
-						<ContainerFreeMonitoring appName="dokploy" />
-					</div>
-				</Card>
-			)}
+			<>
+				{/* {monitoring?.enabledFeatures && (
+						<div className="flex flex-row border w-fit p-4 rounded-lg items-center gap-2">
+							<Label className="text-muted-foreground">Change Monitoring</Label>
+							<Switch
+								checked={toggleMonitoring}
+								onCheckedChange={setToggleMonitoring}
+							/>
+						</div>
+					)} */}
+				{toggleMonitoring ? (
+					<Card className="bg-sidebar  p-2.5 rounded-xl  mx-auto">
+						<div className="rounded-xl bg-background shadow-md">
+							<ShowPaidMonitoring />
+						</div>
+					</Card>
+				) : (
+					<Card className="h-full bg-sidebar  p-2.5 rounded-xl">
+						<div className="rounded-xl bg-background shadow-md p-6">
+							<ContainerFreeMonitoring appName="dokploy" />
+						</div>
+					</Card>
+				)}
+			</>
 		</div>
 	);
 };

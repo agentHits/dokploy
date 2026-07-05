@@ -148,7 +148,7 @@ export const ShowDeployments = ({
 	}, []);
 
 	return (
-		<Card className="bg-background border-none">
+		<Card className="bg-background border-0">
 			<CardHeader className="flex flex-row items-center justify-between flex-wrap gap-2">
 				<div className="flex flex-col gap-2">
 					<CardTitle className="text-xl">Deployments</CardTitle>
@@ -296,7 +296,7 @@ export const ShowDeployments = ({
 										</span>
 
 										<div className="flex flex-col gap-1">
-											<span className="break-words text-sm text-muted-foreground whitespace-pre-wrap">
+											<span className="wrap-break-word text-sm text-muted-foreground whitespace-pre-wrap">
 												{isExpanded || !needsTruncation
 													? titleText
 													: truncateDescription(titleText)}

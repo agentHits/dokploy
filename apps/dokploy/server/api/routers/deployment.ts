@@ -305,8 +305,6 @@ export const deploymentRouter = createTRPCRouter({
 		)
 		.query(async ({ input, ctx }) => {
 			const deployment = await findDeploymentById(input.deploymentId);
-			const deploymentServerId =
-				deployment.serverId || deployment.schedule?.serverId;
 			await assertDeploymentActionAccess(ctx, deployment, "read");
 
 			if (!deployment.logPath) {
@@ -314,8 +312,13 @@ export const deploymentRouter = createTRPCRouter({
 			}
 
 			const command = `tail -n ${input.tail} "${deployment.logPath}" 2>/dev/null || echo ""`;
-			if (deploymentServerId) {
-				const { stdout } = await execAsyncRemote(deploymentServerId, command);
+			const serverId =
+				deployment.serverId ||
+				deployment.schedule?.serverId ||
+				deployment.application?.serverId ||
+				deployment.compose?.serverId;
+			if (serverId) {
+				const { stdout } = await execAsyncRemote(serverId, command);
 				return stdout;
 			}
 

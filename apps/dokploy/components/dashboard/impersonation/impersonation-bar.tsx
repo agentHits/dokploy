@@ -196,7 +196,7 @@ export const ImpersonationBar = () => {
 										>
 											{selectedUser ? (
 												<div className="flex items-center gap-2">
-													<UserIcon className="mr-2 h-4 w-4 flex-shrink-0" />
+													<UserIcon className="mr-2 h-4 w-4 shrink-0" />
 													<span className="truncate flex flex-col items-start">
 														<span className="text-sm font-medium">
 															{`${selectedUser.name} ${selectedUser.lastName}`.trim() ||
@@ -244,7 +244,7 @@ export const ImpersonationBar = () => {
 																	}}
 																>
 																	<span className="flex items-center gap-2 flex-1">
-																		<UserIcon className="h-4 w-4 flex-shrink-0" />
+																		<UserIcon className="h-4 w-4 shrink-0" />
 																		<span className="flex flex-col items-start">
 																			<span className="text-sm font-medium">
 																				{`${user.name} ${user.lastName}`.trim() ||

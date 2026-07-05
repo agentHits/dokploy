@@ -257,7 +257,7 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 												<Button
 													variant="outline"
 													className={cn(
-														"w-full justify-between !bg-input",
+														"w-full justify-between bg-input!",
 														!field.value && "text-muted-foreground",
 													)}
 												>
@@ -354,7 +354,7 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 												<Button
 													variant="outline"
 													className={cn(
-														" w-full justify-between !bg-input",
+														" w-full justify-between bg-input!",
 														!field.value && "text-muted-foreground",
 													)}
 												>
@@ -521,7 +521,7 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 											onCheckedChange={field.onChange}
 										/>
 									</FormControl>
-									<FormLabel className="!mt-0">Enable Submodules</FormLabel>
+									<FormLabel className="mt-0!">Enable Submodules</FormLabel>
 								</FormItem>
 							)}
 						/>
