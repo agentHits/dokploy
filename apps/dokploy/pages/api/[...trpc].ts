@@ -3,8 +3,26 @@ import { createOpenApiNextHandler } from "@dokploy/trpc-openapi";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { appRouter } from "@/server/api/root";
 import { createTRPCContext } from "@/server/api/trpc";
+import { handleApplicationEnvUpsert } from "./application.env.upsert";
 
 const handler = async (req: NextApiRequest, res: NextApiResponse) => {
+	const path = Array.isArray(req.query.trpc)
+		? req.query.trpc.join("/")
+		: req.query.trpc;
+	const dotPath = Array.isArray(req.query.trpc)
+		? req.query.trpc.join(".")
+		: req.query.trpc;
+	const requestPath = req.url?.split("?")[0] ?? "";
+	const routeMarkers = [path, dotPath, requestPath].filter(Boolean).join(" ");
+
+	if (
+		routeMarkers.includes("application.env.upsert") ||
+		routeMarkers.includes("application/env/upsert")
+	) {
+		await handleApplicationEnvUpsert(req, res);
+		return;
+	}
+
 	const { session, user } = await validateRequest(req);
 
 	if (!user || !session) {
