@@ -504,79 +504,83 @@ export const applicationRouter = createTRPCRouter({
 				resourceName: application.appName,
 			});
 		}),
-	env: createTRPCRouter({
-		upsert: protectedProcedure
-			.input(apiUpsertApplicationEnv)
-			.output(apiUpsertApplicationEnvResponse)
-			.mutation(async ({ input, ctx }) => {
-				await checkServicePermissionAndAccess(
-					ctx,
-					input.applicationId,
-					input.redeploy
-						? {
-								envVars: ["write"],
-								deployment: ["create"],
-							}
-						: {
-								envVars: ["write"],
+	envUpsert: protectedProcedure
+		.meta({
+			openapi: {
+				path: "/application/env/upsert",
+				method: "POST",
+			},
+		})
+		.input(apiUpsertApplicationEnv)
+		.output(apiUpsertApplicationEnvResponse)
+		.mutation(async ({ input, ctx }) => {
+			await checkServicePermissionAndAccess(
+				ctx,
+				input.applicationId,
+				input.redeploy
+					? {
+							envVars: ["write"],
+							deployment: ["create"],
+						}
+					: {
+							envVars: ["write"],
+						},
+			);
+
+			const result = await upsertApplicationEnvironment(input);
+			let redeployed = false;
+
+			if (!result.dryRun && result.changed) {
+				const application = await findApplicationById(input.applicationId);
+
+				await audit(ctx, {
+					action: "update",
+					resourceType: "application",
+					resourceId: application.applicationId,
+					resourceName: application.appName,
+				});
+
+				if (input.redeploy) {
+					const jobData: DeploymentJob = {
+						applicationId: input.applicationId,
+						titleLog: "Rebuild deployment",
+						descriptionLog: "Environment variables updated",
+						type: "redeploy",
+						applicationType: "application",
+						server: !!application.serverId,
+					};
+
+					if (IS_CLOUD && application.serverId) {
+						jobData.serverId = application.serverId;
+						deploy(jobData).catch((error) => {
+							console.error("Background deployment failed:", error);
+						});
+					} else {
+						await myQueue.add(
+							"deployments",
+							{ ...jobData },
+							{
+								removeOnComplete: true,
+								removeOnFail: true,
 							},
-				);
-
-				const result = await upsertApplicationEnvironment(input);
-				let redeployed = false;
-
-				if (!result.dryRun && result.changed) {
-					const application = await findApplicationById(input.applicationId);
+						);
+					}
 
 					await audit(ctx, {
-						action: "update",
+						action: "rebuild",
 						resourceType: "application",
 						resourceId: application.applicationId,
 						resourceName: application.appName,
 					});
-
-					if (input.redeploy) {
-						const jobData: DeploymentJob = {
-							applicationId: input.applicationId,
-							titleLog: "Rebuild deployment",
-							descriptionLog: "Environment variables updated",
-							type: "redeploy",
-							applicationType: "application",
-							server: !!application.serverId,
-						};
-
-						if (IS_CLOUD && application.serverId) {
-							jobData.serverId = application.serverId;
-							deploy(jobData).catch((error) => {
-								console.error("Background deployment failed:", error);
-							});
-						} else {
-							await myQueue.add(
-								"deployments",
-								{ ...jobData },
-								{
-									removeOnComplete: true,
-									removeOnFail: true,
-								},
-							);
-						}
-
-						await audit(ctx, {
-							action: "rebuild",
-							resourceType: "application",
-							resourceId: application.applicationId,
-							resourceName: application.appName,
-						});
-						redeployed = true;
-					}
+					redeployed = true;
 				}
+			}
 
-				return {
-					...result,
-					redeployed,
-				};
-			}),
-	}),
+			return {
+				...result,
+				redeployed,
+			};
+		}),
 	saveEnvironment: protectedProcedure
 		.input(apiSaveEnvironmentVariables)
 		.mutation(async ({ input, ctx }) => {
