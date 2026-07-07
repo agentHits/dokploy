@@ -38,6 +38,7 @@ import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { buildRedisPasswordChangeCommand } from "@/server/api/utils/database-password";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
+import { assertServiceEnvironmentReadAccess } from "@/server/api/utils/service-environment";
 import {
 	apiChangeRedisStatus,
 	apiCreateRedis,
@@ -135,6 +136,21 @@ export const redisRouter = createTRPCRouter({
 				});
 			}
 			return redactDatabaseServiceSecrets(redis);
+		}),
+
+	revealEnvironment: protectedProcedure
+		.input(apiFindOneRedis)
+		.mutation(async ({ input, ctx }) => {
+			const redis = await assertServiceEnvironmentReadAccess(
+				ctx,
+				input.redisId,
+				() => findRedisById(input.redisId),
+				"Redis",
+			);
+
+			return {
+				env: redis.env ?? "",
+			};
 		}),
 
 	start: protectedProcedure

@@ -60,6 +60,7 @@ import { audit } from "@/server/api/utils/audit";
 import { assertDeploySourceCredentialAccess } from "@/server/api/utils/deploy-source-access";
 import { assertContainerMetricsServiceAccess } from "@/server/api/utils/monitoring-access";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
+import { assertServiceEnvironmentReadAccess } from "@/server/api/utils/service-environment";
 import {
 	apiCreateApplication,
 	apiDeployApplication,
@@ -331,6 +332,23 @@ export const applicationRouter = createTRPCRouter({
 				),
 				hasGitProviderAccess,
 				unauthorizedProvider,
+			};
+		}),
+
+	revealEnvironment: protectedProcedure
+		.input(apiFindOneApplication)
+		.mutation(async ({ input, ctx }) => {
+			const application = await assertServiceEnvironmentReadAccess(
+				ctx,
+				input.applicationId,
+				() => findApplicationById(input.applicationId),
+				"application",
+			);
+
+			return {
+				env: application.env ?? "",
+				buildArgs: application.buildArgs ?? "",
+				buildSecrets: application.buildSecrets ?? "",
 			};
 		}),
 

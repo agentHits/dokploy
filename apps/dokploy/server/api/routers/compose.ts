@@ -88,6 +88,7 @@ import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { audit } from "../utils/audit";
 import { assertDeploySourceCredentialAccess } from "../utils/deploy-source-access";
 import { assertTargetEnvironmentAccess } from "../utils/placement-access";
+import { assertServiceEnvironmentReadAccess } from "../utils/service-environment";
 
 const composeSourceUpdateFields = [
 	"bitbucketBranch",
@@ -276,6 +277,21 @@ export const composeRouter = createTRPCRouter({
 				...redactDeployableServiceSecrets(redactGitProviderSecrets(compose)),
 				hasGitProviderAccess,
 				unauthorizedProvider,
+			};
+		}),
+
+	revealEnvironment: protectedProcedure
+		.input(apiFindCompose)
+		.mutation(async ({ input, ctx }) => {
+			const compose = await assertServiceEnvironmentReadAccess(
+				ctx,
+				input.composeId,
+				() => findComposeById(input.composeId),
+				"compose",
+			);
+
+			return {
+				env: compose.env ?? "",
 			};
 		}),
 

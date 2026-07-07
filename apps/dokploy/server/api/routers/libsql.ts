@@ -34,6 +34,7 @@ import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
+import { assertServiceEnvironmentReadAccess } from "@/server/api/utils/service-environment";
 import { db } from "@/server/db";
 import {
 	apiChangeLibsqlStatus,
@@ -125,6 +126,21 @@ export const libsqlRouter = createTRPCRouter({
 				});
 			}
 			return redactDatabaseServiceSecrets(libsql);
+		}),
+
+	revealEnvironment: protectedProcedure
+		.input(apiFindOneLibsql)
+		.mutation(async ({ input, ctx }) => {
+			const libsql = await assertServiceEnvironmentReadAccess(
+				ctx,
+				input.libsqlId,
+				() => findLibsqlById(input.libsqlId),
+				"Libsql",
+			);
+
+			return {
+				env: libsql.env ?? "",
+			};
 		}),
 
 	start: protectedProcedure
