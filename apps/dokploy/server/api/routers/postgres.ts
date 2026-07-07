@@ -29,7 +29,10 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
-import { redactDatabaseServiceSecrets } from "@dokploy/server/utils/security/redaction";
+import {
+	preserveSecretPlaceholderFields,
+	redactDatabaseServiceSecrets,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -347,9 +350,17 @@ export const postgresRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.postgresId, {
 				envVars: ["write"],
 			});
-			const service = await updatePostgresById(input.postgresId, {
-				env: input.env,
-			});
+			const currentPostgres = await findPostgresById(input.postgresId);
+			const service = await updatePostgresById(
+				input.postgresId,
+				preserveSecretPlaceholderFields(
+					{
+						env: input.env,
+					},
+					currentPostgres,
+					["env"],
+				),
+			);
 
 			if (!service) {
 				throw new TRPCError({
@@ -405,9 +416,14 @@ export const postgresRouter = createTRPCRouter({
 				service: ["create"],
 			});
 
-			const service = await updatePostgresById(postgresId, {
-				...rest,
-			});
+			const currentPostgres = await findPostgresById(postgresId);
+			const service = await updatePostgresById(
+				postgresId,
+				preserveSecretPlaceholderFields(rest, currentPostgres, [
+					"env",
+					"databasePassword",
+				]),
+			);
 
 			if (!service) {
 				throw new TRPCError({
