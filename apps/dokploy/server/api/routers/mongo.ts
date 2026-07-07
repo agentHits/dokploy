@@ -39,6 +39,7 @@ import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { buildMongoPasswordChangeCommand } from "@/server/api/utils/database-password";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
+import { assertServiceEnvironmentReadAccess } from "@/server/api/utils/service-environment";
 import {
 	apiChangeMongoStatus,
 	apiCreateMongo,
@@ -144,6 +145,21 @@ export const mongoRouter = createTRPCRouter({
 				});
 			}
 			return redactDatabaseServiceSecrets(mongo);
+		}),
+
+	revealEnvironment: protectedProcedure
+		.input(apiFindOneMongo)
+		.mutation(async ({ input, ctx }) => {
+			const mongo = await assertServiceEnvironmentReadAccess(
+				ctx,
+				input.mongoId,
+				() => findMongoById(input.mongoId),
+				"mongo",
+			);
+
+			return {
+				env: mongo.env ?? "",
+			};
 		}),
 
 	start: protectedProcedure

@@ -39,6 +39,7 @@ import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { buildMysqlPasswordChangeCommand } from "@/server/api/utils/database-password";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
+import { assertServiceEnvironmentReadAccess } from "@/server/api/utils/service-environment";
 import {
 	apiChangeMySqlStatus,
 	apiCreateMySql,
@@ -144,6 +145,21 @@ export const mysqlRouter = createTRPCRouter({
 				});
 			}
 			return redactDatabaseServiceSecrets(mysql);
+		}),
+
+	revealEnvironment: protectedProcedure
+		.input(apiFindOneMySql)
+		.mutation(async ({ input, ctx }) => {
+			const mysql = await assertServiceEnvironmentReadAccess(
+				ctx,
+				input.mysqlId,
+				() => findMySqlById(input.mysqlId),
+				"MySQL",
+			);
+
+			return {
+				env: mysql.env ?? "",
+			};
 		}),
 
 	start: protectedProcedure

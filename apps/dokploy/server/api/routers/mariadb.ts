@@ -40,6 +40,7 @@ import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { buildMysqlPasswordChangeCommand } from "@/server/api/utils/database-password";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
+import { assertServiceEnvironmentReadAccess } from "@/server/api/utils/service-environment";
 import {
 	apiChangeMariaDBStatus,
 	apiCreateMariaDB,
@@ -140,6 +141,21 @@ export const mariadbRouter = createTRPCRouter({
 				});
 			}
 			return redactDatabaseServiceSecrets(mariadb);
+		}),
+
+	revealEnvironment: protectedProcedure
+		.input(apiFindOneMariaDB)
+		.mutation(async ({ input, ctx }) => {
+			const mariadb = await assertServiceEnvironmentReadAccess(
+				ctx,
+				input.mariadbId,
+				() => findMariadbById(input.mariadbId),
+				"Mariadb",
+			);
+
+			return {
+				env: mariadb.env ?? "",
+			};
 		}),
 
 	start: protectedProcedure

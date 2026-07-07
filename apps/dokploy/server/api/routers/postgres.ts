@@ -40,6 +40,7 @@ import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { buildPostgresPasswordChangeCommand } from "@/server/api/utils/database-password";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
+import { assertServiceEnvironmentReadAccess } from "@/server/api/utils/service-environment";
 import {
 	apiChangePostgresStatus,
 	apiCreatePostgres,
@@ -148,6 +149,21 @@ export const postgresRouter = createTRPCRouter({
 				});
 			}
 			return redactDatabaseServiceSecrets(postgres);
+		}),
+
+	revealEnvironment: protectedProcedure
+		.input(apiFindOnePostgres)
+		.mutation(async ({ input, ctx }) => {
+			const postgres = await assertServiceEnvironmentReadAccess(
+				ctx,
+				input.postgresId,
+				() => findPostgresById(input.postgresId),
+				"Postgres",
+			);
+
+			return {
+				env: postgres.env ?? "",
+			};
 		}),
 
 	start: protectedProcedure
