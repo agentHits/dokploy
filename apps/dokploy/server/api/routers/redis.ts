@@ -27,7 +27,10 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
-import { redactDatabaseServiceSecrets } from "@dokploy/server/utils/security/redaction";
+import {
+	preserveSecretPlaceholderFields,
+	redactDatabaseServiceSecrets,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -361,9 +364,17 @@ export const redisRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.redisId, {
 				envVars: ["write"],
 			});
-			const updatedRedis = await updateRedisById(input.redisId, {
-				env: input.env,
-			});
+			const currentRedis = await findRedisById(input.redisId);
+			const updatedRedis = await updateRedisById(
+				input.redisId,
+				preserveSecretPlaceholderFields(
+					{
+						env: input.env,
+					},
+					currentRedis,
+					["env"],
+				),
+			);
 
 			if (!updatedRedis) {
 				throw new TRPCError({
@@ -386,9 +397,14 @@ export const redisRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, redisId, {
 				service: ["create"],
 			});
-			const redis = await updateRedisById(redisId, {
-				...rest,
-			});
+			const currentRedis = await findRedisById(redisId);
+			const redis = await updateRedisById(
+				redisId,
+				preserveSecretPlaceholderFields(rest, currentRedis, [
+					"env",
+					"databasePassword",
+				]),
+			);
 
 			if (!redis) {
 				throw new TRPCError({
