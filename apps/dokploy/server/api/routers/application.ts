@@ -42,7 +42,10 @@ import {
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
 import { assertCustomGitUrlAllowed } from "@dokploy/server/utils/providers/git";
-import { redactDeployableServiceSecrets } from "@dokploy/server/utils/security/redaction";
+import {
+	preserveSecretPlaceholderFields,
+	redactDeployableServiceSecrets,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -587,18 +590,25 @@ export const applicationRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				envVars: ["write"],
 			});
-			await updateApplication(input.applicationId, {
-				env: input.env,
-				buildArgs: input.buildArgs,
-				buildSecrets: input.buildSecrets,
-				createEnvFile: input.createEnvFile,
-			});
-			const application = await findApplicationById(input.applicationId);
+			const currentApplication = await findApplicationById(input.applicationId);
+			await updateApplication(
+				input.applicationId,
+				preserveSecretPlaceholderFields(
+					{
+						env: input.env,
+						buildArgs: input.buildArgs,
+						buildSecrets: input.buildSecrets,
+						createEnvFile: input.createEnvFile,
+					},
+					currentApplication,
+					["env", "buildArgs", "buildSecrets"],
+				),
+			);
 			await audit(ctx, {
 				action: "update",
 				resourceType: "application",
-				resourceId: application.applicationId,
-				resourceName: application.appName,
+				resourceId: currentApplication.applicationId,
+				resourceName: currentApplication.appName,
 			});
 			return true;
 		}),
@@ -781,20 +791,27 @@ export const applicationRouter = createTRPCRouter({
 				{ ...input, sourceType: null },
 				ctx.session,
 			);
-			await updateApplication(input.applicationId, {
-				dockerImage: input.dockerImage,
-				username: input.username,
-				password: input.password,
-				sourceType: "docker",
-				applicationStatus: "idle",
-				registryUrl: input.registryUrl,
-			});
-			const application = await findApplicationById(input.applicationId);
+			const currentApplication = await findApplicationById(input.applicationId);
+			await updateApplication(
+				input.applicationId,
+				preserveSecretPlaceholderFields(
+					{
+						dockerImage: input.dockerImage,
+						username: input.username,
+						password: input.password,
+						sourceType: "docker" as const,
+						applicationStatus: "idle" as const,
+						registryUrl: input.registryUrl,
+					},
+					currentApplication,
+					["password"],
+				),
+			);
 			await audit(ctx, {
 				action: "update",
 				resourceType: "application",
-				resourceId: application.applicationId,
-				resourceName: application.appName,
+				resourceId: currentApplication.applicationId,
+				resourceName: currentApplication.appName,
 			});
 			return true;
 		}),
@@ -810,23 +827,28 @@ export const applicationRouter = createTRPCRouter({
 				ctx.session,
 				{ permissionCtx: ctx, requireSshKeyRead: true },
 			);
-			await assertCustomGitUrlAllowed(input.customGitUrl);
-			await updateApplication(input.applicationId, {
-				customGitBranch: input.customGitBranch,
-				customGitBuildPath: input.customGitBuildPath,
-				customGitUrl: input.customGitUrl,
-				customGitSSHKeyId: input.customGitSSHKeyId,
-				sourceType: "git",
-				applicationStatus: "idle",
-				watchPaths: input.watchPaths,
-				enableSubmodules: input.enableSubmodules,
-			});
-			const application = await findApplicationById(input.applicationId);
+			const currentApplication = await findApplicationById(input.applicationId);
+			const updateData = preserveSecretPlaceholderFields(
+				{
+					customGitBranch: input.customGitBranch,
+					customGitBuildPath: input.customGitBuildPath,
+					customGitUrl: input.customGitUrl,
+					customGitSSHKeyId: input.customGitSSHKeyId,
+					sourceType: "git" as const,
+					applicationStatus: "idle" as const,
+					watchPaths: input.watchPaths,
+					enableSubmodules: input.enableSubmodules,
+				},
+				currentApplication,
+				["customGitUrl"],
+			);
+			await assertCustomGitUrlAllowed(updateData.customGitUrl);
+			await updateApplication(input.applicationId, updateData);
 			await audit(ctx, {
 				action: "update",
 				resourceType: "application",
-				resourceId: application.applicationId,
-				resourceName: application.appName,
+				resourceId: currentApplication.applicationId,
+				resourceName: currentApplication.appName,
 			});
 			return true;
 		}),
@@ -927,9 +949,20 @@ export const applicationRouter = createTRPCRouter({
 			await assertApplicationRegistryAccess(input, ctx);
 
 			const { applicationId, ...rest } = input;
-			const updateApp = await updateApplication(applicationId, {
-				...rest,
-			});
+			const currentApplication = await findApplicationById(applicationId);
+			const updateApp = await updateApplication(
+				applicationId,
+				preserveSecretPlaceholderFields(rest, currentApplication, [
+					"env",
+					"previewEnv",
+					"buildArgs",
+					"buildSecrets",
+					"previewBuildArgs",
+					"previewBuildSecrets",
+					"password",
+					"customGitUrl",
+				]),
+			);
 
 			if (!updateApp) {
 				throw new TRPCError({

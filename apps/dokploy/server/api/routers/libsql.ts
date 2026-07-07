@@ -24,7 +24,10 @@ import {
 	checkServiceAccess,
 	checkServicePermissionAndAccess,
 } from "@dokploy/server/services/permission";
-import { redactDatabaseServiceSecrets } from "@dokploy/server/utils/security/redaction";
+import {
+	preserveSecretPlaceholderFields,
+	redactDatabaseServiceSecrets,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -348,9 +351,17 @@ export const libsqlRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.libsqlId, {
 				envVars: ["write"],
 			});
-			const service = await updateLibsqlById(input.libsqlId, {
-				env: input.env,
-			});
+			const currentLibsql = await findLibsqlById(input.libsqlId);
+			const service = await updateLibsqlById(
+				input.libsqlId,
+				preserveSecretPlaceholderFields(
+					{
+						env: input.env,
+					},
+					currentLibsql,
+					["env"],
+				),
+			);
 
 			if (!service) {
 				throw new TRPCError({
@@ -405,9 +416,14 @@ export const libsqlRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, libsqlId, {
 				service: ["create"],
 			});
-			const libsql = await updateLibsqlById(libsqlId, {
-				...rest,
-			});
+			const currentLibsql = await findLibsqlById(libsqlId);
+			const libsql = await updateLibsqlById(
+				libsqlId,
+				preserveSecretPlaceholderFields(rest, currentLibsql, [
+					"env",
+					"databasePassword",
+				]),
+			);
 
 			if (!libsql) {
 				throw new TRPCError({

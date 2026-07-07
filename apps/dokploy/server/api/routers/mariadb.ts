@@ -28,7 +28,10 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
-import { redactDatabaseServiceSecrets } from "@dokploy/server/utils/security/redaction";
+import {
+	preserveSecretPlaceholderFields,
+	redactDatabaseServiceSecrets,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { observable } from "@trpc/server/observable";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
@@ -320,9 +323,17 @@ export const mariadbRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.mariadbId, {
 				envVars: ["write"],
 			});
-			const service = await updateMariadbById(input.mariadbId, {
-				env: input.env,
-			});
+			const currentMariadb = await findMariadbById(input.mariadbId);
+			const service = await updateMariadbById(
+				input.mariadbId,
+				preserveSecretPlaceholderFields(
+					{
+						env: input.env,
+					},
+					currentMariadb,
+					["env"],
+				),
+			);
 
 			if (!service) {
 				throw new TRPCError({
@@ -377,9 +388,15 @@ export const mariadbRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, mariadbId, {
 				service: ["create"],
 			});
-			const service = await updateMariadbById(mariadbId, {
-				...rest,
-			});
+			const currentMariadb = await findMariadbById(mariadbId);
+			const service = await updateMariadbById(
+				mariadbId,
+				preserveSecretPlaceholderFields(rest, currentMariadb, [
+					"env",
+					"databasePassword",
+					"databaseRootPassword",
+				]),
+			);
 
 			if (!service) {
 				throw new TRPCError({

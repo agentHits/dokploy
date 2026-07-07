@@ -50,7 +50,10 @@ import {
 } from "@dokploy/server/templates/github";
 import { processTemplate } from "@dokploy/server/templates/processors";
 import { assertCustomGitUrlAllowed } from "@dokploy/server/utils/providers/git";
-import { redactDeployableServiceSecrets } from "@dokploy/server/utils/security/redaction";
+import {
+	preserveSecretPlaceholderFields,
+	redactDeployableServiceSecrets,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import _ from "lodash";
@@ -287,10 +290,16 @@ export const composeRouter = createTRPCRouter({
 				permissionCtx: ctx,
 				requireSshKeyRead: true,
 			});
-			if (input.customGitUrl) {
-				await assertCustomGitUrlAllowed(input.customGitUrl);
+			const currentCompose = await findComposeById(input.composeId);
+			const updateData = preserveSecretPlaceholderFields(
+				input,
+				currentCompose,
+				["env", "composeFile", "customGitUrl"],
+			);
+			if (updateData.customGitUrl) {
+				await assertCustomGitUrlAllowed(updateData.customGitUrl);
 			}
-			const updated = await updateCompose(input.composeId, input);
+			const updated = await updateCompose(input.composeId, updateData);
 			await audit(ctx, {
 				action: "update",
 				resourceType: "compose",
@@ -305,9 +314,17 @@ export const composeRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.composeId, {
 				envVars: ["write"],
 			});
-			const updated = await updateCompose(input.composeId, {
-				env: input.env,
-			});
+			const currentCompose = await findComposeById(input.composeId);
+			const updated = await updateCompose(
+				input.composeId,
+				preserveSecretPlaceholderFields(
+					{
+						env: input.env,
+					},
+					currentCompose,
+					["env"],
+				),
+			);
 
 			if (!updated) {
 				throw new TRPCError({

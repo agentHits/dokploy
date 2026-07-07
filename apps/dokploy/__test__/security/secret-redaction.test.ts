@@ -1,5 +1,7 @@
 import { ExecError } from "@dokploy/server/utils/process/ExecError";
 import {
+	isSecretPlaceholderValue,
+	preserveSecretPlaceholderFields,
 	REDACTED_SECRET_VALUE,
 	redactBackupScheduleSecrets,
 	redactDatabaseServiceSecrets,
@@ -32,9 +34,44 @@ describe("shared secret redaction helpers", () => {
 
 	it("treats redacted and blank update values as preserve-existing", () => {
 		expect(secretUpdateValue(REDACTED_SECRET_VALUE)).toBeUndefined();
+		expect(secretUpdateValue("[REDACTED]")).toBeUndefined();
 		expect(secretUpdateValue("")).toBeUndefined();
 		expect(secretUpdateValue("   ")).toBeUndefined();
 		expect(secretUpdateValue("new-secret")).toBe("new-secret");
+	});
+
+	it("preserves stored values when an update contains redacted placeholders", () => {
+		expect(isSecretPlaceholderValue(REDACTED_SECRET_VALUE)).toBe(true);
+		expect(isSecretPlaceholderValue("[REDACTED]")).toBe(true);
+		expect(
+			isSecretPlaceholderValue(
+				`https://${REDACTED_SECRET_VALUE}@example.com/org/repo.git`,
+			),
+		).toBe(true);
+		expect(isSecretPlaceholderValue("TOKEN=new")).toBe(false);
+
+		const next = preserveSecretPlaceholderFields(
+			{
+				env: REDACTED_SECRET_VALUE,
+				buildArgs: "[REDACTED]",
+				buildSecrets: "NPM_TOKEN=new",
+				name: "api",
+			},
+			{
+				env: "TOKEN=old",
+				buildArgs: "ARG_TOKEN=old",
+				buildSecrets: "NPM_TOKEN=old",
+				name: "old-api",
+			},
+			["env", "buildArgs", "buildSecrets"],
+		);
+
+		expect(next).toEqual({
+			env: "TOKEN=old",
+			buildArgs: "ARG_TOKEN=old",
+			buildSecrets: "NPM_TOKEN=new",
+			name: "api",
+		});
 	});
 
 	it("redacts deployable service read secrets", () => {

@@ -28,7 +28,10 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
-import { redactDatabaseServiceSecrets } from "@dokploy/server/utils/security/redaction";
+import {
+	preserveSecretPlaceholderFields,
+	redactDatabaseServiceSecrets,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -370,9 +373,17 @@ export const mysqlRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.mysqlId, {
 				envVars: ["write"],
 			});
-			const service = await updateMySqlById(input.mysqlId, {
-				env: input.env,
-			});
+			const currentMysql = await findMySqlById(input.mysqlId);
+			const service = await updateMySqlById(
+				input.mysqlId,
+				preserveSecretPlaceholderFields(
+					{
+						env: input.env,
+					},
+					currentMysql,
+					["env"],
+				),
+			);
 
 			if (!service) {
 				throw new TRPCError({
@@ -395,9 +406,15 @@ export const mysqlRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, mysqlId, {
 				service: ["create"],
 			});
-			const service = await updateMySqlById(mysqlId, {
-				...rest,
-			});
+			const currentMysql = await findMySqlById(mysqlId);
+			const service = await updateMySqlById(
+				mysqlId,
+				preserveSecretPlaceholderFields(rest, currentMysql, [
+					"env",
+					"databasePassword",
+					"databaseRootPassword",
+				]),
+			);
 
 			if (!service) {
 				throw new TRPCError({
