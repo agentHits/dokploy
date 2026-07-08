@@ -36,10 +36,16 @@ jobs:
           SHORT_SHA="${GITHUB_SHA::12}"
           IMAGE="${REGISTRY}/${IMAGE_NAME}"
           OFFICIAL_VERSION="$(node -p "require('./apps/dokploy/package.json').version")"
-          if ! git rev-parse --verify --quiet "${OFFICIAL_VERSION}^{commit}" >/dev/null; then
+          OFFICIAL_REF="${OFFICIAL_VERSION}"
+          if git ls-remote --exit-code --tags https://github.com/Dokploy/dokploy.git "refs/tags/${OFFICIAL_VERSION}" >/dev/null 2>&1; then
             git fetch --no-tags https://github.com/Dokploy/dokploy.git "refs/tags/${OFFICIAL_VERSION}:refs/tags/${OFFICIAL_VERSION}"
+          else
+            OFFICIAL_REF="refs/remotes/upstream/canary"
+            if ! git rev-parse --verify --quiet "${OFFICIAL_REF}^{commit}" >/dev/null; then
+              git fetch --no-tags https://github.com/Dokploy/dokploy.git "refs/heads/canary:${OFFICIAL_REF}"
+            fi
           fi
-          FORK_DISTANCE="$(git rev-list --count "${OFFICIAL_VERSION}..HEAD")"
+          FORK_DISTANCE="$(git rev-list --count "${OFFICIAL_REF}..HEAD")"
           FORK_VERSION="off_${OFFICIAL_VERSION}/Fork_${FORK_DISTANCE}+${SHORT_SHA}"
           {
             echo "tags<<EOF"
