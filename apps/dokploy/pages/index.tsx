@@ -59,6 +59,17 @@ const _TwoFactorSchema = z.object({
 
 type LoginForm = z.infer<typeof LoginSchema>;
 
+const hasTwoFactorRedirect = (
+	value: unknown,
+): value is { twoFactorRedirect: boolean } => {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"twoFactorRedirect" in value &&
+		value.twoFactorRedirect === true
+	);
+};
+
 interface Props {
 	IS_CLOUD: boolean;
 	enforceSSO: boolean;
@@ -107,7 +118,7 @@ export default function Home({ IS_CLOUD, enforceSSO }: Props) {
 				return;
 			}
 
-			if (data?.twoFactorRedirect as boolean) {
+			if (hasTwoFactorRedirect(data)) {
 				setTwoFactorCode("");
 				setIsTwoFactor(true);
 				toast.info("Please enter your 2FA code");

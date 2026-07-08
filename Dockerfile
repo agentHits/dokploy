@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1
 FROM node:24.4.0-slim AS base
 ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
-RUN corepack prepare pnpm@10.22.0 --activate
+ENV PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"
+RUN npm install -g corepack@0.35.0 \
+    && corepack enable \
+    && corepack prepare pnpm@11.10.0 --activate
 
 FROM base AS build
 ARG DOKPLOY_OFFICIAL_VERSION=v0.29.8

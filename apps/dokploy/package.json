@@ -199,10 +199,10 @@
 	"ct3aMetadata": {
 		"initVersion": "7.25.2"
 	},
-	"packageManager": "pnpm@10.22.0",
+	"packageManager": "pnpm@11.10.0+sha256.620b6605ea4f62fc56a6d0a98733f479071d0321e03e486b522c7e9a74617431",
 	"engines": {
 		"node": "^24.4.0",
-		"pnpm": ">=10.22.0"
+		"pnpm": ">=11.10.0"
 	},
 	"lint-staged": {
 		"*": [
