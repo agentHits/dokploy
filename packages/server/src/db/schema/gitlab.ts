@@ -56,6 +56,7 @@ export const apiFindGitlabBranches = z.object({
 	owner: z.string(),
 	repo: z.string(),
 	gitlabId: z.string().optional(),
+	gitlabPathNamespace: z.string().optional(),
 });
 
 export const apiUpdateGitlab = z.object({

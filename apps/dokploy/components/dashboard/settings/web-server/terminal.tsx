@@ -1,7 +1,7 @@
+import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
 import type React from "react";
 import { useEffect, useRef } from "react";
-import { FitAddon } from "xterm-addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { AttachAddon } from "@xterm/addon-attach";
 import { ClipboardAddon } from "@xterm/addon-clipboard";
@@ -59,9 +59,8 @@ export const Terminal: React.FC<Props> = ({ id, serverId }) => {
 		const clipboardAddon = new ClipboardAddon();
 		term.loadAddon(clipboardAddon);
 
-		// @ts-ignore
+		// @ts-expect-error
 		term.open(termRef.current);
-		// @ts-ignore
 		term.loadAddon(addonFit);
 		term.loadAddon(addonAttach);
 		addonFit.fit();

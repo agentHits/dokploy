@@ -29,12 +29,13 @@ describe("VALID_HOSTNAME_REGEX", () => {
 	// IDNs (Cyrillic, German umlauts, etc.) must be submitted in their
 	// ACME/punycode form ("xn--...") — that's what Let's Encrypt issues
 	// certificates for, so raw Unicode labels are rejected here.
-	it.each(["пример.рф", "bücher.de", "日本語.jp"])(
-		"rejects raw unicode IDN %s",
-		(host) => {
-			expect(VALID_HOSTNAME_REGEX.test(host)).toBe(false);
-		},
-	);
+	it.each([
+		"пример.рф",
+		"bücher.de",
+		"日本語.jp",
+	])("rejects raw unicode IDN %s", (host) => {
+		expect(VALID_HOSTNAME_REGEX.test(host)).toBe(false);
+	});
 
 	it.each([
 		"xn--e1afmkfd.xn--p1ai", // punycode for пример.рф

@@ -82,17 +82,17 @@ describe("reportDockerVersion", () => {
 });
 
 describe("defaultCommand", () => {
-	it.each([false, true])(
-		"prints the detected Docker version in the setup banner (isBuildServer=%s)",
-		(isBuildServer) => {
-			const script = defaultCommand(isBuildServer);
-			expect(script).toContain(reportDockerVersion());
-			expect(script).toContain(
-				'echo "| Docker            | $DOCKER_VERSION_REPORT"',
-			);
-			expect(script).not.toContain(
-				'echo "| Docker            | $DOCKER_VERSION"',
-			);
-		},
-	);
+	it.each([
+		false,
+		true,
+	])("prints the detected Docker version in the setup banner (isBuildServer=%s)", (isBuildServer) => {
+		const script = defaultCommand(isBuildServer);
+		expect(script).toContain(reportDockerVersion());
+		expect(script).toContain(
+			'echo "| Docker            | $DOCKER_VERSION_REPORT"',
+		);
+		expect(script).not.toContain(
+			'echo "| Docker            | $DOCKER_VERSION"',
+		);
+	});
 });

@@ -1,3 +1,4 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
 import http from "node:http";
 import {
 	createDefaultMiddlewares,
@@ -14,8 +15,10 @@ import {
 	setupDirectories,
 } from "@dokploy/server";
 import { config } from "dotenv";
+import type { NextApiRequest, NextApiResponse } from "next";
 import next from "next";
 import packageInfo from "../package.json";
+import { handleApplicationEnvUpsert } from "../pages/api/application.env.upsert";
 import { setupDockerContainerLogsWebSocketServer } from "./wss/docker-container-logs";
 import { setupDockerContainerTerminalWebSocketServer } from "./wss/docker-container-terminal";
 import { setupDockerStatsMonitoringSocketServer } from "./wss/docker-stats";
@@ -39,10 +42,96 @@ if (process.env.NODE_ENV === "production" && !IS_CLOUD) {
 
 const app = next({ dev, turbopack: process.env.TURBOPACK === "1" });
 const handle = app.getRequestHandler();
+
+type NodeNextApiResponse = ServerResponse & {
+	status: (code: number) => NodeNextApiResponse;
+	json: (body: unknown) => NodeNextApiResponse;
+};
+
+const isApplicationEnvUpsertRequest = (req: IncomingMessage) => {
+	const pathname = new URL(
+		req.url ?? "/",
+		`http://${req.headers.host ?? "localhost"}`,
+	).pathname.replace(/\/+$/, "");
+	const rawUrl = req.url ?? "";
+	const forwardedUri = req.headers["x-forwarded-uri"];
+	const forwardedPath =
+		typeof forwardedUri === "string"
+			? forwardedUri
+			: Array.isArray(forwardedUri)
+				? forwardedUri.join(" ")
+				: "";
+	const routeMarkers = [pathname, rawUrl, forwardedPath].join(" ");
+
+	return (
+		pathname === "/api/application/env/upsert" ||
+		pathname === "/api/application.env.upsert" ||
+		routeMarkers.includes("/api/application/env/upsert") ||
+		routeMarkers.includes("/api/application.env.upsert")
+	);
+};
+
+const readJsonBody = async (req: IncomingMessage) =>
+	new Promise((resolve, reject) => {
+		let body = "";
+		req.on("data", (chunk) => {
+			body += chunk;
+		});
+		req.on("end", () => {
+			if (!body) {
+				resolve({});
+				return;
+			}
+
+			try {
+				resolve(JSON.parse(body));
+			} catch (error) {
+				reject(error);
+			}
+		});
+		req.on("error", reject);
+	});
+
+const handleApplicationEnvUpsertRequest = async (
+	req: IncomingMessage,
+	res: ServerResponse,
+) => {
+	try {
+		(req as IncomingMessage & { body: unknown }).body = await readJsonBody(req);
+		const nextResponse = res as NodeNextApiResponse;
+
+		nextResponse.status = (code: number) => {
+			res.statusCode = code;
+			return nextResponse;
+		};
+		nextResponse.json = (body: unknown) => {
+			if (!res.headersSent) {
+				res.setHeader("Content-Type", "application/json");
+			}
+			res.end(JSON.stringify(body));
+			return nextResponse;
+		};
+
+		await handleApplicationEnvUpsert(
+			req as NextApiRequest,
+			nextResponse as unknown as NextApiResponse,
+		);
+	} catch {
+		res.statusCode = 400;
+		res.setHeader("Content-Type", "application/json");
+		res.end(JSON.stringify({ message: "Invalid request body" }));
+	}
+};
+
 void app.prepare().then(async () => {
 	try {
 		console.log("Running DokployVersion: ", packageInfo.version);
 		const server = http.createServer((req, res) => {
+			if (isApplicationEnvUpsertRequest(req)) {
+				void handleApplicationEnvUpsertRequest(req, res);
+				return;
+			}
+
 			handle(req, res);
 		});
 

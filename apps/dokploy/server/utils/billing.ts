@@ -20,7 +20,7 @@ export const getCurrentPlanForUser = async (
 	if (!owner?.stripeCustomerId) return null;
 
 	const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-		apiVersion: "2024-09-30.acacia",
+		apiVersion: "2026-05-27.dahlia",
 	});
 	const subscriptions = await stripe.subscriptions.list({
 		customer: owner.stripeCustomerId,

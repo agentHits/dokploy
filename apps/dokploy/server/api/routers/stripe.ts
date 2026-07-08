@@ -23,8 +23,8 @@ import {
 	WEBSITE_URL,
 } from "@/server/utils/stripe";
 import {
-	adminProcedure,
 	createTRPCRouter,
+	ownerProcedure,
 	protectedProcedure,
 	withPermission,
 } from "../trpc";
@@ -35,12 +35,12 @@ export const stripeRouter = createTRPCRouter({
 		return getCurrentPlanForOrganization(ctx.session.activeOrganizationId);
 	}),
 
-	getProducts: adminProcedure.query(async ({ ctx }) => {
+	getProducts: ownerProcedure.query(async ({ ctx }) => {
 		const user = await findUserById(ctx.user.ownerId);
 		const stripeCustomerId = user.stripeCustomerId;
 
 		const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-			apiVersion: "2024-09-30.acacia",
+			apiVersion: "2026-05-27.dahlia",
 		});
 
 		const products = await stripe.products.list({
@@ -125,7 +125,7 @@ export const stripeRouter = createTRPCRouter({
 			currentPriceAmount,
 		};
 	}),
-	createCheckoutSession: adminProcedure
+	createCheckoutSession: ownerProcedure
 		.input(
 			z
 				.object({
@@ -141,7 +141,7 @@ export const stripeRouter = createTRPCRouter({
 		)
 		.mutation(async ({ ctx, input }) => {
 			const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-				apiVersion: "2024-09-30.acacia",
+				apiVersion: "2026-05-27.dahlia",
 			});
 
 			const items = getStripeItems(
@@ -184,9 +184,9 @@ export const stripeRouter = createTRPCRouter({
 				cancel_url: `${WEBSITE_URL}/dashboard/settings/billing`,
 			});
 
-			return { sessionId: session.id };
+			return { sessionId: session.id, url: session.url };
 		}),
-	createCustomerPortalSession: adminProcedure.mutation(async ({ ctx }) => {
+	createCustomerPortalSession: ownerProcedure.mutation(async ({ ctx }) => {
 		// Use the organization's owner account for billing portal
 		const owner = await findUserById(ctx.user.ownerId);
 
@@ -199,7 +199,7 @@ export const stripeRouter = createTRPCRouter({
 		const stripeCustomerId = owner.stripeCustomerId;
 
 		const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-			apiVersion: "2024-09-30.acacia",
+			apiVersion: "2026-05-27.dahlia",
 		});
 
 		try {
@@ -216,7 +216,7 @@ export const stripeRouter = createTRPCRouter({
 		}
 	}),
 
-	upgradeSubscription: adminProcedure
+	upgradeSubscription: ownerProcedure
 		.input(
 			z
 				.object({
@@ -231,7 +231,7 @@ export const stripeRouter = createTRPCRouter({
 		)
 		.mutation(async ({ ctx, input }) => {
 			const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-				apiVersion: "2024-09-30.acacia",
+				apiVersion: "2026-05-27.dahlia",
 			});
 			const owner = await findUserById(ctx.user.ownerId);
 
@@ -301,7 +301,7 @@ export const stripeRouter = createTRPCRouter({
 		},
 	),
 
-	updateInvoiceNotifications: adminProcedure
+	updateInvoiceNotifications: ownerProcedure
 		.input(z.object({ enabled: z.boolean() }))
 		.mutation(async ({ ctx, input }) => {
 			if (!IS_CLOUD) {
@@ -317,7 +317,7 @@ export const stripeRouter = createTRPCRouter({
 			return { ok: true };
 		}),
 
-	getInvoices: adminProcedure.query(async ({ ctx }) => {
+	getInvoices: ownerProcedure.query(async ({ ctx }) => {
 		const user = await findUserById(ctx.user.ownerId);
 		const stripeCustomerId = user.stripeCustomerId;
 
@@ -326,7 +326,7 @@ export const stripeRouter = createTRPCRouter({
 		}
 
 		const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-			apiVersion: "2024-09-30.acacia",
+			apiVersion: "2026-05-27.dahlia",
 		});
 
 		try {

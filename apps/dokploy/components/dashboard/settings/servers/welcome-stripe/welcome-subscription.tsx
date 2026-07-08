@@ -30,7 +30,7 @@ import { CreateSSHKey } from "./create-ssh-key";
 import { Setup } from "./setup";
 import { Verify } from "./verify";
 
-export const { useStepper, steps, Scoped } = defineStepper(
+export const { useStepper, steps } = defineStepper([
 	{
 		id: "requisites",
 		title: "Requisites",
@@ -49,7 +49,7 @@ export const { useStepper, steps, Scoped } = defineStepper(
 	{ id: "setup", title: "Setup", description: "Setup your server" },
 	{ id: "verify", title: "Verify", description: "Verify your server" },
 	{ id: "complete", title: "Complete", description: "Checkout complete" },
-);
+]);
 
 export const WelcomeSubscription = () => {
 	const [showConfetti, setShowConfetti] = useState(false);
@@ -114,26 +114,24 @@ export const WelcomeSubscription = () => {
 						<h2 className="text-lg font-semibold">Steps</h2>
 						<div className="flex items-center gap-2">
 							<span className="text-sm text-muted-foreground">
-								Step {stepper.current.index + 1} of {steps.length}
+								Step {stepper.index + 1} of {steps.length}
 							</span>
 							<div />
 						</div>
 					</div>
-					<Scoped>
+					<>
 						<nav aria-label="Checkout Steps" className="group my-4">
 							<ol
 								className="flex items-center justify-between gap-2"
 								aria-orientation="horizontal"
 							>
-								{stepper.all.map((step, index, array) => (
+								{stepper.steps.map((step, index, array) => (
 									<React.Fragment key={step.id}>
 										<li className="flex items-center gap-4 shrink-0">
 											<Button
 												type="button"
 												role="tab"
-												variant={
-													index <= stepper.current.index ? "secondary" : "ghost"
-												}
+												variant={index <= stepper.index ? "secondary" : "ghost"}
 												aria-current={
 													stepper.current.id === step.id ? "step" : undefined
 												}
@@ -141,7 +139,7 @@ export const WelcomeSubscription = () => {
 												aria-setsize={steps.length}
 												aria-selected={stepper.current.id === step.id}
 												className="flex size-10 items-center justify-center rounded-full border-2 border-border"
-												onClick={() => stepper.goTo(step.id)}
+												onClick={() => void stepper.goTo(step.id)}
 											>
 												{index + 1}
 											</Button>
@@ -150,9 +148,7 @@ export const WelcomeSubscription = () => {
 										{index < array.length - 1 && (
 											<Separator
 												className={`flex-1 ${
-													index < stepper.current.index
-														? "bg-primary"
-														: "bg-muted"
+													index < stepper.index ? "bg-primary" : "bg-muted"
 												}`}
 											/>
 										)}
@@ -160,7 +156,7 @@ export const WelcomeSubscription = () => {
 								))}
 							</ol>
 						</nav>
-						{stepper.switch({
+						{stepper.match({
 							requisites: () => (
 								<div className="flex flex-col gap-2 border p-4 rounded-lg">
 									<span className="text-primary text-base font-bold">
@@ -397,7 +393,7 @@ export const WelcomeSubscription = () => {
 								);
 							},
 						})}
-					</Scoped>
+					</>
 				</div>
 				<DialogFooter>
 					<div className="flex items-center justify-between w-full">
@@ -415,7 +411,7 @@ export const WelcomeSubscription = () => {
 
 						<div className="flex items-center gap-2 w-full justify-end">
 							<Button
-								onClick={stepper.prev}
+								onClick={() => void stepper.prev()}
 								disabled={stepper.isFirst}
 								variant="secondary"
 							>
@@ -427,7 +423,7 @@ export const WelcomeSubscription = () => {
 										setIsOpen(false);
 										push("/dashboard/home");
 									} else {
-										stepper.next();
+										void stepper.next();
 									}
 								}}
 							>
