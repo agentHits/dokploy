@@ -40,7 +40,7 @@ export const stripeRouter = createTRPCRouter({
 		const stripeCustomerId = user.stripeCustomerId;
 
 		const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-			apiVersion: "2026-05-27.dahlia",
+			apiVersion: "2026-06-24.dahlia",
 		});
 
 		const products = await stripe.products.list({
@@ -141,7 +141,7 @@ export const stripeRouter = createTRPCRouter({
 		)
 		.mutation(async ({ ctx, input }) => {
 			const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-				apiVersion: "2026-05-27.dahlia",
+				apiVersion: "2026-06-24.dahlia",
 			});
 
 			const items = getStripeItems(
@@ -199,7 +199,7 @@ export const stripeRouter = createTRPCRouter({
 		const stripeCustomerId = owner.stripeCustomerId;
 
 		const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-			apiVersion: "2026-05-27.dahlia",
+			apiVersion: "2026-06-24.dahlia",
 		});
 
 		try {
@@ -231,7 +231,7 @@ export const stripeRouter = createTRPCRouter({
 		)
 		.mutation(async ({ ctx, input }) => {
 			const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-				apiVersion: "2026-05-27.dahlia",
+				apiVersion: "2026-06-24.dahlia",
 			});
 			const owner = await findUserById(ctx.user.ownerId);
 
@@ -326,7 +326,7 @@ export const stripeRouter = createTRPCRouter({
 		}
 
 		const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-			apiVersion: "2026-05-27.dahlia",
+			apiVersion: "2026-06-24.dahlia",
 		});
 
 		try {

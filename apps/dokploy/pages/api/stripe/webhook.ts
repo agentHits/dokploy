@@ -50,7 +50,7 @@ export default async function handler(
 		return res.status(400).send("Webhook Error: Missing Stripe Secret Key");
 	}
 	const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-		apiVersion: "2026-05-27.dahlia",
+		apiVersion: "2026-06-24.dahlia",
 		maxNetworkRetries: 3,
 	});
 
