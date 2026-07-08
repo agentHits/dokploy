@@ -53,6 +53,8 @@ import { assertCustomGitUrlAllowed } from "@dokploy/server/utils/providers/git";
 import {
 	preserveSecretPlaceholderFields,
 	redactDeployableServiceSecrets,
+	redactSecretFields,
+	redactSensitiveText,
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
@@ -89,6 +91,49 @@ import { audit } from "../utils/audit";
 import { assertDeploySourceCredentialAccess } from "../utils/deploy-source-access";
 import { assertTargetEnvironmentAccess } from "../utils/placement-access";
 import { assertServiceEnvironmentReadAccess } from "../utils/service-environment";
+
+type SecretRecord = Record<string, unknown>;
+
+const redactCustomGitUrl = <T extends SecretRecord | null | undefined>(
+	record: T,
+) => {
+	if (!record) {
+		return record;
+	}
+
+	const redacted = { ...record };
+	if ("customGitUrl" in redacted) {
+		redacted.customGitUrl = redactSensitiveText(
+			redacted.customGitUrl as string | null | undefined,
+		);
+	}
+
+	return redacted as T;
+};
+
+const redactComposeSecrets = <T extends SecretRecord | null | undefined>(
+	record: T,
+) => {
+	if (!record) {
+		return record;
+	}
+
+	return redactSecretFields(
+		redactCustomGitUrl(
+			redactDeployableServiceSecrets(
+				redactGitProviderSecrets(
+					record as T & {
+						bitbucket?: object | null;
+						gitea?: object | null;
+						github?: object | null;
+						gitlab?: object | null;
+					},
+				),
+			),
+		),
+		["composeFile"],
+	);
+};
 
 const composeSourceUpdateFields = [
 	"bitbucketBranch",
@@ -220,7 +265,7 @@ export const composeRouter = createTRPCRouter({
 					resourceId: newService.composeId,
 					resourceName: newService.appName,
 				});
-				return redactDeployableServiceSecrets(newService);
+				return redactComposeSecrets(newService);
 			} catch (error) {
 				throw error;
 			}
@@ -274,7 +319,7 @@ export const composeRouter = createTRPCRouter({
 			}
 
 			return {
-				...redactDeployableServiceSecrets(redactGitProviderSecrets(compose)),
+				...redactComposeSecrets(compose),
 				hasGitProviderAccess,
 				unauthorizedProvider,
 			};
@@ -322,7 +367,7 @@ export const composeRouter = createTRPCRouter({
 				resourceId: input.composeId,
 				resourceName: updated?.name,
 			});
-			return redactDeployableServiceSecrets(updated);
+			return redactComposeSecrets(updated);
 		}),
 	saveEnvironment: protectedProcedure
 		.input(apiSaveEnvironmentVariablesCompose)
@@ -400,9 +445,7 @@ export const composeRouter = createTRPCRouter({
 				resourceId: composeResult.composeId,
 				resourceName: composeResult.appName,
 			});
-			return redactDeployableServiceSecrets(
-				redactGitProviderSecrets(composeResult),
-			);
+			return redactComposeSecrets(composeResult);
 		}),
 	cleanQueues: protectedProcedure
 		.input(apiFindCompose)
@@ -809,7 +852,7 @@ export const composeRouter = createTRPCRouter({
 				resourceId: compose.composeId,
 				resourceName: compose.name,
 			});
-			return redactDeployableServiceSecrets(compose);
+			return redactComposeSecrets(compose);
 		}),
 
 	templates: protectedProcedure
@@ -933,7 +976,7 @@ export const composeRouter = createTRPCRouter({
 				resourceId: input.composeId,
 				resourceName: updatedCompose.name,
 			});
-			return redactDeployableServiceSecrets(updatedCompose);
+			return redactComposeSecrets(updatedCompose);
 		}),
 
 	processTemplate: protectedProcedure
