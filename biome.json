@@ -10,13 +10,18 @@
 		"includes": [
 			"**",
 			"!**/.docker",
-			"!**/.next/**",
+			"!**/.next",
 			"!**/dist",
-			"!**/drizzle/**",
-			"!node_modules/**",
+			"!**/drizzle",
+			"!node_modules",
 			"!packages/server/package.json"
 		],
 		"maxSize": 2097152
+	},
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
+		}
 	},
 	"assist": { "actions": { "source": { "organizeImports": "on" } } },
 	"linter": {
@@ -54,7 +59,13 @@
 				"noArrayIndexKey": "off",
 				"noExplicitAny": "off",
 				"noRedeclare": "off",
-				"noTemplateCurlyInString": "off"
+				"noTemplateCurlyInString": "off",
+				"noUnknownAtRules": {
+					"level": "error",
+					"options": {
+						"ignore": ["tailwind"]
+					}
+				}
 			},
 			"a11y": {
 				"noSvgWithoutTitle": "off",

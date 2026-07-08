@@ -1,5 +1,6 @@
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
+import { quoteShellArg } from "@dokploy/server/utils/filesystem/safe-path";
 import {
 	execAsync,
 	execAsyncRemote,
@@ -17,6 +18,12 @@ import {
 export interface IUpdateData {
 	latestVersion: string | null;
 	updateAvailable: boolean;
+	updateSource?: "official" | "agenthits";
+	latestImage?: string | null;
+	latestOfficialVersion?: string | null;
+	currentDigest?: string | null;
+	latestDigest?: string | null;
+	latestPlatformDigest?: string | null;
 }
 
 export const DEFAULT_UPDATE_DATA: IUpdateData = {
@@ -24,9 +31,254 @@ export const DEFAULT_UPDATE_DATA: IUpdateData = {
 	updateAvailable: false,
 };
 
+export interface IDokployVersionData {
+	officialVersion: string;
+	forkVersion: string;
+	releaseTag: string;
+	isFork: boolean;
+}
+
 /** Returns current Dokploy docker image tag or `latest` by default. */
 export const getDokployImageTag = () => {
 	return process.env.RELEASE_TAG || "latest";
+};
+
+export const getAgentHitsUpdateTag = () => {
+	return process.env.DOKPLOY_AGENTHITS_UPDATE_TAG?.trim() || "agenthits-dev";
+};
+
+export const getAgentHitsUpdateImage = () => {
+	const explicitImage = process.env.DOKPLOY_AGENTHITS_UPDATE_IMAGE?.trim();
+	if (explicitImage) {
+		return explicitImage;
+	}
+
+	return `ghcr.io/agenthits/dokploy:${getAgentHitsUpdateTag()}`;
+};
+
+export const getOfficialDokployVersion = (currentVersion: string) => {
+	return process.env.DOKPLOY_OFFICIAL_VERSION?.trim() || currentVersion;
+};
+
+export const getForkDokployVersion = (currentVersion: string) => {
+	const forkVersion = process.env.DOKPLOY_FORK_VERSION?.trim();
+	if (forkVersion) {
+		return forkVersion;
+	}
+
+	const releaseTag = getDokployImageTag();
+	if (releaseTag === "latest") {
+		return currentVersion;
+	}
+
+	return releaseTag;
+};
+
+export const getDokployVersionData = (
+	currentVersion: string,
+): IDokployVersionData => {
+	const officialVersion = getOfficialDokployVersion(currentVersion);
+	const forkVersion = getForkDokployVersion(currentVersion);
+
+	return {
+		officialVersion,
+		forkVersion,
+		releaseTag: getDokployImageTag(),
+		isFork: forkVersion !== officialVersion,
+	};
+};
+
+export const isAgentHitsUpdateChannel = (currentVersion: string) => {
+	const updateSource = process.env.DOKPLOY_UPDATE_SOURCE?.trim().toLowerCase();
+	if (updateSource === "official") {
+		return false;
+	}
+	if (updateSource === "agenthits") {
+		return true;
+	}
+
+	const versionData = getDokployVersionData(currentVersion);
+	return (
+		versionData.releaseTag.startsWith("agenthits") ||
+		versionData.forkVersion.startsWith("off_") ||
+		Boolean(process.env.DOKPLOY_FORK_VERSION?.trim())
+	);
+};
+
+const getGhcrPullToken = async () => {
+	const response = await fetch(
+		"https://ghcr.io/token?service=ghcr.io&scope=repository:agenthits/dokploy:pull",
+	);
+	if (!response.ok) {
+		throw new Error(`Could not request GHCR pull token: ${response.status}`);
+	}
+
+	const data = (await response.json()) as { token?: string };
+	if (!data.token) {
+		throw new Error("GHCR pull token response did not include a token");
+	}
+
+	return data.token;
+};
+
+const fetchGhcrJson = async <T>(
+	token: string,
+	path: string,
+	accept: string,
+): Promise<{ digest: string | null; data: T }> => {
+	const response = await fetch(`https://ghcr.io/v2/agenthits/dokploy/${path}`, {
+		headers: {
+			Accept: accept,
+			Authorization: `Bearer ${token}`,
+		},
+	});
+	if (!response.ok) {
+		throw new Error(`Could not fetch GHCR ${path}: ${response.status}`);
+	}
+
+	return {
+		digest: response.headers.get("docker-content-digest"),
+		data: (await response.json()) as T,
+	};
+};
+
+type RegistryManifestList = {
+	manifests?: {
+		digest: string;
+		mediaType?: string;
+		platform?: {
+			architecture?: string;
+			os?: string;
+		};
+	}[];
+};
+
+type RegistryImageManifest = {
+	config?: {
+		digest: string;
+		mediaType?: string;
+	};
+};
+
+type RegistryImageConfig = {
+	config?: {
+		Env?: string[];
+	};
+};
+
+const MANIFEST_LIST_ACCEPT = [
+	"application/vnd.oci.image.index.v1+json",
+	"application/vnd.docker.distribution.manifest.list.v2+json",
+	"application/vnd.oci.image.manifest.v1+json",
+	"application/vnd.docker.distribution.manifest.v2+json",
+].join(", ");
+
+const IMAGE_MANIFEST_ACCEPT = [
+	"application/vnd.oci.image.manifest.v1+json",
+	"application/vnd.docker.distribution.manifest.v2+json",
+].join(", ");
+
+const findEnvValue = (env: string[] | undefined, name: string) => {
+	const prefix = `${name}=`;
+	return env?.find((item) => item.startsWith(prefix))?.slice(prefix.length);
+};
+
+export const getAgentHitsLatestImageData = async () => {
+	const token = await getGhcrPullToken();
+	const tag = getAgentHitsUpdateTag();
+	const indexResult = await fetchGhcrJson<RegistryManifestList>(
+		token,
+		`manifests/${tag}`,
+		MANIFEST_LIST_ACCEPT,
+	);
+	const latestDigest = indexResult.digest;
+	const imageManifestDigest =
+		indexResult.data.manifests?.find(
+			(manifest) =>
+				manifest.platform?.os === "linux" &&
+				manifest.platform.architecture === "amd64",
+		)?.digest ?? indexResult.data.manifests?.[0]?.digest;
+
+	if (!latestDigest || !imageManifestDigest) {
+		throw new Error("Could not resolve AgentHits image manifest digest");
+	}
+
+	const imageManifestResult = await fetchGhcrJson<RegistryImageManifest>(
+		token,
+		`manifests/${imageManifestDigest}`,
+		IMAGE_MANIFEST_ACCEPT,
+	);
+	const configDigest = imageManifestResult.data.config?.digest;
+	if (!configDigest) {
+		throw new Error("Could not resolve AgentHits image config digest");
+	}
+
+	const configResult = await fetchGhcrJson<RegistryImageConfig>(
+		token,
+		`blobs/${configDigest}`,
+		"application/octet-stream",
+	);
+	const env = configResult.data.config?.Env;
+
+	return {
+		image: getAgentHitsUpdateImage(),
+		latestDigest,
+		latestPlatformDigest: imageManifestDigest,
+		forkVersion: findEnvValue(env, "DOKPLOY_FORK_VERSION") || tag,
+		officialVersion: findEnvValue(env, "DOKPLOY_OFFICIAL_VERSION") || "v0.29.8",
+	};
+};
+
+export const getAgentHitsUpdateData = async (
+	currentVersion: string,
+): Promise<IUpdateData> => {
+	const currentDigest = await getServiceImageDigest();
+	const latestImageData = await getAgentHitsLatestImageData();
+	const currentVersionData = getDokployVersionData(currentVersion);
+	const metadataUpdateAvailable =
+		currentVersionData.forkVersion !== latestImageData.forkVersion ||
+		currentVersionData.officialVersion !== latestImageData.officialVersion;
+	const digestUpdateAvailable =
+		Boolean(currentDigest) &&
+		currentDigest !== latestImageData.latestDigest &&
+		currentDigest !== latestImageData.latestPlatformDigest;
+
+	return {
+		latestVersion: latestImageData.forkVersion,
+		updateAvailable: digestUpdateAvailable || metadataUpdateAvailable,
+		updateSource: "agenthits",
+		latestImage: latestImageData.image,
+		latestOfficialVersion: latestImageData.officialVersion,
+		currentDigest,
+		latestDigest: latestImageData.latestDigest,
+		latestPlatformDigest: latestImageData.latestPlatformDigest,
+	};
+};
+
+export const getAgentHitsUpdateCommand = (
+	currentVersion: string,
+	forkVersion?: string | null,
+	officialVersion?: string | null,
+) => {
+	const forkVersionArg = forkVersion?.trim()
+		? `--env-add ${quoteShellArg(`DOKPLOY_FORK_VERSION=${forkVersion.trim()}`)}`
+		: "$fork_version_env_arg";
+	const officialVersionArg = officialVersion?.trim()
+		? officialVersion.trim()
+		: getOfficialDokployVersion(currentVersion);
+
+	return `
+fork_version_env_arg=""
+if docker service inspect dokploy --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' 2>/dev/null | grep -q '^DOKPLOY_FORK_VERSION='; then
+	fork_version_env_arg="--env-rm DOKPLOY_FORK_VERSION"
+fi
+docker service update --force \\
+	--image ${quoteShellArg(getAgentHitsUpdateImage())} \\
+	--env-add ${quoteShellArg(`RELEASE_TAG=${getAgentHitsUpdateTag()}`)} \\
+	--env-add ${quoteShellArg(`DOKPLOY_OFFICIAL_VERSION=${officialVersionArg}`)} \\
+	${forkVersionArg} \\
+	dokploy
+`;
 };
 
 /** Returns Dokploy docker service image digest */
@@ -38,7 +290,7 @@ export const getServiceImageDigest = async () => {
 	const currentDigest = stdout.trim().split("@")[1];
 
 	if (!currentDigest) {
-		throw new Error("Could not get current service image digest");
+		return null;
 	}
 
 	return currentDigest;
@@ -49,6 +301,10 @@ export const getUpdateData = async (
 	currentVersion: string,
 ): Promise<IUpdateData> => {
 	try {
+		if (isAgentHitsUpdateChannel(currentVersion)) {
+			return await getAgentHitsUpdateData(currentVersion);
+		}
+
 		const baseUrl =
 			"https://hub.docker.com/v2/repositories/dokploy/dokploy/tags";
 		let url: string | null = `${baseUrl}?page_size=100`;
@@ -84,7 +340,7 @@ export const getUpdateData = async (
 			if (!latestDigest) {
 				return DEFAULT_UPDATE_DATA;
 			}
-			if (currentDigest !== latestDigest) {
+			if (currentDigest && currentDigest !== latestDigest) {
 				return {
 					latestVersion: currentImageTag,
 					updateAvailable: true,
@@ -129,6 +385,8 @@ export const getUpdateData = async (
 		return {
 			latestVersion,
 			updateAvailable,
+			updateSource: "official",
+			latestImage: `dokploy/dokploy:${latestVersion}`,
 		};
 	} catch (error) {
 		console.error("Error fetching update data:", error);
@@ -143,63 +401,86 @@ interface TreeDataItem {
 	children?: TreeDataItem[];
 }
 
+const buildTreeFromRemoteFindOutput = (
+	dirPath: string,
+	encodedOutput: string,
+): TreeDataItem[] => {
+	const output = encodedOutput.trim();
+	if (!output) {
+		return [];
+	}
+
+	const decoded = Buffer.from(output, "base64").toString("utf8");
+	const entries = decoded
+		.split("\0")
+		.filter(Boolean)
+		.map((entry) => {
+			const separator = entry.lastIndexOf("\t");
+			if (separator === -1) {
+				return null;
+			}
+
+			return {
+				relativePath: entry.slice(0, separator),
+				type: entry.slice(separator + 1) === "d" ? "directory" : "file",
+			} as const;
+		})
+		.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+		.sort(
+			(a, b) =>
+				a.relativePath.split("/").length - b.relativePath.split("/").length,
+		);
+
+	const result: TreeDataItem[] = [];
+	const directoryChildren = new Map<string, TreeDataItem[]>();
+
+	for (const entry of entries) {
+		const name = posix.basename(entry.relativePath);
+		const itemPath = posix.join(dirPath, entry.relativePath);
+		const item: TreeDataItem = {
+			id: itemPath,
+			name,
+			type: entry.type,
+			...(entry.type === "directory" ? { children: [] } : {}),
+		};
+
+		const parentPath = posix.dirname(entry.relativePath);
+		const target =
+			parentPath === "." ? result : directoryChildren.get(parentPath);
+		if (!target) {
+			continue;
+		}
+
+		target.push(item);
+		if (entry.type === "directory") {
+			directoryChildren.set(
+				entry.relativePath,
+				item.children as TreeDataItem[],
+			);
+		}
+	}
+
+	return result;
+};
+
 export const readDirectory = async (
 	dirPath: string,
 	serverId?: string,
 ): Promise<TreeDataItem[]> => {
 	if (serverId) {
+		const quotedDirPath = quoteShellArg(dirPath);
 		const { stdout } = await execAsyncRemote(
 			serverId,
 			`
-process_items() {
-    local parent_dir="$1"
-    local __resultvar=$2
-
-    local items_json=""
-    local first=true
-    for item in "$parent_dir"/*; do
-        [ -e "$item" ] || continue
-        process_item "$item" item_json
-        if [ "$first" = true ]; then
-            first=false
-            items_json="$item_json"
-        else
-            items_json="$items_json,$item_json"
-        fi
-    done
-
-    eval $__resultvar="'[$items_json]'"
-}
-
-process_item() {
-    local item_path="$1"
-    local __resultvar=$2
-
-    local item_name=$(basename "$item_path")
-    local escaped_name=$(echo "$item_name" | sed 's/"/\\"/g')
-    local escaped_path=$(echo "$item_path" | sed 's/"/\\"/g')
-
-    if [ -d "$item_path" ]; then
-        # Is directory
-        process_items "$item_path" children_json
-        local json='{"id":"'"$escaped_path"'","name":"'"$escaped_name"'","type":"directory","children":'"$children_json"'}'
-    else
-        # Is file
-        local json='{"id":"'"$escaped_path"'","name":"'"$escaped_name"'","type":"file"}'
-    fi
-
-    eval $__resultvar="'$json'"
-}
-
-root_dir=${dirPath}
-
-process_items "$root_dir" json_output
-
-echo "$json_output"
+set -e
+root_dir=${quotedDirPath}
+if [ ! -d "$root_dir" ]; then
+	exit 0
+fi
+find "$root_dir" -mindepth 1 -printf '%P\t%y\0' | base64 -w 0
 			`,
 		);
-		const result = JSON.parse(stdout);
-		return result;
+		return buildTreeFromRemoteFindOutput(dirPath, stdout);
 	}
 
 	const stack = [dirPath];
@@ -295,7 +576,9 @@ export const reloadDockerResource = async (
 				imageTag = currentImageTag;
 			}
 
-			command = `docker service update --force --image dokploy/dokploy:${imageTag} ${resourceName}`;
+			command = isAgentHitsUpdateChannel(version || "")
+				? getAgentHitsUpdateCommand(version || "")
+				: `docker service update --force --image dokploy/dokploy:${imageTag} ${resourceName}`;
 		} else {
 			command = `docker service update --force ${resourceName}`;
 		}

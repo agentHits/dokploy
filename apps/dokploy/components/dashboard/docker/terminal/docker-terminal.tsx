@@ -1,6 +1,6 @@
+import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import React, { useEffect, useRef } from "react";
-import { FitAddon } from "xterm-addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { AttachAddon } from "@xterm/addon-attach";
 import { useTheme } from "next-themes";
@@ -43,9 +43,8 @@ export const DockerTerminal: React.FC<Props> = ({
 		const ws = new WebSocket(wsUrl);
 
 		const addonAttach = new AttachAddon(ws);
-		// @ts-ignore
+		// @ts-expect-error
 		term.open(termRef.current);
-		// @ts-ignore
 		term.loadAddon(addonFit);
 		term.loadAddon(addonAttach);
 		addonFit.fit();

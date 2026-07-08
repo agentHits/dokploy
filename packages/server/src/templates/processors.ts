@@ -136,7 +136,8 @@ export function processValue(
 			if (params.length === 1 && params[0] && params[0].match(/^\d{1,3}$/)) {
 				return generateJwt({ length: Number.parseInt(params[0], 10) });
 			}
-			let [secret, payload] = params;
+			const secret = params[0];
+			let payload: unknown = params[1];
 			if (typeof payload === "string" && variables[payload]) {
 				payload = variables[payload];
 			}
@@ -163,7 +164,7 @@ export function processValue(
 		}
 
 		if (varName === "username") {
-			return faker.internet.userName().toLowerCase();
+			return faker.internet.username().toLowerCase();
 		}
 
 		if (varName === "email") {

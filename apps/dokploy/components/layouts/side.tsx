@@ -214,9 +214,9 @@ const MENU: Menu = {
 			title: "Requests",
 			url: "/dashboard/requests",
 			icon: Forward,
-			// Only enabled for users with access to Docker in non-cloud environments
+			// Request logs expose organization-wide Traefik request metadata.
 			isEnabled: ({ permissions, isCloud }) =>
-				!!(permissions?.docker.read && !isCloud),
+				!!(permissions?.organization.update && !isCloud),
 		},
 
 		// Legacy unused menu, adjusted to the new structure
@@ -906,7 +906,8 @@ export default function Page({ children }: Props) {
 	const pathname = usePathname();
 	const { data: auth } = api.user.get.useQuery();
 	const { data: permissions } = api.user.getPermissions.useQuery();
-	const { data: dokployVersion } = api.settings.getDokployVersion.useQuery();
+	const { data: dokployVersionData } =
+		api.settings.getDokployVersionData.useQuery();
 	const { data: whitelabeling } = api.whitelabeling.get.useQuery(undefined, {
 		staleTime: 5 * 60 * 1000,
 		refetchOnWindowFocus: false,
@@ -1179,9 +1180,20 @@ export default function Page({ children }: Props) {
 								{whitelabeling.footerText}
 							</div>
 						)}
-						{dokployVersion && (
-							<div className="px-3 text-xs text-muted-foreground text-center group-data-[collapsible=icon]:hidden">
-								Version {dokployVersion}
+						{dokployVersionData && (
+							<div className="px-3 text-[11px] leading-5 text-muted-foreground group-data-[collapsible=icon]:hidden">
+								<div className="flex items-center justify-between gap-3">
+									<span>Official</span>
+									<span className="truncate font-medium">
+										{dokployVersionData.officialVersion}
+									</span>
+								</div>
+								<div className="flex items-center justify-between gap-3">
+									<span>Fork</span>
+									<span className="truncate font-medium">
+										{dokployVersionData.forkVersion}
+									</span>
+								</div>
 							</div>
 						)}
 					</SidebarMenu>

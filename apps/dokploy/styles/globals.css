@@ -2,9 +2,9 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@plugin 'tailwindcss-animate';
-@plugin '@tailwindcss/typography';
-@plugin 'fancy-ansi/plugin';
+@plugin "tailwindcss-animate";
+@plugin "@tailwindcss/typography";
+@plugin "fancy-ansi/plugin";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -21,8 +21,8 @@
 
 @theme {
 	--font-sans:
-		var(--font-inter), ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
-		"Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+		var(--font-inter), ui-sans-serif, system-ui, sans-serif,
+		"Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 
 	--breakpoint-3xl: 1920px;
 
@@ -291,7 +291,7 @@
 
 @layer utilities {
 	.xterm-viewport {
-		border-radius: 0.75rem /* 12px */ !important;
+		border-radius: /* 12px */ 0.75rem !important;
 	}
 
 	.xterm .xterm-viewport {

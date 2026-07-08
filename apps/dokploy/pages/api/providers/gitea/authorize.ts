@@ -1,3 +1,8 @@
+import { validateRequest } from "@dokploy/server/lib/auth";
+import {
+	canManageGitProviderOAuth,
+	signGitProviderOAuthState,
+} from "@dokploy/server/utils/providers/oauth-state";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { findGitea, redirectWithError } from "./helper";
 
@@ -16,8 +21,21 @@ export default async function handler(
 			return res.status(400).json({ error: "Invalid Gitea provider ID" });
 		}
 
+		const { session, user } = await validateRequest(req);
+		if (
+			!session?.id ||
+			!session.userId ||
+			!session.activeOrganizationId ||
+			!user
+		) {
+			return res.status(401).json({ error: "Authentication required" });
+		}
+
 		const gitea = await findGitea(giteaId as string);
-		if (!gitea || !gitea.clientId || !gitea.redirectUri) {
+		if (!gitea || !canManageGitProviderOAuth(gitea, session, user)) {
+			return redirectWithError(res, "Forbidden");
+		}
+		if (!gitea?.clientId || !gitea.redirectUri) {
 			return redirectWithError(res, "Incomplete OAuth configuration");
 		}
 
@@ -30,7 +48,17 @@ export default async function handler(
 			gitea.redirectUri as string,
 		);
 		authorizationUrl.searchParams.append("scope", "read:user repo");
-		authorizationUrl.searchParams.append("state", giteaId as string);
+		authorizationUrl.searchParams.append(
+			"state",
+			signGitProviderOAuthState({
+				providerType: "gitea",
+				providerId: giteaId as string,
+				redirectUri: gitea.redirectUri as string,
+				sessionId: session.id,
+				userId: session.userId,
+				organizationId: session.activeOrganizationId,
+			}),
+		);
 
 		// Redirect user to Gitea authorization URL
 		return res.redirect(307, authorizationUrl.toString());

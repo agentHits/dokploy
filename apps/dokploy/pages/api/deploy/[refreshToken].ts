@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import {
 	type Bitbucket,
 	getBitbucketHeaders,
@@ -5,6 +6,7 @@ import {
 	shouldDeploy,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
+import { Webhooks } from "@octokit/webhooks";
 import { eq } from "drizzle-orm";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { applications } from "@/server/db/schema";
@@ -19,6 +21,89 @@ import { deploy } from "@/server/utils/deploy";
  */
 export const logWebhookError = (context: string, error: unknown) => {
 	console.error(context, error);
+};
+
+export const rejectNonPostDeployWebhook = (
+	req: NextApiRequest,
+	res: NextApiResponse,
+) => {
+	if (req.method === "POST") {
+		return false;
+	}
+
+	res.setHeader("Allow", "POST");
+	res.status(405).json({ message: "Method Not Allowed" });
+	return true;
+};
+
+const getHeaderValue = (header: string | string[] | undefined) =>
+	Array.isArray(header) ? header[0] : header;
+
+const constantTimeEquals = (actual: string | undefined, expected: string) => {
+	if (!actual) {
+		return false;
+	}
+	const actualBuffer = Buffer.from(actual);
+	const expectedBuffer = Buffer.from(expected);
+	return (
+		actualBuffer.length === expectedBuffer.length &&
+		timingSafeEqual(actualBuffer, expectedBuffer)
+	);
+};
+
+type DeployWebhookProviderCredentials = {
+	github?: { githubWebhookSecret?: string | null } | null;
+	gitlab?: { secret?: string | null } | null;
+	bitbucket?: object | null;
+	gitea?: object | null;
+};
+
+export const isProviderDeployWebhookAuthenticated = async (
+	req: NextApiRequest,
+	providers: DeployWebhookProviderCredentials,
+) => {
+	const provider = getProviderByHeader(req.headers);
+	if (!provider) {
+		return true;
+	}
+
+	if (provider === "github") {
+		const secret = providers.github?.githubWebhookSecret;
+		const signature = getHeaderValue(req.headers["x-hub-signature-256"]);
+		if (!secret || !signature) {
+			return false;
+		}
+
+		const webhooks = new Webhooks({ secret });
+		return webhooks.verify(JSON.stringify(req.body), signature);
+	}
+
+	if (provider === "gitlab") {
+		const secret = providers.gitlab?.secret;
+		if (!secret) {
+			return false;
+		}
+
+		return constantTimeEquals(
+			getHeaderValue(req.headers["x-gitlab-token"]),
+			secret,
+		);
+	}
+
+	return false;
+};
+
+export const rejectUnauthenticatedProviderDeployWebhook = async (
+	req: NextApiRequest,
+	res: NextApiResponse,
+	providers: DeployWebhookProviderCredentials,
+) => {
+	if (await isProviderDeployWebhookAuthenticated(req, providers)) {
+		return false;
+	}
+
+	res.status(401).json({ message: "Invalid webhook signature" });
+	return true;
 };
 
 /**
@@ -38,6 +123,10 @@ export default async function handler(
 ) {
 	const { refreshToken } = req.query;
 	try {
+		if (rejectNonPostDeployWebhook(req, res)) {
+			return;
+		}
+
 		if (req.headers["x-github-event"] === "ping") {
 			res.status(200).json({ message: "Ping received, webhook is active" });
 			return;
@@ -51,6 +140,9 @@ export default async function handler(
 					},
 				},
 				bitbucket: true,
+				github: true,
+				gitlab: true,
+				gitea: true,
 			},
 		});
 
@@ -62,6 +154,17 @@ export default async function handler(
 			res.status(400).json({
 				message: "Automatic deployments are disabled for this application",
 			});
+			return;
+		}
+
+		if (
+			await rejectUnauthenticatedProviderDeployWebhook(req, res, {
+				github: application.github,
+				gitlab: application.gitlab,
+				bitbucket: application.bitbucket,
+				gitea: application.gitea,
+			})
+		) {
 			return;
 		}
 

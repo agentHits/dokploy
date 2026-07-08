@@ -6,6 +6,10 @@ RUN corepack enable
 RUN corepack prepare pnpm@10.22.0 --activate
 
 FROM base AS build
+ARG DOKPLOY_OFFICIAL_VERSION=v0.29.8
+ARG DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_local
+ENV DOKPLOY_OFFICIAL_VERSION=$DOKPLOY_OFFICIAL_VERSION
+ENV DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION
 COPY . /usr/src/app
 WORKDIR /usr/src/app
 
@@ -29,7 +33,11 @@ FROM base AS dokploy
 WORKDIR /app
 
 # Set production
+ARG DOKPLOY_OFFICIAL_VERSION=v0.29.8
+ARG DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_local
 ENV NODE_ENV=production
+ENV DOKPLOY_OFFICIAL_VERSION=$DOKPLOY_OFFICIAL_VERSION
+ENV DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION
 
 RUN apt-get update && apt-get install -y curl unzip zip apache2-utils iproute2 rsync git-lfs && git lfs install && rm -rf /var/lib/apt/lists/*
 
@@ -54,12 +62,15 @@ RUN curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh --ver
 ARG NIXPACKS_VERSION=1.41.0
 RUN curl -sSL https://nixpacks.com/install.sh -o install.sh \
     && chmod +x install.sh \
-    && ./install.sh \
+    && NIXPACKS_VERSION="$NIXPACKS_VERSION" ./install.sh -y \
+    && rm install.sh \
     && pnpm install -g tsx
 
 # Install Railpack
 ARG RAILPACK_VERSION=0.15.4
-RUN curl -sSL https://railpack.com/install.sh | bash
+RUN curl -sSL https://railpack.com/install.sh -o install-railpack.sh \
+    && RAILPACK_VERSION="$RAILPACK_VERSION" bash install-railpack.sh -y \
+    && rm install-railpack.sh
 
 # Install buildpacks
 COPY --from=buildpacksio/pack:0.39.1 /usr/local/bin/pack /usr/local/bin/pack

@@ -63,6 +63,24 @@ export const findGitlabById = async (gitlabId: string) => {
 	return gitlabProviderResult;
 };
 
+export const findGitlabGitProviderId = async (gitlabId: string) => {
+	const gitlabProviderResult = await db.query.gitlab.findFirst({
+		where: eq(gitlab.gitlabId, gitlabId),
+		columns: {
+			gitProviderId: true,
+		},
+	});
+
+	if (!gitlabProviderResult) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: "Gitlab Provider not found",
+		});
+	}
+
+	return gitlabProviderResult.gitProviderId;
+};
+
 export const updateGitlab = async (
 	gitlabId: string,
 	input: Partial<Gitlab>,

@@ -1,0 +1,79 @@
+name: AgentHits Dokploy Image
+
+on:
+  push:
+    branches: [AgentHits-Dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: agenthits/dokploy
+  STABLE_TAG: agenthits-dev
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Prepare production env file
+        run: |
+          cp apps/dokploy/.env.production.example .env.production
+          cp apps/dokploy/.env.production.example apps/dokploy/.env.production
+          echo "POSTGRES_PASSWORD=build-time-postgres-password" >> .env.production
+          echo "POSTGRES_PASSWORD=build-time-postgres-password" >> apps/dokploy/.env.production
+
+      - name: Set image tags
+        id: tags
+        run: |
+          SHORT_SHA="${GITHUB_SHA::12}"
+          IMAGE="${REGISTRY}/${IMAGE_NAME}"
+          OFFICIAL_VERSION="$(node -p "require('./apps/dokploy/package.json').version")"
+          if ! git rev-parse --verify --quiet "${OFFICIAL_VERSION}^{commit}" >/dev/null; then
+            git fetch --no-tags https://github.com/Dokploy/dokploy.git "refs/tags/${OFFICIAL_VERSION}:refs/tags/${OFFICIAL_VERSION}"
+          fi
+          FORK_DISTANCE="$(git rev-list --count "${OFFICIAL_VERSION}..HEAD")"
+          FORK_VERSION="off_${OFFICIAL_VERSION}/Fork_${FORK_DISTANCE}+${SHORT_SHA}"
+          {
+            echo "tags<<EOF"
+            echo "${IMAGE}:${STABLE_TAG}"
+            echo "${IMAGE}:${STABLE_TAG}-${SHORT_SHA}"
+            echo "${IMAGE}:sha-${GITHUB_SHA}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "cache=${IMAGE}:buildcache" >> "$GITHUB_OUTPUT"
+          echo "official-version=${OFFICIAL_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "fork-version=${FORK_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=registry,ref=${{ steps.tags.outputs.cache }}
+          cache-to: type=registry,ref=${{ steps.tags.outputs.cache }},mode=max
+          provenance: true
+          sbom: true
+          build-args: |
+            DOKPLOY_OFFICIAL_VERSION=${{ steps.tags.outputs.official-version }}
+            DOKPLOY_FORK_VERSION=${{ steps.tags.outputs.fork-version }}

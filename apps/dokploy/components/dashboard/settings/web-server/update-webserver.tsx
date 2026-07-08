@@ -166,9 +166,11 @@ export const UpdateWebServer = ({
 						<div>
 							{modalState === "idle" && (
 								<span>
-									This will update the web server to the new version. You will
-									not be able to use the panel during the update process. The
-									page will be reloaded once the update is finished.
+									This will update the web server to the selected latest build.
+									AgentHits fork installs update from the AgentHits GHCR image.
+									You will not be able to use the panel during the update
+									process. The page will be reloaded once the update is
+									finished.
 									<br />
 									<br />
 									We recommend verifying that all services are running before
