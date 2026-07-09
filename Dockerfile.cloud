@@ -1,9 +1,13 @@
 # syntax=docker/dockerfile:1
 FROM node:24.4.0-slim AS base
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
-RUN corepack prepare pnpm@10.22.0 --activate
+ENV BUN_INSTALL="/root/.bun"
+ENV PATH="$BUN_INSTALL/bin:$PATH"
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bash ca-certificates curl unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL https://bun.sh/install | bash -s -- bun-v1.3.14 \
+    && ln -sf "$BUN_INSTALL/bin/bun" "$BUN_INSTALL/bin/bunx" \
+    && npm install -g node-gyp@13.0.1
 
 FROM base AS build
 COPY . /usr/src/app
@@ -12,7 +16,7 @@ WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y python3 make g++ git python3-pip pkg-config libsecret-1-dev && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm --filter=@dokploy/server --filter=./apps/dokploy install --frozen-lockfile
+RUN --mount=type=cache,id=bun,target=/root/.bun/install/cache bun install --frozen-lockfile
 
 
 # Deploy only the dokploy app
@@ -26,10 +30,23 @@ ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 
 ENV NODE_ENV=production
-RUN pnpm --filter=@dokploy/server build
-RUN pnpm --filter=./apps/dokploy run build
+RUN bun run --filter './packages/server' build
+RUN bun run --filter './apps/dokploy' build
 
-RUN pnpm --filter=./apps/dokploy --prod deploy --legacy /prod/dokploy
+RUN bun install --production --frozen-lockfile --linker hoisted
+
+RUN mkdir -p /prod/dokploy \
+    && cp -R /usr/src/app/apps/dokploy/package.json /prod/dokploy/package.json \
+    && cp -R /usr/src/app/apps/dokploy/next.config.mjs /prod/dokploy/next.config.mjs \
+    && cp -R /usr/src/app/apps/dokploy/public /prod/dokploy/public \
+    && cp -R /usr/src/app/apps/dokploy/drizzle /prod/dokploy/drizzle \
+    && cp -R /usr/src/app/apps/dokploy/components.json /prod/dokploy/components.json \
+    && cp -R /usr/src/app/node_modules /prod/dokploy/node_modules \
+    && mkdir -p /prod/dokploy/packages \
+    && cp -R /usr/src/app/packages/server /prod/dokploy/packages/server \
+    && rm -f /prod/dokploy/node_modules/dokploy \
+    && rm -f /prod/dokploy/node_modules/@dokploy/api \
+    && rm -f /prod/dokploy/node_modules/@dokploy/schedules
 
 RUN cp -R /usr/src/app/apps/dokploy/.next /prod/dokploy/.next
 RUN cp -R /usr/src/app/apps/dokploy/dist /prod/dokploy/dist
@@ -51,13 +68,14 @@ COPY --from=build /prod/dokploy/package.json ./package.json
 COPY --from=build /prod/dokploy/drizzle ./drizzle
 COPY --from=build /prod/dokploy/components.json ./components.json
 COPY --from=build /prod/dokploy/node_modules ./node_modules
+COPY --from=build /prod/dokploy/packages ./packages
 
 
 # Install RCLONE
 RUN curl https://rclone.org/install.sh | bash
 
 # tsx
-RUN pnpm install -g tsx
+RUN bun install -g tsx
 
 EXPOSE 3000
-CMD [ "pnpm", "start" ]
+CMD ["bun", "run", "start"]

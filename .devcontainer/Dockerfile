@@ -9,10 +9,12 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Set up PNPM
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable && corepack prepare pnpm@10.22.0 --activate
+# Set up Bun
+ENV BUN_INSTALL="/home/node/.bun"
+ENV PATH="$BUN_INSTALL/bin:$PATH"
+RUN mkdir -p "$BUN_INSTALL" \
+    && chown -R node:node "$BUN_INSTALL" \
+    && su node -c "curl -fsSL https://bun.sh/install | bash -s -- bun-v1.3.14"
 
 # Create workspace directory
 WORKDIR /workspaces/dokploy

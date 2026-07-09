@@ -58,7 +58,7 @@ We use Node v24.4.0 and recommend this specific version. If you have nvm install
 ```bash
 git clone https://github.com/dokploy/dokploy.git
 cd dokploy
-pnpm install
+bun install
 cp apps/dokploy/.env.example apps/dokploy/.env
 ```
 
@@ -71,19 +71,19 @@ cp apps/dokploy/.env.example apps/dokploy/.env
 Run the command that will spin up all the required services and files.
 
 ```bash
-pnpm run dokploy:setup
+bun run dokploy:setup
 ```
 
 Run this script
 
 ```bash
-pnpm run server:script
+bun run server:script
 ```
 
 Now run the development server.
 
 ```bash
-pnpm run dokploy:dev
+bun run dokploy:dev
 ```
 
 Go to http://localhost:3000 to see the development server
@@ -94,7 +94,7 @@ Go to http://localhost:3000 to see the development server
 ## Build
 
 ```bash
-pnpm run dokploy:build
+bun run dokploy:build
 ```
 
 ## Docker
@@ -109,13 +109,13 @@ cp apps/dokploy/.env.production.example apps/dokploy/.env.production
 then run build command
 
 ```bash
-pnpm run docker:build
+bun run --filter './apps/dokploy' docker:build
 ```
 
 To push the docker image
 
 ```bash
-pnpm run docker:push
+bun run --filter './apps/dokploy' docker:push
 ```
 
 ## Password Reset
@@ -123,13 +123,13 @@ pnpm run docker:push
 In the case you lost your password, you can reset it using the following command
 
 ```bash
-pnpm run reset-password
+bun run --filter './apps/dokploy' reset-password
 ```
 
 If you want to test the webhooks on development mode using localtunnel, make sure to install [`localtunnel`](https://localtunnel.app/)
 
 ```bash
-pnpm dlx localtunnel --port 3000
+bunx localtunnel --port 3000
 ```
 
 If you run into permission issues of docker run the following command
