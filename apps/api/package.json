@@ -30,9 +30,9 @@
 		"tsx": "^4.23.0",
 		"typescript": "^6.0.3"
 	},
-	"packageManager": "pnpm@11.10.0+sha256.620b6605ea4f62fc56a6d0a98733f479071d0321e03e486b522c7e9a74617431",
+	"packageManager": "bun@1.3.14",
 	"engines": {
 		"node": "^24.4.0",
-		"pnpm": ">=11.10.0"
+		"bun": ">=1.3.14"
 	}
 }

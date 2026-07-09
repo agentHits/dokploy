@@ -1,9 +1,11 @@
 # syntax=docker/dockerfile:1
+FROM oven/bun:1.3.14 AS bun
+
 FROM node:24.4.0-slim AS base
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
-RUN corepack prepare pnpm@10.22.0 --activate
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+ENV BUN_INSTALL="/root/.bun"
+ENV PATH="$BUN_INSTALL/bin:$PATH"
+RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
 
 FROM base AS build
 COPY . /usr/src/app
@@ -12,15 +14,24 @@ WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y python3 make g++ git python3-pip pkg-config libsecret-1-dev && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm --filter=@dokploy/server --filter=./apps/api install --frozen-lockfile
+RUN --mount=type=cache,id=bun,target=/root/.bun/install/cache bun install --frozen-lockfile
 
 # Deploy only the dokploy app
 
 ENV NODE_ENV=production
-RUN pnpm --filter=@dokploy/server build
-RUN pnpm --filter=./apps/api run build
+RUN bun run --filter './packages/server' build
+RUN bun run --filter './apps/api' build
 
-RUN pnpm --filter=./apps/api --prod deploy --legacy /prod/api
+RUN bun install --production --frozen-lockfile --linker hoisted
+
+RUN mkdir -p /prod/api \
+    && cp -R /usr/src/app/apps/api/package.json /prod/api/package.json \
+    && cp -R /usr/src/app/node_modules /prod/api/node_modules \
+    && mkdir -p /prod/api/packages \
+    && cp -R /usr/src/app/packages/server /prod/api/packages/server \
+    && rm -f /prod/api/node_modules/dokploy \
+    && rm -f /prod/api/node_modules/@dokploy/api \
+    && rm -f /prod/api/node_modules/@dokploy/schedules
 
 RUN cp -R /usr/src/app/apps/api/dist /prod/api/dist
 
@@ -34,6 +45,7 @@ ENV NODE_ENV=production
 COPY --from=build /prod/api/dist ./dist
 COPY --from=build /prod/api/package.json ./package.json
 COPY --from=build /prod/api/node_modules ./node_modules
+COPY --from=build /prod/api/packages ./packages
 
 ENV HOSTNAME=0.0.0.0
-CMD ["pnpm", "start"]
+CMD ["bun", "run", "start"]

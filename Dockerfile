@@ -1,12 +1,11 @@
 # syntax=docker/dockerfile:1
+FROM oven/bun:1.3.14 AS bun
+
 FROM node:24.4.0-slim AS base
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"
-ENV PNPM_CONFIG_MINIMUM_RELEASE_AGE=0
-ENV PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false
-RUN npm install -g corepack@0.35.0 \
-    && corepack enable \
-    && corepack prepare pnpm@11.10.0 --activate
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+ENV BUN_INSTALL="/root/.bun"
+ENV PATH="$BUN_INSTALL/bin:$PATH"
+RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
 
 FROM base AS build
 ARG DOKPLOY_OFFICIAL_VERSION=v0.29.8
@@ -19,15 +18,28 @@ WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y python3 make g++ git python3-pip pkg-config libsecret-1-dev && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=bun,target=/root/.bun/install/cache bun install --frozen-lockfile
 
 # Deploy only the dokploy app
 
 ENV NODE_ENV=production
-RUN pnpm --filter=@dokploy/server build
-RUN pnpm --filter=./apps/dokploy run build
+RUN bun run --filter './packages/server' build
+RUN bun run --filter './apps/dokploy' build
 
-RUN pnpm --filter=./apps/dokploy --prod deploy --legacy /prod/dokploy
+RUN bun install --production --frozen-lockfile --linker hoisted
+
+RUN mkdir -p /prod/dokploy \
+    && cp -R /usr/src/app/apps/dokploy/package.json /prod/dokploy/package.json \
+    && cp -R /usr/src/app/apps/dokploy/next.config.mjs /prod/dokploy/next.config.mjs \
+    && cp -R /usr/src/app/apps/dokploy/public /prod/dokploy/public \
+    && cp -R /usr/src/app/apps/dokploy/drizzle /prod/dokploy/drizzle \
+    && cp -R /usr/src/app/apps/dokploy/components.json /prod/dokploy/components.json \
+    && cp -R /usr/src/app/node_modules /prod/dokploy/node_modules \
+    && mkdir -p /prod/dokploy/packages \
+    && cp -R /usr/src/app/packages/server /prod/dokploy/packages/server \
+    && rm -f /prod/dokploy/node_modules/dokploy \
+    && rm -f /prod/dokploy/node_modules/@dokploy/api \
+    && rm -f /prod/dokploy/node_modules/@dokploy/schedules
 
 RUN cp -R /usr/src/app/apps/dokploy/.next /prod/dokploy/.next
 RUN cp -R /usr/src/app/apps/dokploy/dist /prod/dokploy/dist
@@ -54,6 +66,7 @@ COPY --from=build /prod/dokploy/drizzle ./drizzle
 COPY .env.production ./.env
 COPY --from=build /prod/dokploy/components.json ./components.json
 COPY --from=build /prod/dokploy/node_modules ./node_modules
+COPY --from=build /prod/dokploy/packages ./packages
 
 
 # Install docker
@@ -67,7 +80,7 @@ RUN curl -sSL https://nixpacks.com/install.sh -o install.sh \
     && chmod +x install.sh \
     && NIXPACKS_VERSION="$NIXPACKS_VERSION" ./install.sh -y \
     && rm install.sh \
-    && pnpm install -g tsx
+    && bun install -g tsx
 
 # Install Railpack
 ARG RAILPACK_VERSION=0.15.4
@@ -91,4 +104,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
   CMD curl -fs http://localhost:3000/api/trpc/settings.health || exit 1
 
-  CMD ["sh", "-c", "pnpm run wait-for-postgres && exec pnpm start"]
+  CMD ["sh", "-c", "bun run wait-for-postgres && exec bun run start"]
