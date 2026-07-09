@@ -86,17 +86,8 @@ RUN curl -sSL https://nixpacks.com/install.sh -o install.sh \
 
 # Install Railpack
 ARG RAILPACK_VERSION=0.15.4
-ARG TARGETARCH
-RUN set -eux; \
-    case "${TARGETARCH:-amd64}" in \
-        amd64) railpack_arch="x86_64" ;; \
-        arm64) railpack_arch="arm64" ;; \
-        *) echo "Unsupported Railpack architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL "https://github.com/railwayapp/railpack/releases/download/v${RAILPACK_VERSION}/railpack-v${RAILPACK_VERSION}-${railpack_arch}-unknown-linux-musl.tar.gz" -o railpack.tar.gz; \
-    tar -xzf railpack.tar.gz railpack; \
-    install -m 0755 railpack /usr/local/bin/railpack; \
-    rm railpack railpack.tar.gz
+RUN curl -sSL https://railpack.com/install.sh \
+    | RAILPACK_VERSION="$RAILPACK_VERSION" bash -s -- --yes --bin-dir /usr/local/bin
 
 # Install buildpacks
 COPY --from=buildpacksio/pack:0.39.1 /usr/local/bin/pack /usr/local/bin/pack
