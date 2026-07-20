@@ -251,6 +251,46 @@ describe("signed deployment job scope", () => {
 		).rejects.toThrow(/organization scope/i);
 	});
 
+	it("binds exact compose operation and full revision in signed v2 scope", async () => {
+		const revision = "0123456789abcdef0123456789abcdef01234567";
+		const job = {
+			composeId: "compose-1",
+			applicationType: "compose" as const,
+			descriptionLog: "",
+			server: true,
+			serverId: "server-1",
+			titleLog: "Exact deployment",
+			type: "deploy" as const,
+			operationId: "operation-1",
+			expectedRevision: revision,
+		};
+		const signed = await signDeploymentQueueJob(job, {
+			operation: "deploy",
+			now: 1000,
+		});
+		expect(signed.scope).toMatchObject({
+			version: 2,
+			operationId: "operation-1",
+			sourceRevision: revision,
+		});
+		await expect(
+			assertSignedDeploymentQueueJob(signed, {
+				operation: "deploy",
+				now: 2000,
+			}),
+		).resolves.toEqual(job);
+
+		await expect(
+			assertSignedDeploymentQueueJob(
+				{
+					...signed,
+					expectedRevision: "f".repeat(40),
+				} as Parameters<typeof assertSignedDeploymentQueueJob>[0],
+				{ operation: "deploy", now: 2000 },
+			),
+		).rejects.toThrow(/source revision/i);
+	});
+
 	it("falls back to a derived API key signing key for legacy installs", async () => {
 		vi.stubEnv("DEPLOYMENTS_SIGNING_KEY", "");
 
