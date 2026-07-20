@@ -1,5 +1,7 @@
 import {
+	assertNoRedactedSecretPlaceholders,
 	getApplicationEnvRevision,
+	getComposeEnvRevision,
 	isSecretEnvName,
 	upsertEnvVariables,
 } from "@dokploy/server/utils/env-upsert";
@@ -82,5 +84,29 @@ HASH_VALUE="value # not a comment"`);
 		expect(firstRevision).not.toBe(nextRevision);
 		expect(firstRevision).toMatch(/^env:/);
 		expect(firstRevision).not.toContain("secret-value");
+	});
+
+	it("rejects redacted placeholder substrings without exposing values", () => {
+		for (const placeholder of [
+			"prefix__DOKPLOY_REDACTED_SECRET__suffix",
+			"prefix[REDACTED]suffix",
+		]) {
+			expect(() =>
+				assertNoRedactedSecretPlaceholders({ API_TOKEN: placeholder }),
+			).toThrow("API_TOKEN");
+		}
+	});
+
+	it("creates a stable opaque compose revision bound to id and env", () => {
+		const revision = getComposeEnvRevision("compose_1", "TOKEN=canary");
+		expect(revision).toBe(getComposeEnvRevision("compose_1", "TOKEN=canary"));
+		expect(revision).not.toBe(
+			getComposeEnvRevision("compose_2", "TOKEN=canary"),
+		);
+		expect(revision).not.toBe(
+			getComposeEnvRevision("compose_1", "TOKEN=other"),
+		);
+		expect(revision).toMatch(/^compose-env-v1:/);
+		expect(revision).not.toContain("canary");
 	});
 });

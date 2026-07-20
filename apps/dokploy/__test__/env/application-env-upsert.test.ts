@@ -18,6 +18,13 @@ const dbMocks = vi.hoisted(() => {
 	};
 });
 
+const routerMocks = vi.hoisted(() => ({
+	audit: vi.fn(),
+	checkServicePermissionAndAccess: vi.fn(),
+	deploy: vi.fn(),
+	myQueueAdd: vi.fn(),
+}));
+
 vi.mock("@dokploy/server/db", () => ({
 	db: {
 		query: {
@@ -28,6 +35,36 @@ vi.mock("@dokploy/server/db", () => ({
 		update: dbMocks.update,
 	},
 }));
+
+vi.mock("@dokploy/server/services/permission", () => ({
+	addNewService: vi.fn(),
+	checkPermission: vi.fn(),
+	checkServiceAccess: vi.fn(),
+	checkServicePermissionAndAccess: routerMocks.checkServicePermissionAndAccess,
+	findMemberByUserId: vi.fn(),
+}));
+
+vi.mock("@/server/api/utils/audit", () => ({ audit: routerMocks.audit }));
+vi.mock("@/server/queues/queueSetup", () => ({
+	cleanQueuesByApplication: vi.fn(),
+	killDockerBuild: vi.fn(),
+	myQueue: { add: routerMocks.myQueueAdd },
+}));
+vi.mock("@/server/utils/deploy", () => ({
+	cancelDeployment: vi.fn(),
+	deploy: routerMocks.deploy,
+}));
+
+const { applicationRouter } = await import("@/server/api/routers/application");
+
+const createApplicationCaller = () =>
+	applicationRouter.createCaller({
+		db: {},
+		req: {},
+		res: {},
+		session: { userId: "user-1", activeOrganizationId: "organization-1" },
+		user: { id: "user-1", role: "member" },
+	} as never);
 
 const mockApplication = (env: string | null = null) => ({
 	applicationId: "app_1",
@@ -120,5 +157,45 @@ describe("upsertApplicationEnvironment", () => {
 			message: "Application environment revision does not match",
 		});
 		expect(dbMocks.update).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		"prefix__DOKPLOY_REDACTED_SECRET__suffix",
+		"prefix[REDACTED]suffix",
+	])("rejects placeholder value %s before lookup or write", async (value) => {
+		await expect(
+			upsertApplicationEnvironment({
+				applicationId: "app_1",
+				variables: { API_TOKEN: value },
+			}),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+		expect(dbMocks.findFirst).not.toHaveBeenCalled();
+		expect(dbMocks.update).not.toHaveBeenCalled();
+	});
+});
+
+describe("application ENV authorized caller contract", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		routerMocks.checkServicePermissionAndAccess.mockResolvedValue(undefined);
+	});
+
+	it.each([
+		"prefix__DOKPLOY_REDACTED_SECRET__suffix",
+		"prefix[REDACTED]suffix",
+	])("sqa-env-03: rejects Application placeholder %s without side effects", async (value) => {
+		await expect(
+			createApplicationCaller().envUpsert({
+				applicationId: "app_1",
+				variables: { API_TOKEN: value },
+			}),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(routerMocks.checkServicePermissionAndAccess).toHaveBeenCalledOnce();
+		expect(dbMocks.findFirst).not.toHaveBeenCalled();
+		expect(dbMocks.update).not.toHaveBeenCalled();
+		expect(routerMocks.audit).not.toHaveBeenCalled();
+		expect(routerMocks.myQueueAdd).not.toHaveBeenCalled();
+		expect(routerMocks.deploy).not.toHaveBeenCalled();
 	});
 });
