@@ -5,6 +5,7 @@ import {
 	pgEnum,
 	pgTable,
 	text,
+	unique,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { nanoid } from "nanoid";
@@ -22,6 +23,15 @@ export const deploymentStatus = pgEnum("deploymentStatus", [
 	"done",
 	"error",
 	"cancelled",
+]);
+
+export const deploymentOperationStatus = pgEnum("deploymentOperationStatus", [
+	"accepted",
+	"queued",
+	"dispatch_unknown",
+	"running",
+	"succeeded",
+	"failed",
 ]);
 
 export const deployments = pgTable("deployment", {
@@ -74,6 +84,57 @@ export const deployments = pgTable("deployment", {
 		onDelete: "cascade",
 	}),
 });
+
+export const deploymentOperations = pgTable(
+	"deploymentOperation",
+	{
+		operationId: text("operationId")
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => nanoid()),
+		composeId: text("composeId")
+			.notNull()
+			.references(() => compose.composeId, { onDelete: "cascade" }),
+		idempotencyKeyHash: text("idempotencyKeyHash").notNull(),
+		sourceRevision: text("sourceRevision").notNull(),
+		resolvedRevision: text("resolvedRevision"),
+		envRevision: text("envRevision").notNull(),
+		status: deploymentOperationStatus("status").notNull().default("accepted"),
+		deploymentId: text("deploymentId").references(
+			() => deployments.deploymentId,
+			{ onDelete: "set null" },
+		),
+		createdAt: text("createdAt")
+			.notNull()
+			.$defaultFn(() => new Date().toISOString()),
+		updatedAt: text("updatedAt")
+			.notNull()
+			.$defaultFn(() => new Date().toISOString()),
+		startedAt: text("startedAt"),
+		finishedAt: text("finishedAt"),
+	},
+	(table) => [
+		unique("deployment_operation_compose_key_unique").on(
+			table.composeId,
+			table.idempotencyKeyHash,
+		),
+		unique("deployment_operation_deployment_unique").on(table.deploymentId),
+	],
+);
+
+export const deploymentOperationsRelations = relations(
+	deploymentOperations,
+	({ one }) => ({
+		compose: one(compose, {
+			fields: [deploymentOperations.composeId],
+			references: [compose.composeId],
+		}),
+		deployment: one(deployments, {
+			fields: [deploymentOperations.deploymentId],
+			references: [deployments.deploymentId],
+		}),
+	}),
+);
 
 export const deploymentsRelations = relations(deployments, ({ one }) => ({
 	application: one(applications, {
@@ -231,4 +292,48 @@ export const apiFindAllByType = z.object({
 		"backup",
 		"volumeBackup",
 	]),
+});
+
+export const apiReconcileDeployment = z.object({
+	composeId: z.string().min(1),
+	operationId: z.string().min(1),
+	repair: z.boolean().optional().default(false),
+});
+
+export const apiReconcileDeploymentResponse = z.object({
+	composeId: z.string(),
+	operationId: z.string(),
+	sourceRevision: z.string(),
+	resolvedRevision: z.string().nullable(),
+	operationStatus: z.enum([
+		"accepted",
+		"queued",
+		"dispatch_unknown",
+		"running",
+		"succeeded",
+		"failed",
+	]),
+	deployment: z
+		.object({
+			deploymentId: z.string(),
+			status: z.enum(["running", "done", "error", "cancelled"]).nullable(),
+			startedAt: z.string().nullable(),
+			finishedAt: z.string().nullable(),
+		})
+		.nullable(),
+	queue: z.object({
+		state: z.enum(["queued", "active", "queue-empty", "queue-unavailable"]),
+		reasonCode: z
+			.enum([
+				"not-configured",
+				"network-error",
+				"remote-error",
+				"invalid-response",
+			])
+			.optional(),
+	}),
+	repairPerformed: z.boolean(),
+	createdAt: z.string(),
+	updatedAt: z.string(),
+	checkedAt: z.string(),
 });

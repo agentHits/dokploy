@@ -5,10 +5,13 @@ import {
 	findAllDeploymentsByComposeId,
 	findAllDeploymentsByServerId,
 	findAllDeploymentsCentralized,
+	findComposeById,
+	findComposeDeploymentOperation,
 	findDeploymentById,
 	findScheduleById,
 	getAccessibleServerIds,
 	IS_CLOUD,
+	markDeploymentOperationDispatched,
 	removeDeployment,
 	resolveServicePath,
 	updateDeploymentStatus,
@@ -30,11 +33,19 @@ import {
 	apiFindAllByCompose,
 	apiFindAllByServer,
 	apiFindAllByType,
+	apiReconcileDeployment,
+	apiReconcileDeploymentResponse,
 	deployments,
 	server,
 } from "@/server/db/schema";
+import type { DeploymentJob } from "@/server/queues/queue-types";
 import { myQueue } from "@/server/queues/queueSetup";
-import { fetchDeployApiJobs, type QueueJobRow } from "@/server/utils/deploy";
+import {
+	deploy,
+	fetchDeployApiJobs,
+	fetchDeployApiJobsResult,
+	type QueueJobRow,
+} from "@/server/utils/deploy";
 import { createTRPCRouter, protectedProcedure, withPermission } from "../trpc";
 
 type DeploymentPermissionAction = "cancel" | "read";
@@ -149,6 +160,146 @@ const assertScheduleDeploymentReadAccess = async (
 };
 
 export const deploymentRouter = createTRPCRouter({
+	reconcile: protectedProcedure
+		.meta({
+			openapi: {
+				path: "/deployment/reconcile",
+				method: "POST",
+			},
+		})
+		.input(apiReconcileDeployment)
+		.output(apiReconcileDeploymentResponse)
+		.mutation(async ({ input, ctx }) => {
+			await checkServicePermissionAndAccess(ctx, input.composeId, {
+				deployment: ["read"],
+			});
+			if (input.repair) {
+				await checkServicePermissionAndAccess(ctx, input.composeId, {
+					deployment: ["create"],
+				});
+			}
+
+			let operation = await findComposeDeploymentOperation(
+				input.composeId,
+				input.operationId,
+			);
+			const compose = await findComposeById(input.composeId);
+			let queue: {
+				state: "queued" | "active" | "queue-empty" | "queue-unavailable";
+				reasonCode?:
+					| "not-configured"
+					| "network-error"
+					| "remote-error"
+					| "invalid-response";
+			};
+
+			if (IS_CLOUD && compose.serverId) {
+				const result = await fetchDeployApiJobsResult(compose.serverId);
+				if (!result.available) {
+					queue = {
+						state: "queue-unavailable",
+						reasonCode: result.reasonCode,
+					};
+				} else {
+					const matching = result.jobs.find(
+						(job) => job.data?.operationId === input.operationId,
+					);
+					queue = matching
+						? {
+								state:
+									matching.state === "active" || matching.state === "running"
+										? "active"
+										: "queued",
+							}
+						: { state: "queue-empty" };
+				}
+			} else {
+				const jobs = await myQueue.getJobs(["waiting", "active"]);
+				const matching = jobs.find(
+					(job) =>
+						job.data.applicationType === "compose" &&
+						"operationId" in job.data &&
+						job.data.operationId === input.operationId,
+				);
+				queue = matching
+					? {
+							state:
+								(await matching.getState()) === "active" ? "active" : "queued",
+						}
+					: { state: "queue-empty" };
+			}
+
+			let repairPerformed = false;
+			const isFinal =
+				operation.status === "succeeded" || operation.status === "failed";
+			if (
+				input.repair &&
+				queue.state === "queue-empty" &&
+				!isFinal &&
+				operation.status !== "running" &&
+				!operation.deploymentId
+			) {
+				const jobData: DeploymentJob = {
+					composeId: input.composeId,
+					titleLog: "Exact deployment repair",
+					descriptionLog: "Redispatched immutable source recovery deployment",
+					type: "deploy",
+					applicationType: "compose",
+					server: !!compose.serverId,
+					serverId: compose.serverId ?? undefined,
+					operationId: operation.operationId,
+					expectedRevision: operation.sourceRevision,
+				};
+				try {
+					if (IS_CLOUD && compose.serverId) {
+						await deploy(jobData);
+					} else {
+						await myQueue.add("deployments", jobData, {
+							jobId: operation.operationId,
+							removeOnComplete: true,
+							removeOnFail: true,
+						});
+					}
+					await markDeploymentOperationDispatched(
+						operation.operationId,
+						"queued",
+					);
+					repairPerformed = true;
+					queue = { state: "queued" };
+				} catch {
+					await markDeploymentOperationDispatched(
+						operation.operationId,
+						"dispatch_unknown",
+					);
+					queue = { state: "queue-unavailable", reasonCode: "network-error" };
+				}
+				operation = await findComposeDeploymentOperation(
+					input.composeId,
+					input.operationId,
+				);
+			}
+
+			return {
+				composeId: operation.composeId,
+				operationId: operation.operationId,
+				sourceRevision: operation.sourceRevision,
+				resolvedRevision: operation.resolvedRevision,
+				operationStatus: operation.status,
+				deployment: operation.deployment
+					? {
+							deploymentId: operation.deployment.deploymentId,
+							status: operation.deployment.status,
+							startedAt: operation.deployment.startedAt,
+							finishedAt: operation.deployment.finishedAt,
+						}
+					: null,
+				queue,
+				repairPerformed,
+				createdAt: operation.createdAt,
+				updatedAt: operation.updatedAt,
+				checkedAt: new Date().toISOString(),
+			};
+		}),
 	all: protectedProcedure
 		.input(apiFindAllByApplication)
 		.query(async ({ input, ctx }) => {

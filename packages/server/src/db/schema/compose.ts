@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 import { backups } from "./backups";
 import { bitbucket } from "./bitbucket";
-import { deployments } from "./deployment";
+import { deploymentOperations, deployments } from "./deployment";
 import { domains } from "./domain";
 import { environments } from "./environment";
 import { gitea } from "./gitea";
@@ -116,6 +116,7 @@ export const composeRelations = relations(compose, ({ one, many }) => ({
 		references: [environments.environmentId],
 	}),
 	deployments: many(deployments),
+	deploymentOperations: many(deploymentOperations),
 	mounts: many(mounts),
 	customGitSSHKey: one(sshKeys, {
 		fields: [compose.customGitSSHKeyId],
@@ -200,6 +201,33 @@ export const apiDeployCompose = z.object({
 	description: z.string().optional(),
 });
 
+export const apiDeployComposeExact = z.object({
+	composeId: z.string().min(1),
+	expectedRevision: z
+		.string()
+		.regex(
+			/^[0-9a-f]{40}$/,
+			"Expected revision must be a full lowercase Git SHA",
+		),
+	idempotencyKey: z.string().min(8).max(200),
+});
+
+export const apiDeployComposeExactResponse = z.object({
+	composeId: z.string(),
+	operationId: z.string(),
+	sourceRevision: z.string(),
+	resolvedRevision: z.string().nullable(),
+	status: z.enum([
+		"accepted",
+		"queued",
+		"dispatch_unknown",
+		"running",
+		"succeeded",
+		"failed",
+	]),
+	deduplicated: z.boolean(),
+});
+
 export const apiRedeployCompose = z.object({
 	composeId: z.string().min(1),
 	title: z.string().optional(),
@@ -231,6 +259,41 @@ export const apiSaveEnvironmentVariablesCompose = createSchema
 		env: true,
 	})
 	.required();
+
+const ENV_VARIABLE_NAME_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export const apiUpsertComposeEnv = z.object({
+	composeId: z.string().min(1),
+	variables: z
+		.record(
+			z
+				.string()
+				.regex(
+					ENV_VARIABLE_NAME_REGEX,
+					"Environment variable names must start with a letter or underscore and contain only letters, numbers, and underscores",
+				),
+			z.string(),
+		)
+		.refine((variables) => Object.keys(variables).length > 0, {
+			message: "At least one environment variable is required",
+		}),
+	dryRun: z.boolean().optional(),
+	expectedRevision: z.string().optional(),
+});
+
+export const apiUpsertComposeEnvResponse = z.object({
+	composeId: z.string(),
+	changed: z.boolean(),
+	revision: z.string(),
+	dryRun: z.boolean(),
+	variables: z.array(
+		z.object({
+			name: z.string(),
+			action: z.enum(["created", "updated", "unchanged"]),
+			secret: z.boolean(),
+		}),
+	),
+});
 
 export const apiRandomizeCompose = createSchema
 	.pick({

@@ -1,7 +1,10 @@
 import {
+	claimDeploymentOperation,
 	deployApplication,
 	deployCompose,
 	deployPreviewApplication,
+	ExactDeploymentFinalizationError,
+	finalizeDeploymentOperation,
 	rebuildApplication,
 	rebuildCompose,
 	rebuildPreviewApplication,
@@ -34,6 +37,13 @@ export const processDeploymentJob = async (job: InMemoryJob) => {
 				});
 			}
 		} else if (job.data.applicationType === "compose") {
+			if (job.data.operationId) {
+				const claimed = await claimDeploymentOperation(
+					job.data.composeId,
+					job.data.operationId,
+				);
+				if (!claimed) return;
+			}
 			await updateCompose(job.data.composeId, {
 				composeStatus: "running",
 			});
@@ -42,6 +52,8 @@ export const processDeploymentJob = async (job: InMemoryJob) => {
 					composeId: job.data.composeId,
 					titleLog: job.data.titleLog,
 					descriptionLog: job.data.descriptionLog,
+					operationId: job.data.operationId,
+					expectedRevision: job.data.expectedRevision,
 				});
 			} else if (job.data.type === "redeploy") {
 				await rebuildCompose({
@@ -72,6 +84,16 @@ export const processDeploymentJob = async (job: InMemoryJob) => {
 			}
 		}
 	} catch (error) {
+		if (
+			job.data.applicationType === "compose" &&
+			job.data.operationId &&
+			!(error instanceof ExactDeploymentFinalizationError)
+		) {
+			await Promise.allSettled([
+				finalizeDeploymentOperation(job.data.operationId, "failed"),
+				updateCompose(job.data.composeId, { composeStatus: "error" }),
+			]);
+		}
 		console.log("Error", error);
 	}
 };

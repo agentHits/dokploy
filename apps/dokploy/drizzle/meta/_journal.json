@@ -1226,6 +1226,13 @@
       "when": 1781045439164,
       "tag": "0174_scope_gitea_owners",
       "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "7",
+      "when": 1784500000000,
+      "tag": "0175_durable_deployment_operation",
+      "breakpoints": true
     }
   ]
 }

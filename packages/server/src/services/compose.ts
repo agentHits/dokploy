@@ -3,6 +3,7 @@ import { paths } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
 import {
 	type apiCreateCompose,
+	type apiUpsertComposeEnv,
 	buildAppName,
 	cleanAppName,
 	compose,
@@ -37,12 +38,21 @@ import { cloneGitlabRepository } from "@dokploy/server/utils/providers/gitlab";
 import { getCreateComposeFileCommand } from "@dokploy/server/utils/providers/raw";
 import { quoteShellArgs } from "@dokploy/server/utils/shell";
 import { TRPCError } from "@trpc/server";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { z } from "zod";
 import { encodeBase64 } from "../utils/docker/utils";
+import {
+	assertNoRedactedSecretPlaceholders,
+	getComposeEnvRevision,
+	upsertEnvVariables,
+} from "../utils/env-upsert";
 import { getDokployUrl } from "./admin";
 import {
 	createDeploymentCompose,
+	finalizeDeploymentOperation,
+	findComposeDeploymentOperation,
+	linkDeploymentOperation,
+	resolveDeploymentOperationRevision,
 	updateDeployment,
 	updateDeploymentStatus,
 } from "./deployment";
@@ -50,6 +60,15 @@ import { generateApplyPatchesCommand } from "./patch";
 import { validUniqueServerAppName } from "./project";
 
 export type Compose = typeof compose.$inferSelect;
+
+export class ExactDeploymentFinalizationError extends Error {
+	constructor(operationId: string, cause: unknown) {
+		super(`Exact deployment ${operationId} terminal state is ambiguous`, {
+			cause,
+		});
+		this.name = "ExactDeploymentFinalizationError";
+	}
+}
 
 const normalizeComposeFilePath = (composePath: string) =>
 	normalizeRelativeFilePath(composePath);
@@ -218,25 +237,118 @@ export const updateCompose = async (
 	return composeResult[0];
 };
 
+export const upsertComposeEnvironment = async (
+	input: z.infer<typeof apiUpsertComposeEnv>,
+) => {
+	try {
+		assertNoRedactedSecretPlaceholders(input.variables);
+	} catch (error) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message:
+				error instanceof Error
+					? error.message
+					: "Invalid environment variables",
+		});
+	}
+
+	const currentCompose = await findComposeById(input.composeId);
+	const capturedEnv = currentCompose.env;
+	const currentRevision = getComposeEnvRevision(input.composeId, capturedEnv);
+
+	if (input.expectedRevision && input.expectedRevision !== currentRevision) {
+		throw new TRPCError({
+			code: "CONFLICT",
+			message: "Compose environment revision does not match",
+		});
+	}
+
+	const result = upsertEnvVariables(capturedEnv, input.variables);
+	const dryRun = input.dryRun ?? false;
+	if (dryRun || !result.changed) {
+		return {
+			composeId: input.composeId,
+			changed: result.changed,
+			revision: currentRevision,
+			dryRun,
+			variables: result.variables,
+		};
+	}
+
+	const capturedEnvPredicate =
+		capturedEnv == null ? isNull(compose.env) : eq(compose.env, capturedEnv);
+	const updated = await db
+		.update(compose)
+		.set({ env: result.env })
+		.where(and(eq(compose.composeId, input.composeId), capturedEnvPredicate))
+		.returning({ composeId: compose.composeId });
+
+	if (updated.length !== 1) {
+		throw new TRPCError({
+			code: "CONFLICT",
+			message: "Compose environment changed concurrently",
+		});
+	}
+
+	return {
+		composeId: input.composeId,
+		changed: true,
+		revision: getComposeEnvRevision(input.composeId, result.env),
+		dryRun: false,
+		variables: result.variables,
+	};
+};
+
 export const deployCompose = async ({
 	composeId,
 	titleLog = "Manual deployment",
 	descriptionLog = "",
+	operationId,
+	expectedRevision,
 }: {
 	composeId: string;
 	titleLog: string;
 	descriptionLog: string;
+	operationId?: string;
+	expectedRevision?: string;
 }) => {
 	const compose = await findComposeById(composeId);
+	const isExact = operationId !== undefined || expectedRevision !== undefined;
+	if (isExact && (!operationId || !expectedRevision)) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Exact deployment requires an operation id and source revision",
+		});
+	}
+	if (isExact && compose.sourceType === "raw") {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Exact deployment requires a Git-based Compose source",
+		});
+	}
+	const operation =
+		operationId && expectedRevision
+			? await findComposeDeploymentOperation(composeId, operationId)
+			: null;
+	if (operation && operation.sourceRevision !== expectedRevision) {
+		throw new TRPCError({
+			code: "CONFLICT",
+			message: "Exact deployment revision does not match its operation",
+		});
+	}
 
 	const buildLink = `${await getDokployUrl()}/dashboard/project/${
 		compose.environment.projectId
 	}/environment/${compose.environmentId}/services/compose/${compose.composeId}?tab=deployments`;
-	const deployment = await createDeploymentCompose({
-		composeId: composeId,
-		title: titleLog,
-		description: descriptionLog,
-	});
+	let deployment: Awaited<ReturnType<typeof createDeploymentCompose>> | null =
+		null;
+	if (!isExact) {
+		deployment = await createDeploymentCompose({
+			composeId,
+			title: titleLog,
+			description: descriptionLog,
+		});
+	}
 
 	try {
 		const entity = {
@@ -258,13 +370,83 @@ export const deployCompose = async ({
 			command += getCreateComposeFileCommand(entity);
 		}
 
-		let commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
+		let commandWithLog = deployment
+			? `(${command}) >> ${deployment.logPath} 2>&1`
+			: command;
 		if (compose.serverId) {
 			await execAsyncRemote(compose.serverId, commandWithLog);
 		} else {
 			await execAsync(commandWithLog);
 		}
+
+		if (operationId && expectedRevision && operation) {
+			const { COMPOSE_PATH } = paths(!!compose.serverId);
+			const checkoutPath = join(COMPOSE_PATH, compose.appName, "code");
+			const exactCheckoutCommand = [
+				quoteShellArgs([
+					"git",
+					"-C",
+					checkoutPath,
+					"fetch",
+					"--depth",
+					"1",
+					"origin",
+					expectedRevision,
+				]),
+				quoteShellArgs([
+					"git",
+					"-C",
+					checkoutPath,
+					"checkout",
+					"--detach",
+					expectedRevision,
+				]),
+				quoteShellArgs(["git", "-C", checkoutPath, "rev-parse", "HEAD"]),
+			].join(" && ");
+			const resolved = compose.serverId
+				? await execAsyncRemote(compose.serverId, exactCheckoutCommand)
+				: await execAsync(exactCheckoutCommand);
+			const resolvedRevision = resolved.stdout.trim().split(/\s+/).at(-1) ?? "";
+			if (resolvedRevision !== expectedRevision) {
+				throw new TRPCError({
+					code: "CONFLICT",
+					message: "Cloned Git revision does not match the requested revision",
+				});
+			}
+			await resolveDeploymentOperationRevision(operationId, resolvedRevision);
+			const currentCompose = await findComposeById(composeId);
+			if (
+				getComposeEnvRevision(composeId, currentCompose.env) !==
+				operation.envRevision
+			) {
+				throw new TRPCError({
+					code: "CONFLICT",
+					message: "Compose environment changed after deployment acceptance",
+				});
+			}
+		}
+
+		deployment ??= await createDeploymentCompose({
+			composeId,
+			title: titleLog,
+			description: descriptionLog,
+		});
+		if (operationId) {
+			await linkDeploymentOperation(operationId, deployment.deploymentId);
+		}
 		if (compose.sourceType !== "raw") {
+			if (operation) {
+				const currentCompose = await findComposeById(composeId);
+				if (
+					getComposeEnvRevision(composeId, currentCompose.env) !==
+					operation.envRevision
+				) {
+					throw new TRPCError({
+						code: "CONFLICT",
+						message: "Compose environment changed before patch application",
+					});
+				}
+			}
 			command = "set -e;";
 			command += await generateApplyPatchesCommand({
 				id: compose.composeId,
@@ -280,6 +462,18 @@ export const deployCompose = async ({
 		}
 
 		command = "set -e;";
+		if (operation) {
+			const currentCompose = await findComposeById(composeId);
+			if (
+				getComposeEnvRevision(composeId, currentCompose.env) !==
+				operation.envRevision
+			) {
+				throw new TRPCError({
+					code: "CONFLICT",
+					message: "Compose environment changed before build",
+				});
+			}
+		}
 		command += await getBuildComposeCommand(entity);
 		commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
 		if (compose.serverId) {
@@ -292,36 +486,56 @@ export const deployCompose = async ({
 		await updateCompose(composeId, {
 			composeStatus: "done",
 		});
-
-		await sendBuildSuccessNotifications({
-			projectName: compose.environment.project.name,
-			applicationName: compose.name,
-			applicationType: "compose",
-			buildLink,
-			organizationId: compose.environment.project.organizationId,
-			domains: compose.domains,
-			environmentName: compose.environment.name,
-		});
+		const sendSuccessNotification = () =>
+			sendBuildSuccessNotifications({
+				projectName: compose.environment.project.name,
+				applicationName: compose.name,
+				applicationType: "compose",
+				buildLink,
+				organizationId: compose.environment.project.organizationId,
+				domains: compose.domains,
+				environmentName: compose.environment.name,
+			});
+		if (operationId) {
+			try {
+				await finalizeDeploymentOperation(operationId, "succeeded");
+			} catch (error) {
+				throw new ExactDeploymentFinalizationError(operationId, error);
+			}
+			await sendSuccessNotification().catch((error) => {
+				console.error("Exact deployment success notification failed:", error);
+			});
+		} else {
+			await sendSuccessNotification();
+		}
 	} catch (error) {
+		if (error instanceof ExactDeploymentFinalizationError) {
+			throw error;
+		}
 		let command = "";
 
-		// Only log details for non-ExecError errors
-		if (!(error instanceof ExecError)) {
+		// Only log details for non-ExecError errors when a deployment log exists.
+		if (deployment && !(error instanceof ExecError)) {
 			const message = error instanceof Error ? error.message : String(error);
 			const encodedMessage = encodeBase64(message);
 			command += `echo "${encodedMessage}" | base64 -d >> "${deployment.logPath}";`;
 		}
 
-		command += `echo "\nError occurred ❌, check the logs for details." >> ${deployment.logPath};`;
-		if (compose.serverId) {
-			await execAsyncRemote(compose.serverId, command);
-		} else {
-			await execAsync(command);
+		if (deployment) {
+			command += `echo "\nError occurred ❌, check the logs for details." >> ${deployment.logPath};`;
+			if (compose.serverId) {
+				await execAsyncRemote(compose.serverId, command);
+			} else {
+				await execAsync(command);
+			}
+			await updateDeploymentStatus(deployment.deploymentId, "error");
 		}
-		await updateDeploymentStatus(deployment.deploymentId, "error");
 		await updateCompose(composeId, {
 			composeStatus: "error",
 		});
+		if (operationId) {
+			await finalizeDeploymentOperation(operationId, "failed");
+		}
 		await sendBuildErrorNotifications({
 			projectName: compose.environment.project.name,
 			applicationName: compose.name,
@@ -333,7 +547,7 @@ export const deployCompose = async ({
 		});
 		throw error;
 	} finally {
-		if (compose.sourceType !== "raw") {
+		if (deployment && compose.sourceType !== "raw") {
 			const commitInfo = await getGitCommitInfo({
 				...compose,
 				type: "compose",
