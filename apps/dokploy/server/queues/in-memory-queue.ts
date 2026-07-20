@@ -123,8 +123,19 @@ export class InMemoryQueue {
 		return Promise.resolve();
 	}
 
-	async add(data: DeploymentJob): Promise<{ id: string }> {
-		const id = `job-${++this.seq}`;
+	async add(
+		data: DeploymentJob,
+		requestedId?: string,
+	): Promise<{ id: string }> {
+		if (requestedId) {
+			for (const partition of this.partitions.values()) {
+				const existing = [...partition.waiting, ...partition.active].find(
+					(job) => job.id === requestedId,
+				);
+				if (existing) return { id: existing.id };
+			}
+		}
+		const id = requestedId ?? `job-${++this.seq}`;
 		const partitionKey = getPartition(data);
 		const job: InternalJob = {
 			id,

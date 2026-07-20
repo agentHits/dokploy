@@ -1,35 +1,60 @@
 import { z } from "zod";
 
-export const deployJobSchema = z.discriminatedUnion("applicationType", [
-	z.object({
-		applicationId: z.string(),
-		titleLog: z.string().optional(),
-		descriptionLog: z.string().optional(),
-		server: z.boolean().optional(),
-		type: z.enum(["deploy", "redeploy"]),
-		applicationType: z.literal("application"),
-		serverId: z.string().min(1),
-	}),
-	z.object({
-		composeId: z.string(),
-		titleLog: z.string().optional(),
-		descriptionLog: z.string().optional(),
-		server: z.boolean().optional(),
-		type: z.enum(["deploy", "redeploy"]),
-		applicationType: z.literal("compose"),
-		serverId: z.string().min(1),
-	}),
-	z.object({
-		applicationId: z.string(),
-		previewDeploymentId: z.string(),
-		titleLog: z.string().optional(),
-		descriptionLog: z.string().optional(),
-		server: z.boolean().optional(),
-		type: z.enum(["deploy", "redeploy"]),
-		applicationType: z.literal("application-preview"),
-		serverId: z.string().min(1),
-	}),
-]);
+export const deployJobSchema = z
+	.discriminatedUnion("applicationType", [
+		z.object({
+			applicationId: z.string(),
+			titleLog: z.string().optional(),
+			descriptionLog: z.string().optional(),
+			server: z.boolean().optional(),
+			type: z.enum(["deploy", "redeploy"]),
+			applicationType: z.literal("application"),
+			serverId: z.string().min(1),
+		}),
+		z.object({
+			composeId: z.string(),
+			titleLog: z.string().optional(),
+			descriptionLog: z.string().optional(),
+			server: z.boolean().optional(),
+			type: z.enum(["deploy", "redeploy"]),
+			applicationType: z.literal("compose"),
+			serverId: z.string().min(1),
+			operationId: z.string().min(1).optional(),
+			expectedRevision: z
+				.string()
+				.regex(/^[0-9a-f]{40}$/)
+				.optional(),
+		}),
+		z.object({
+			applicationId: z.string(),
+			previewDeploymentId: z.string(),
+			titleLog: z.string().optional(),
+			descriptionLog: z.string().optional(),
+			server: z.boolean().optional(),
+			type: z.enum(["deploy", "redeploy"]),
+			applicationType: z.literal("application-preview"),
+			serverId: z.string().min(1),
+		}),
+	])
+	.superRefine((job, ctx) => {
+		if (job.applicationType !== "compose") return;
+		if (
+			(job.operationId === undefined) !==
+			(job.expectedRevision === undefined)
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message:
+					"Exact deployment operation and revision must be provided together",
+			});
+		}
+		if (job.operationId && job.type !== "deploy") {
+			ctx.addIssue({
+				code: "custom",
+				message: "Exact deployment only supports deploy jobs",
+			});
+		}
+	});
 
 export type DeployJob = z.infer<typeof deployJobSchema>;
 
@@ -46,8 +71,7 @@ export const cancelDeploymentSchema = z.discriminatedUnion("applicationType", [
 
 export type CancelDeploymentJob = z.infer<typeof cancelDeploymentSchema>;
 
-const signedDeploymentScopeSchema = z.object({
-	version: z.literal(1),
+const signedDeploymentScopeBase = z.object({
 	operation: z.enum(["deploy", "cancel"]),
 	applicationType: z.enum(["application", "compose", "application-preview"]),
 	objectId: z.string().min(1),
@@ -58,6 +82,15 @@ const signedDeploymentScopeSchema = z.object({
 	expiresAt: z.number().int(),
 	nonce: z.string().min(1),
 });
+
+const signedDeploymentScopeSchema = z.discriminatedUnion("version", [
+	signedDeploymentScopeBase.extend({ version: z.literal(1) }),
+	signedDeploymentScopeBase.extend({
+		version: z.literal(2),
+		operationId: z.string().min(1),
+		sourceRevision: z.string().regex(/^[0-9a-f]{40}$/),
+	}),
+]);
 
 const signedDeploymentClaimSchema = z.object({
 	scope: signedDeploymentScopeSchema,
