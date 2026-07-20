@@ -5,12 +5,14 @@ import {
 	createCommand,
 	createCompose,
 	createComposeByTemplate,
+	createComposeDeploymentOperation,
 	createDomain,
 	createMount,
 	deleteMount,
 	execAsync,
 	execAsyncRemote,
 	findComposeById,
+	findComposeDeploymentOperation,
 	findDomainsByComposeId,
 	findProjectById,
 	findServerById,
@@ -21,6 +23,7 @@ import {
 	getWebServerSettings,
 	IS_CLOUD,
 	loadServices,
+	markDeploymentOperationDispatched,
 	randomizeComposeFile,
 	randomizeIsolatedDeploymentComposeFile,
 	removeCompose,
@@ -31,6 +34,7 @@ import {
 	stopCompose,
 	updateCompose,
 	updateDeploymentStatus,
+	upsertComposeEnvironment,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
 import {
@@ -66,12 +70,16 @@ import {
 	apiCreateCompose,
 	apiDeleteCompose,
 	apiDeployCompose,
+	apiDeployComposeExact,
+	apiDeployComposeExactResponse,
 	apiFetchServices,
 	apiFindCompose,
 	apiRandomizeCompose,
 	apiRedeployCompose,
 	apiSaveEnvironmentVariablesCompose,
 	apiUpdateCompose,
+	apiUpsertComposeEnv,
+	apiUpsertComposeEnvResponse,
 	compose as composeTable,
 	environments,
 	projects,
@@ -169,6 +177,33 @@ const assertCurrentComposeSourceEditAccess = async (
 };
 
 export const composeRouter = createTRPCRouter({
+	env: createTRPCRouter({
+		upsert: protectedProcedure
+			.meta({
+				openapi: {
+					path: "/compose/env/upsert",
+					method: "POST",
+				},
+			})
+			.input(apiUpsertComposeEnv)
+			.output(apiUpsertComposeEnvResponse)
+			.mutation(async ({ input, ctx }) => {
+				await checkServicePermissionAndAccess(ctx, input.composeId, {
+					envVars: ["write"],
+				});
+				const result = await upsertComposeEnvironment(input);
+				if (!result.dryRun && result.changed) {
+					const currentCompose = await findComposeById(input.composeId);
+					await audit(ctx, {
+						action: "update",
+						resourceType: "compose",
+						resourceId: input.composeId,
+						resourceName: currentCompose.name,
+					});
+				}
+				return result;
+			}),
+	}),
 	create: protectedProcedure
 		.input(apiCreateCompose)
 		.mutation(async ({ ctx, input }) => {
@@ -587,6 +622,79 @@ export const composeRouter = createTRPCRouter({
 				success: true,
 				message: "Deployment queued",
 				composeId: compose.composeId,
+			};
+		}),
+	deployExact: protectedProcedure
+		.meta({
+			openapi: {
+				path: "/compose/deploy/exact",
+				method: "POST",
+			},
+		})
+		.input(apiDeployComposeExact)
+		.output(apiDeployComposeExactResponse)
+		.mutation(async ({ input, ctx }) => {
+			await checkServicePermissionAndAccess(ctx, input.composeId, {
+				deployment: ["create"],
+			});
+			const created = await createComposeDeploymentOperation({
+				composeId: input.composeId,
+				sourceRevision: input.expectedRevision,
+				idempotencyKey: input.idempotencyKey,
+			});
+			if (created.deduplicated) {
+				return {
+					composeId: created.operation.composeId,
+					operationId: created.operation.operationId,
+					sourceRevision: created.operation.sourceRevision,
+					resolvedRevision: created.operation.resolvedRevision,
+					status: created.operation.status,
+					deduplicated: true,
+				};
+			}
+
+			const jobData: DeploymentJob = {
+				composeId: input.composeId,
+				titleLog: "Exact deployment",
+				descriptionLog: "Immutable source recovery deployment",
+				type: "deploy",
+				applicationType: "compose",
+				server: !!created.compose.serverId,
+				serverId: created.compose.serverId ?? undefined,
+				operationId: created.operation.operationId,
+				expectedRevision: created.operation.sourceRevision,
+			};
+			try {
+				if (IS_CLOUD && created.compose.serverId) {
+					await deploy(jobData);
+				} else {
+					await myQueue.add("deployments", jobData, {
+						jobId: created.operation.operationId,
+						removeOnComplete: true,
+						removeOnFail: true,
+					});
+				}
+				await markDeploymentOperationDispatched(
+					created.operation.operationId,
+					"queued",
+				);
+			} catch {
+				await markDeploymentOperationDispatched(
+					created.operation.operationId,
+					"dispatch_unknown",
+				);
+			}
+			const operation = await findComposeDeploymentOperation(
+				input.composeId,
+				created.operation.operationId,
+			);
+			return {
+				composeId: operation.composeId,
+				operationId: operation.operationId,
+				sourceRevision: operation.sourceRevision,
+				resolvedRevision: operation.resolvedRevision,
+				status: operation.status,
+				deduplicated: false,
 			};
 		}),
 	redeploy: protectedProcedure

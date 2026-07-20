@@ -6,6 +6,60 @@ const signingKey = process.env.INNGEST_SIGNING_KEY ?? "";
 const DEFAULT_MAX_EVENTS = 500;
 const MAX_EVENTS = DEFAULT_MAX_EVENTS;
 
+export type DeploymentQueueUnavailableReason =
+	| "not-configured"
+	| "upstream-error"
+	| "invalid-response";
+
+export class DeploymentQueueUnavailableError extends Error {
+	constructor(public readonly reason: DeploymentQueueUnavailableReason) {
+		super("Deployment queue is unavailable");
+		this.name = "DeploymentQueueUnavailableError";
+	}
+}
+
+async function fetchInngest(url: string): Promise<Response> {
+	let response: Response;
+	try {
+		response = await fetch(url, {
+			headers: {
+				Authorization: `Bearer ${signingKey}`,
+				"Content-Type": "application/json",
+			},
+		});
+	} catch (error) {
+		logger.warn({ error }, "Inngest API request failed");
+		throw new DeploymentQueueUnavailableError("upstream-error");
+	}
+
+	if (!response.ok) {
+		logger.warn({ status: response.status }, "Inngest API request failed");
+		throw new DeploymentQueueUnavailableError("upstream-error");
+	}
+
+	return response;
+}
+
+async function readInngestData<T>(response: Response): Promise<T[]> {
+	let body: unknown;
+	try {
+		body = await response.json();
+	} catch {
+		throw new DeploymentQueueUnavailableError("invalid-response");
+	}
+
+	if (
+		typeof body !== "object" ||
+		body === null ||
+		!("data" in body) ||
+		!Array.isArray(body.data)
+	) {
+		throw new DeploymentQueueUnavailableError("invalid-response");
+	}
+
+	return body.data as T[];
+}
+
 /** Event shape from GET /v1/events (https://api.inngest.com/v1/events) */
 type InngestEventRow = {
 	internal_id?: string;
@@ -68,30 +122,18 @@ export const fetchInngestEvents = async () => {
 			params.set("cursor", cursor);
 		}
 
-		const res = await fetch(`${baseUrl}/v1/events?${params}`, {
-			headers: {
-				Authorization: `Bearer ${signingKey}`,
-				"Content-Type": "application/json",
-			},
-		});
-
-		if (!res.ok) {
-			logger.warn(
-				{
-					status: res.status,
-					body: await res.text(),
-				},
-				"Inngest API error",
-			);
-			break;
-		}
-
-		const body = (await res.json()) as {
+		const res = await fetchInngest(`${baseUrl}/v1/events?${params}`);
+		const body = (await res.json().catch(() => {
+			throw new DeploymentQueueUnavailableError("invalid-response");
+		})) as {
 			data?: InngestEventRow[];
 			cursor?: string;
 			nextCursor?: string;
 		};
-		const data = Array.isArray(body.data) ? body.data : [];
+		if (!Array.isArray(body.data)) {
+			throw new DeploymentQueueUnavailableError("invalid-response");
+		}
+		const data = body.data;
 		all.push(...data);
 
 		// Next page: API may return cursor/nextCursor, or use last event's internal_id (per API docs)
@@ -108,28 +150,10 @@ export const fetchInngestEvents = async () => {
 export const fetchInngestRunsForEvent = async (
 	eventId: string,
 ): Promise<InngestRun[]> => {
-	const res = await fetch(
+	const res = await fetchInngest(
 		`${baseUrl}/v1/events/${encodeURIComponent(eventId)}/runs`,
-		{
-			headers: {
-				Authorization: `Bearer ${signingKey}`,
-				"Content-Type": "application/json",
-			},
-		},
 	);
-	if (!res.ok) {
-		logger.warn(
-			{
-				eventId,
-				status: res.status,
-				body: await res.text(),
-			},
-			"Inngest runs API error",
-		);
-		return [];
-	}
-	const body = (await res.json()) as { data?: InngestRun[] };
-	return Array.isArray(body.data) ? body.data : [];
+	return readInngestData<InngestRun>(res);
 };
 
 /** One row for the queue UI (BullMQ-compatible shape) */
@@ -215,12 +239,9 @@ function buildDeploymentRowsFromRuns(
 export const fetchDeploymentJobs = async (
 	serverId: string,
 ): Promise<DeploymentJobRow[]> => {
-	if (!signingKey) {
-		logger.warn("INNGEST_SIGNING_KEY not set, returning empty jobs list");
-		return [];
-	}
-	if (!baseUrl) {
-		throw new Error("INNGEST_BASE_URL is required to list deployment jobs");
+	if (!signingKey || !baseUrl) {
+		logger.warn("Inngest queue configuration is incomplete");
+		throw new DeploymentQueueUnavailableError("not-configured");
 	}
 
 	const events = await fetchInngestEvents();

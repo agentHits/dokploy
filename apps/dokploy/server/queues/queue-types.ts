@@ -16,6 +16,8 @@ type DeployJob =
 			type: "deploy" | "redeploy";
 			applicationType: "compose";
 			serverId?: string;
+			operationId?: string;
+			expectedRevision?: string;
 	  }
 	| {
 			applicationId: string;

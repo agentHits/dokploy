@@ -16,6 +16,29 @@ export type EnvUpsertResult = {
 	variables: EnvUpsertVariableResult[];
 };
 
+const REDACTED_SECRET_PLACEHOLDERS = [
+	"__DOKPLOY_REDACTED_SECRET__",
+	"[REDACTED]",
+] as const;
+
+export const assertNoRedactedSecretPlaceholders = (
+	variables: Record<string, string>,
+) => {
+	const invalidNames = Object.entries(variables)
+		.filter(([, value]) =>
+			REDACTED_SECRET_PLACEHOLDERS.some((placeholder) =>
+				value.includes(placeholder),
+			),
+		)
+		.map(([name]) => name);
+
+	if (invalidNames.length > 0) {
+		throw new Error(
+			`Environment variables contain redacted secret placeholders: ${invalidNames.join(", ")}`,
+		);
+	}
+};
+
 const ENV_ASSIGNMENT_REGEX =
 	/^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*)$/;
 
@@ -34,6 +57,19 @@ export const getApplicationEnvRevision = (
 		.update(env ?? "")
 		.digest("base64url")
 		.slice(0, 32)}`;
+
+export const getComposeEnvRevision = (
+	composeId: string,
+	env: string | null | undefined,
+) =>
+	`compose-env-v1:${createHmac("sha256", betterAuthSecret)
+		.update(String(Buffer.byteLength(composeId)))
+		.update(":")
+		.update(composeId)
+		.update(String(Buffer.byteLength(env ?? "")))
+		.update(":")
+		.update(env ?? "")
+		.digest("base64url")}`;
 
 const serializeEnvValue = (value: string) => {
 	if (value === "") {

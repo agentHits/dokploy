@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { existsSync, promises as fsPromises } from "node:fs";
 import path from "node:path";
 import { paths } from "@dokploy/server/constants";
@@ -12,6 +13,7 @@ import {
 	type apiCreateDeploymentVolumeBackup,
 	applications,
 	compose,
+	deploymentOperations,
 	deployments,
 	environments,
 	projects,
@@ -27,6 +29,8 @@ import { TRPCError } from "@trpc/server";
 import { format } from "date-fns";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { z } from "zod";
+import { betterAuthSecret } from "../lib/auth-secret";
+import { getComposeEnvRevision } from "../utils/env-upsert";
 import {
 	type Application,
 	findApplicationById,
@@ -80,6 +84,241 @@ export async function resolveServicePath(
 }
 
 export type Deployment = typeof deployments.$inferSelect;
+export type DeploymentOperation = typeof deploymentOperations.$inferSelect;
+
+const hashDeploymentIdempotencyKey = (idempotencyKey: string) =>
+	createHmac("sha256", betterAuthSecret)
+		.update("dokploy:deployment-operation-key:v1\0")
+		.update(idempotencyKey)
+		.digest("base64url");
+
+export const createComposeDeploymentOperation = async (input: {
+	composeId: string;
+	sourceRevision: string;
+	idempotencyKey: string;
+}) => {
+	const composeEntity = await findComposeById(input.composeId);
+	const idempotencyKeyHash = hashDeploymentIdempotencyKey(input.idempotencyKey);
+	if (composeEntity.sourceType === "raw") {
+		const operation = await db.query.deploymentOperations.findFirst({
+			where: and(
+				eq(deploymentOperations.composeId, input.composeId),
+				eq(deploymentOperations.idempotencyKeyHash, idempotencyKeyHash),
+			),
+		});
+		if (operation) {
+			if (operation.sourceRevision !== input.sourceRevision) {
+				throw new TRPCError({
+					code: "CONFLICT",
+					message:
+						"Idempotency key is already bound to another source revision",
+				});
+			}
+			return { operation, deduplicated: true, compose: composeEntity };
+		}
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Exact deployment requires a Git-based Compose source",
+		});
+	}
+
+	const inserted = await db
+		.insert(deploymentOperations)
+		.values({
+			composeId: input.composeId,
+			idempotencyKeyHash,
+			sourceRevision: input.sourceRevision,
+			envRevision: getComposeEnvRevision(input.composeId, composeEntity.env),
+		})
+		.onConflictDoNothing({
+			target: [
+				deploymentOperations.composeId,
+				deploymentOperations.idempotencyKeyHash,
+			],
+		})
+		.returning();
+
+	const operation =
+		inserted[0] ??
+		(await db.query.deploymentOperations.findFirst({
+			where: and(
+				eq(deploymentOperations.composeId, input.composeId),
+				eq(deploymentOperations.idempotencyKeyHash, idempotencyKeyHash),
+			),
+		}));
+
+	if (!operation) {
+		throw new TRPCError({
+			code: "CONFLICT",
+			message:
+				"Deployment operation could not be resolved after a concurrent insert",
+		});
+	}
+	if (operation.sourceRevision !== input.sourceRevision) {
+		throw new TRPCError({
+			code: "CONFLICT",
+			message: "Idempotency key is already bound to another source revision",
+		});
+	}
+
+	return {
+		operation,
+		deduplicated: inserted.length === 0,
+		compose: composeEntity,
+	};
+};
+
+export const findComposeDeploymentOperation = async (
+	composeId: string,
+	operationId: string,
+) => {
+	const operation = await db.query.deploymentOperations.findFirst({
+		where: and(
+			eq(deploymentOperations.composeId, composeId),
+			eq(deploymentOperations.operationId, operationId),
+		),
+		with: { deployment: true },
+	});
+	if (!operation) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: "Deployment operation not found",
+		});
+	}
+	return operation;
+};
+
+export const markDeploymentOperationDispatched = async (
+	operationId: string,
+	status: "queued" | "dispatch_unknown",
+) => {
+	const now = new Date().toISOString();
+	return db
+		.update(deploymentOperations)
+		.set({ status, updatedAt: now })
+		.where(
+			and(
+				eq(deploymentOperations.operationId, operationId),
+				inArray(deploymentOperations.status, [
+					"accepted",
+					"queued",
+					"dispatch_unknown",
+				]),
+			),
+		)
+		.returning();
+};
+
+export const claimDeploymentOperation = async (
+	composeId: string,
+	operationId: string,
+) => {
+	const now = new Date().toISOString();
+	const claimed = await db
+		.update(deploymentOperations)
+		.set({ status: "running", startedAt: now, updatedAt: now })
+		.where(
+			and(
+				eq(deploymentOperations.composeId, composeId),
+				eq(deploymentOperations.operationId, operationId),
+				inArray(deploymentOperations.status, [
+					"accepted",
+					"queued",
+					"dispatch_unknown",
+				]),
+			),
+		)
+		.returning({ operationId: deploymentOperations.operationId });
+	return claimed.length === 1;
+};
+
+export const resolveDeploymentOperationRevision = async (
+	operationId: string,
+	resolvedRevision: string,
+) => {
+	const updated = await db
+		.update(deploymentOperations)
+		.set({ resolvedRevision, updatedAt: new Date().toISOString() })
+		.where(
+			and(
+				eq(deploymentOperations.operationId, operationId),
+				eq(deploymentOperations.status, "running"),
+				eq(deploymentOperations.sourceRevision, resolvedRevision),
+			),
+		)
+		.returning({ operationId: deploymentOperations.operationId });
+	if (updated.length !== 1) {
+		throw new TRPCError({
+			code: "CONFLICT",
+			message: "Resolved Git revision does not match the deployment operation",
+		});
+	}
+};
+
+export const linkDeploymentOperation = async (
+	operationId: string,
+	deploymentId: string,
+) => {
+	const updated = await db
+		.update(deploymentOperations)
+		.set({ deploymentId, updatedAt: new Date().toISOString() })
+		.where(
+			and(
+				eq(deploymentOperations.operationId, operationId),
+				eq(deploymentOperations.status, "running"),
+			),
+		)
+		.returning({ operationId: deploymentOperations.operationId });
+	if (updated.length !== 1) {
+		throw new TRPCError({
+			code: "CONFLICT",
+			message: "Deployment operation is no longer running",
+		});
+	}
+};
+
+export const finalizeDeploymentOperation = async (
+	operationId: string,
+	status: "succeeded" | "failed",
+) => {
+	const now = new Date().toISOString();
+	try {
+		const updated = await db
+			.update(deploymentOperations)
+			.set({ status, finishedAt: now, updatedAt: now })
+			.where(
+				and(
+					eq(deploymentOperations.operationId, operationId),
+					eq(deploymentOperations.status, "running"),
+				),
+			)
+			.returning();
+		if (updated.length === 1) {
+			return updated;
+		}
+	} catch (error) {
+		const current = await db.query.deploymentOperations
+			.findFirst({
+				where: eq(deploymentOperations.operationId, operationId),
+			})
+			.catch(() => null);
+		if (current?.status === status) {
+			return [current];
+		}
+		throw error;
+	}
+
+	const current = await db.query.deploymentOperations.findFirst({
+		where: eq(deploymentOperations.operationId, operationId),
+	});
+	if (current?.status === status) {
+		return [current];
+	}
+	throw new TRPCError({
+		code: "CONFLICT",
+		message: "Deployment operation cannot transition to the requested status",
+	});
+};
 
 export const findDeploymentById = async (deploymentId: string) => {
 	const deployment = await db.query.deployments.findFirst({

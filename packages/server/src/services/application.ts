@@ -33,6 +33,7 @@ import { eq } from "drizzle-orm";
 import type { z } from "zod";
 import { encodeBase64 } from "../utils/docker/utils";
 import {
+	assertNoRedactedSecretPlaceholders,
 	getApplicationEnvRevision,
 	upsertEnvVariables,
 } from "../utils/env-upsert";
@@ -154,6 +155,17 @@ export const updateApplication = async (
 export const upsertApplicationEnvironment = async (
 	input: z.infer<typeof apiUpsertApplicationEnv>,
 ) => {
+	try {
+		assertNoRedactedSecretPlaceholders(input.variables);
+	} catch (error) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message:
+				error instanceof Error
+					? error.message
+					: "Invalid environment variables",
+		});
+	}
 	const application = await findApplicationById(input.applicationId);
 	const currentEnv = application.env ?? "";
 	const currentRevision = getApplicationEnvRevision(
