@@ -20,16 +20,20 @@ export const AddGithubProvider = () => {
 	const { data: activeOrganization } = api.organization.active.useQuery();
 
 	const { data: session } = api.user.session.useQuery();
-	const { data: githubAppSetupState } = api.github.appSetupState.useQuery(
-		{ action: "init" },
-		{ enabled: isOpen && !!activeOrganization?.id && !!session?.user?.id },
-	);
 	const [manifest, setManifest] = useState("");
 	const [isOrganization, setIsOrganization] = useState(false);
 	const [organizationName, setOrganization] = useState("");
 	const [githubUrl, setGithubUrl] = useState(DEFAULT_GITHUB_URL);
-
 	const { baseUrl, error: githubUrlError } = resolveGithubBaseUrl(githubUrl);
+	const { data: githubAppSetupState } = api.github.appSetupState.useQuery(
+		{
+			action: "init",
+			...(githubUrlError || !githubUrl.trim()
+				? {}
+				: { githubUrl: githubUrl.trim() }),
+		},
+		{ enabled: isOpen && !!activeOrganization?.id && !!session?.user?.id },
+	);
 
 	const randomString = () => Math.random().toString(36).slice(2, 8);
 
@@ -124,8 +128,8 @@ export const AddGithubProvider = () => {
 							<form
 								action={
 									isOrganization
-										? `https://github.com/organizations/${organizationName}/settings/apps/new?state=${encodeURIComponent(githubAppSetupState?.state ?? "")}`
-										: `https://github.com/settings/apps/new?state=${encodeURIComponent(githubAppSetupState?.state ?? "")}`
+										? `${baseUrl}/organizations/${organizationName}/settings/apps/new?state=${encodeURIComponent(githubAppSetupState?.state ?? "")}`
+										: `${baseUrl}/settings/apps/new?state=${encodeURIComponent(githubAppSetupState?.state ?? "")}`
 								}
 								method="post"
 							>

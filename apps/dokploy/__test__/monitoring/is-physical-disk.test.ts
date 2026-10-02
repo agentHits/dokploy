@@ -14,7 +14,6 @@ const diskStat = (device: string, readGiB: number, writeGiB: number) => ({
 vi.mock("node-os-utils", () => ({
 	OSUtils: class {
 		cpu = { usage: async () => ({ success: false }) };
-		memory = { info: async () => ({ success: false }) };
 		memory = {
 			info: async () => ({ success: false }),
 			swap: async () => ({ success: false }),

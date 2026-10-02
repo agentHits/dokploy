@@ -6,6 +6,10 @@ import {
 	getGithubIdFromAppSetupStateProviderId,
 	verifyGitProviderOAuthState,
 } from "@dokploy/server/utils/providers/oauth-state";
+import {
+	deriveGithubApiUrl,
+	parseGithubBaseUrl,
+} from "@dokploy/server/utils/providers/github";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { Octokit } from "octokit";
 
@@ -44,6 +48,7 @@ export default async function handler(
 		providerId: string;
 		organizationId: string;
 		userId: string;
+		githubUrl?: string;
 	};
 	try {
 		statePayload = verifyGitProviderOAuthState(state, {
@@ -57,7 +62,16 @@ export default async function handler(
 	}
 
 	if (statePayload.providerId === GITHUB_APP_INIT_STATE_PROVIDER_ID) {
-		const octokit = new Octokit({});
+		// The host arrives inside the verified signed state (sealed at
+		// appSetupState time from the authenticated user's input); re-validate
+		// defensively and never read it from a linkable query parameter.
+		const parsedBaseUrl = parseGithubBaseUrl(statePayload.githubUrl);
+		if ("error" in parsedBaseUrl) {
+			return res.status(400).json({ error: parsedBaseUrl.error });
+		}
+		const octokit = new Octokit({
+			baseUrl: deriveGithubApiUrl(parsedBaseUrl.url),
+		});
 		const { data } = await octokit.request(
 			"POST /app-manifests/{code}/conversions",
 			{
@@ -74,6 +88,7 @@ export default async function handler(
 				githubClientSecret: data.client_secret,
 				githubWebhookSecret: data.webhook_secret,
 				githubPrivateKey: data.pem,
+				githubUrl: parsedBaseUrl.url,
 			},
 			statePayload.organizationId,
 			statePayload.userId,
