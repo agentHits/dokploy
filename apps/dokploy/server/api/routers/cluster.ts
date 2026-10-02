@@ -56,7 +56,7 @@ const assertClusterServerAccess = async (
 };
 
 export const clusterRouter = createTRPCRouter({
-	getNodes: withPermission("server", "read")
+	getNodes: withPermission("docker", "read")
 		.input(
 			z.object({
 				serverId: z.string().optional(),

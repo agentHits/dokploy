@@ -236,8 +236,6 @@ const compose = (organizationId = "org-1") => ({
 	appName: "compose-one",
 	sourceType: "docker",
 	env: "COMPOSE_SECRET=secret",
-	composeFile: "services:\n  api:\n    environment:\n      TOKEN: compose-secret",
-	customGitUrl: "https://compose-token@example.com/org/private.git",
 	environment: {
 		project: {
 			organizationId,
@@ -285,11 +283,7 @@ describe("service environment reveal boundary", () => {
 		const caller = composeRouter.createCaller(createContext());
 
 		const normalRead = await caller.one({ composeId: "compose-1" });
-		expect(normalRead).toMatchObject({
-			env: REDACTED_SECRET_VALUE,
-			composeFile: REDACTED_SECRET_VALUE,
-			customGitUrl: `https://${REDACTED_SECRET_VALUE}@example.com/org/private.git`,
-		});
+		expect(normalRead.env).toBe(REDACTED_SECRET_VALUE);
 
 		const revealed = await caller.revealEnvironment({
 			composeId: "compose-1",

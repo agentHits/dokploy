@@ -1,9 +1,11 @@
 import { quoteShellArg } from "@dokploy/server/utils/filesystem/safe-path";
 import {
+	ExecError,
 	execAsync,
 	execAsyncRemote,
 } from "@dokploy/server/utils/process/execAsync";
 import { TRPCError } from "@trpc/server";
+import { quote } from "shell-quote";
 
 const dockerNodeIdentifierRegex = /^[a-zA-Z0-9._-]+$/;
 
@@ -122,6 +124,9 @@ export const getContainersByAppNameMatch = async (
 	serverId?: string,
 ) => {
 	try {
+		if (appType === "stack") {
+			return await getStackTaskContainers(appName, serverId);
+		}
 		let result: string[] = [];
 		const cmd =
 			"docker ps -a --format 'CONTAINER ID : {{.ID}} | Name: {{.Names}} | State: {{.State}} | Status: {{.Status}}'";
@@ -180,6 +185,66 @@ export const getContainersByAppNameMatch = async (
 	return [];
 };
 
+const getStackTaskContainers = async (appName: string, serverId?: string) => {
+	try {
+		const divider = "__DOKPLOY_DIVIDER__";
+		const tasksCommand = `docker stack ps ${appName} --no-trunc --filter "desired-state=running" --format 'TASK : {{.ID}} | Name: {{.Name}} | Node: {{.Node}} | CurrentState: {{.CurrentState}} | Error: {{.Error}}'`;
+		const inspectCommand = `docker stack ps ${appName} -q --no-trunc --filter "desired-state=running" | xargs -r docker inspect --format '{{if .Status.ContainerStatus}}TASK : {{.ID}} | ContainerId: {{.Status.ContainerStatus.ContainerID}}{{end}}' 2>/dev/null`;
+		const command = `${tasksCommand} && echo "${divider}" && (${inspectCommand} || true)`;
+
+		let stdout = "";
+
+		if (serverId) {
+			const result = await execAsyncRemote(serverId, command);
+			stdout = result.stdout;
+		} else {
+			const result = await execAsync(command);
+			stdout = result.stdout;
+		}
+
+		if (!stdout) return [];
+
+		const [tasksSection = "", inspectSection = ""] = stdout.split(divider);
+
+		const containerIdByTask = new Map<string, string>();
+		for (const line of inspectSection.trim().split("\n")) {
+			const parts = line.split(" | ");
+			const taskId = parts[0]?.replace("TASK : ", "").trim();
+			const containerId = parts[1]?.replace("ContainerId: ", "").trim();
+			if (taskId && containerId) {
+				containerIdByTask.set(taskId, containerId);
+			}
+		}
+
+		const containers = [];
+
+		for (const line of tasksSection.trim().split("\n")) {
+			if (!line) continue;
+			const parts = line.split(" | ");
+			const taskId = parts[0]?.replace("TASK : ", "").trim() ?? "";
+			const name = parts[1]?.replace("Name: ", "").trim() ?? "";
+			const node = parts[2]?.replace("Node: ", "").trim() ?? "";
+			const currentState = parts[3]
+				? parts[3].replace("CurrentState: ", "").trim()
+				: "";
+			const error = parts[4] ? parts[4].replace("Error: ", "").trim() : "";
+			const containerId = containerIdByTask.get(taskId) ?? "";
+
+			containers.push({
+				containerId: containerId.slice(0, 12),
+				name: `${name}.${taskId}`,
+				node,
+				state: currentState.split(" ")[0]?.toLowerCase() ?? "No state",
+				status: error ? `${currentState} (${error})` : currentState,
+			});
+		}
+
+		return containers;
+	} catch {}
+
+	return [];
+};
+
 export const getStackContainersByAppName = async (
 	appName: string,
 	serverId?: string,
@@ -189,7 +254,6 @@ export const getStackContainersByAppName = async (
 
 		const command = `docker stack ps ${appName} --no-trunc --format 'CONTAINER ID : {{.ID}} | Name: {{.Name}} | State: {{.DesiredState}} | Node: {{.Node}} | CurrentState: {{.CurrentState}} | Error: {{.Error}}'`;
 
-		console.log("command	", command);
 		if (serverId) {
 			const { stdout, stderr } = await execAsyncRemote(serverId, command);
 
@@ -643,12 +707,40 @@ export const getApplicationInfo = async (
 	}
 };
 
+const parseDockerLabels = (
+	labels: Record<string, string> | string | null | undefined,
+) => {
+	if (!labels) {
+		return {};
+	}
+
+	if (typeof labels !== "string") {
+		return labels;
+	}
+
+	return labels
+		.split(",")
+		.reduce<Record<string, string>>((accumulator, label) => {
+			const separatorIndex = label.indexOf("=");
+			if (separatorIndex <= 0) {
+				return accumulator;
+			}
+
+			const key = label.slice(0, separatorIndex).trim();
+			const value = label.slice(separatorIndex + 1).trim();
+			if (key && value) {
+				accumulator[key] = value;
+			}
+			return accumulator;
+		}, {});
+};
+
 export const getAllContainerStats = async (serverId?: string) => {
 	try {
 		const statsCommand =
 			'docker stats --no-stream --format \'{"BlockIO":"{{.BlockIO}}","CPUPerc":"{{.CPUPerc}}","Container":"{{.Container}}","ID":"{{.ID}}","MemPerc":"{{.MemPerc}}","MemUsage":"{{.MemUsage}}","Name":"{{.Name}}","NetIO":"{{.NetIO}}"}\'';
 		const sizeCommand =
-			'docker ps --size --format \'{"ID":"{{.ID}}","Name":"{{.Names}}","Size":"{{.Size}}"}\'';
+			'docker ps --size --format \'{"ID":"{{.ID}}","Name":"{{.Names}}","Size":"{{.Size}}","Labels":{{json .Labels}}}\'';
 
 		let statsStdout = "";
 		let sizeStdout = "";
@@ -668,7 +760,10 @@ export const getAllContainerStats = async (serverId?: string) => {
 			return [];
 		}
 
-		const sizeByContainerId = new Map<string, string>();
+		const metadataByContainerId = new Map<
+			string,
+			{ labels: Record<string, string>; size: string }
+		>();
 		if (sizeStdout.trim()) {
 			const sizes = sizeStdout
 				.trim()
@@ -676,7 +771,10 @@ export const getAllContainerStats = async (serverId?: string) => {
 				.map((line) => JSON.parse(line));
 
 			for (const size of sizes) {
-				sizeByContainerId.set(size.ID, size.Size);
+				metadataByContainerId.set(size.ID, {
+					labels: parseDockerLabels(size.Labels),
+					size: size.Size ?? "",
+				});
 			}
 		}
 
@@ -685,9 +783,11 @@ export const getAllContainerStats = async (serverId?: string) => {
 			.split("\n")
 			.map((line) => {
 				const stat = JSON.parse(line);
+				const metadata = metadataByContainerId.get(stat.ID);
 				return {
 					...stat,
-					Size: sizeByContainerId.get(stat.ID) ?? "",
+					Labels: metadata?.labels ?? {},
+					Size: metadata?.size ?? "",
 				};
 			});
 
@@ -802,4 +902,168 @@ export const uploadFileToContainer = async (
 			`Failed to upload file to container: ${error instanceof Error ? error.message : String(error)}`,
 		);
 	}
+};
+
+export const CONTAINER_FILE_SIZE_LIMIT = 512 * 1024;
+
+const NO_SHELL_UTILITIES_ERROR =
+	"This container image has no shell utilities and its filesystem is not accessible from the Dokploy host.";
+
+const isMissingBinaryError = (error: unknown) =>
+	error instanceof ExecError &&
+	(error.exitCode === 126 ||
+		error.exitCode === 127 ||
+		!!error.stderr?.includes("executable file not found"));
+
+export const listContainerFiles = async (
+	containerId: string,
+	path: string,
+	serverId?: string,
+) => {
+	const command = `docker exec ${quote([containerId])} ls -1Ap ${quote([path])}`;
+	let stdout: string;
+	try {
+		({ stdout } = serverId
+			? await execAsyncRemote(serverId, command)
+			: await execAsync(command));
+	} catch (error) {
+		if (isMissingBinaryError(error)) {
+			throw new Error(NO_SHELL_UTILITIES_ERROR);
+		}
+		throw error;
+	}
+
+	return stdout
+		.split("\n")
+		.filter(Boolean)
+		.map((entry) => ({
+			name: entry.endsWith("/") ? entry.slice(0, -1) : entry,
+			isDirectory: entry.endsWith("/"),
+		}))
+		.sort((a, b) => {
+			if (a.isDirectory !== b.isDirectory) {
+				return a.isDirectory ? -1 : 1;
+			}
+			return a.name.localeCompare(b.name);
+		});
+};
+
+export const readContainerFile = async (
+	containerId: string,
+	filePath: string,
+	serverId?: string,
+) => {
+	const command = `docker exec ${quote([containerId])} cat ${quote([filePath])} | head -c ${CONTAINER_FILE_SIZE_LIMIT + 1} | base64 | tr -d '\\n'`;
+	const { stdout, stderr } = serverId
+		? await execAsyncRemote(serverId, command)
+		: await execAsync(command);
+
+	if (stderr && !stdout) {
+		if (stderr.includes("executable file not found")) {
+			throw new Error(NO_SHELL_UTILITIES_ERROR);
+		}
+		throw new Error(stderr);
+	}
+
+	const buffer = Buffer.from(stdout.trim(), "base64");
+	return {
+		content: buffer.subarray(0, CONTAINER_FILE_SIZE_LIMIT).toString("base64"),
+		truncated: buffer.byteLength > CONTAINER_FILE_SIZE_LIMIT,
+	};
+};
+
+export const writeContainerFile = async (
+	containerId: string,
+	filePath: string,
+	content: string,
+	serverId?: string,
+) => {
+	const base64Content = Buffer.from(content, "utf8").toString("base64");
+	if (base64Content.length > CONTAINER_FILE_SIZE_LIMIT * 2) {
+		throw new Error("File is too large to save from the editor (max 512KB)");
+	}
+
+	const tempPath = `/tmp/dokploy-edit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	const command = `printf '%s' ${quote([base64Content])} | base64 -d > ${quote([tempPath])} && docker cp ${quote([tempPath])} ${quote([`${containerId}:${filePath}`])}; status=$?; rm -f ${quote([tempPath])}; exit $status`;
+
+	if (serverId) {
+		await execAsyncRemote(serverId, command);
+	} else {
+		await execAsync(command);
+	}
+};
+
+export const deleteContainerFile = async (
+	containerId: string,
+	path: string,
+	serverId?: string,
+) => {
+	const command = `docker exec ${quote([containerId])} rm -rf ${quote([path])}`;
+
+	try {
+		if (serverId) {
+			await execAsyncRemote(serverId, command);
+		} else {
+			await execAsync(command);
+		}
+	} catch (error) {
+		if (isMissingBinaryError(error)) {
+			throw new Error(NO_SHELL_UTILITIES_ERROR);
+		}
+		throw error;
+	}
+};
+
+export interface DockerEvent {
+	Type?: string;
+	Action?: string;
+	Actor?: {
+		ID?: string;
+		Attributes?: Record<string, string>;
+	};
+	time?: number;
+}
+
+export const getDockerEvents = async (
+	serverId?: string | null,
+	minutes = 15,
+) => {
+	const until = new Date();
+	const since = new Date(until.getTime() - minutes * 60 * 1000);
+	const command = `docker events --since ${quote([since.toISOString()])} --until ${quote([until.toISOString()])} --format '{{json .}}'`;
+
+	let stdout = "";
+	let stderr = "";
+	if (serverId) {
+		const result = await execAsyncRemote(serverId, command);
+		stdout = result.stdout;
+		stderr = result.stderr;
+	} else {
+		const result = await execAsync(command);
+		stdout = result.stdout;
+		stderr = result.stderr;
+	}
+
+	if (stderr) {
+		console.error(`Error: ${stderr}`);
+	}
+
+	const events: DockerEvent[] = stdout
+		.trim()
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => {
+			try {
+				return JSON.parse(line) as DockerEvent;
+			} catch {
+				return null;
+			}
+		})
+		.filter((event): event is DockerEvent => event !== null)
+		.reverse();
+
+	return {
+		events,
+		fetchedAt: until.toISOString(),
+	};
 };

@@ -198,6 +198,10 @@ describe("user.getContainerMetrics target boundary", () => {
 					Authorization: "Bearer stored-remote-token",
 				},
 			},
+			{
+				allowPrivateNetwork: true,
+				fieldName: "Monitoring metrics URL",
+			},
 		);
 		expect(mocks.assertContainerMetricsServiceAccess).toHaveBeenCalledWith(
 			expect.anything(),
@@ -252,6 +256,10 @@ describe("user.getContainerMetrics target boundary", () => {
 				headers: {
 					Authorization: "Bearer stored-local-token",
 				},
+			},
+			{
+				allowPrivateNetwork: true,
+				fieldName: "Monitoring metrics URL",
 			},
 		);
 	});

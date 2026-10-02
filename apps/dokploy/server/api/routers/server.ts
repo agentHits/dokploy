@@ -10,6 +10,7 @@ import {
 	getContainerProcesses,
 	getDokployUrl,
 	getPublicIpWithFallback,
+	getServicesByServerId,
 	getWebServerSettings,
 	haveActiveServices,
 	IS_CLOUD,
@@ -24,7 +25,10 @@ import {
 	updateServerById,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
-import { checkPermission } from "@dokploy/server/services/permission";
+import {
+	checkPermission,
+	findMemberByUserId,
+} from "@dokploy/server/services/permission";
 import { hasValidLicense } from "@dokploy/server/services/proprietary/license-key";
 import { assertSshKeyAccess } from "@dokploy/server/services/ssh-key";
 import { isRedactedSecretValue } from "@dokploy/server/utils/security/redaction";
@@ -189,6 +193,11 @@ const buildMetricsRequest = ({
 	};
 };
 
+const metricsFetchOptions = {
+	allowPrivateNetwork: true,
+	fieldName: "Monitoring metrics URL",
+} as const;
+
 export const serverRouter = createTRPCRouter({
 	create: withPermission("server", "create")
 		.input(apiCreateServer)
@@ -208,11 +217,15 @@ export const serverRouter = createTRPCRouter({
 					input,
 					ctx.session.activeOrganizationId,
 				);
-				await applyDockerCleanupSchedule(
-					project.serverId,
-					ctx.session.activeOrganizationId,
-					input.enableDockerCleanup,
-				);
+				try {
+					await applyDockerCleanupSchedule(
+						project.serverId,
+						ctx.session.activeOrganizationId,
+						input.enableDockerCleanup,
+					);
+				} catch (error) {
+					console.error("Failed to schedule docker cleanup:", error);
+				}
 				await audit(ctx, {
 					action: "create",
 					resourceType: "server",
@@ -253,6 +266,41 @@ export const serverRouter = createTRPCRouter({
 			const server = await findServerById(input.serverId);
 			const isBuildServer = server.serverType === "build";
 			return defaultCommand(isBuildServer);
+		}),
+	getServices: withPermission("server", "read")
+		.input(apiFindOneServer)
+		.query(async ({ input, ctx }) => {
+			const currentServer = await findServerById(input.serverId);
+			if (currentServer.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this server",
+				});
+			}
+
+			const accessibleIds = await getAccessibleServerIds(ctx.session);
+			if (!accessibleIds.has(input.serverId)) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this server",
+				});
+			}
+
+			const services = await getServicesByServerId(input.serverId);
+
+			const isPrivileged =
+				ctx.user.role === "owner" || ctx.user.role === "admin";
+			if (isPrivileged) {
+				return services;
+			}
+
+			const { accessedServices } = await findMemberByUserId(
+				ctx.user.id,
+				ctx.session.activeOrganizationId,
+			);
+			return services.filter((service) =>
+				accessedServices.includes(service.id),
+			);
 		}),
 	all: withPermission("server", "read").query(async ({ ctx }) => {
 		const accessibleIds = await getAccessibleServerIds(ctx.session);
@@ -563,6 +611,7 @@ export const serverRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			try {
 				await assertServerAccess(ctx, input.serverId);
+				const currentServer = await findServerById(input.serverId);
 				const activeServers = await haveActiveServices(input.serverId);
 
 				if (activeServers) {
@@ -571,7 +620,6 @@ export const serverRouter = createTRPCRouter({
 						message: "Server has active services, please delete them first",
 					});
 				}
-				const currentServer = await findServerById(input.serverId);
 				await audit(ctx, {
 					action: "delete",
 					resourceType: "server",
@@ -693,11 +741,15 @@ export const serverRouter = createTRPCRouter({
 			});
 
 			try {
-				const response = await fetchWithPublicEgress(request.url.toString(), {
-					headers: {
-						Authorization: `Bearer ${request.token}`,
+				const response = await fetchWithPublicEgress(
+					request.url.toString(),
+					{
+						headers: {
+							Authorization: `Bearer ${request.token}`,
+						},
 					},
-				});
+					metricsFetchOptions,
+				);
 				if (!response.ok) {
 					throw new Error(
 						`Error ${response.status}: ${response.statusText}. Ensure the container is running and this service is included in the monitoring configuration.`,

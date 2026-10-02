@@ -30,6 +30,12 @@ vi.mock("@dokploy/server/db", () => ({
 			compose: {
 				findFirst: mocks.composeFindFirst,
 			},
+			patch: {
+				findMany: vi.fn(async () => []),
+			},
+			network: {
+				findMany: vi.fn(async () => []),
+			},
 		},
 		update: mocks.dbUpdate,
 	},
@@ -138,6 +144,7 @@ describe("compose service command boundary", () => {
 				{
 					host: `app"; touch ${hostMarker}; echo "'`,
 					serviceName: `web"; touch ${serviceMarker}; echo "'`,
+					enabled: true,
 				},
 			] as never,
 		);

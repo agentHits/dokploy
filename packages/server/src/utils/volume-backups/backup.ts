@@ -17,6 +17,43 @@ import {
 	quoteVolumeBackupShellArg,
 } from "./safe-input";
 
+interface RestartSafeBackupCommandOptions {
+	stopCommand: string;
+	backupCommand: string;
+	startCommand: string;
+	uploadCommand: string;
+}
+
+export const createRestartSafeBackupCommand = ({
+	stopCommand,
+	backupCommand,
+	startCommand,
+	uploadCommand,
+}: RestartSafeBackupCommandOptions) => `
+	${stopCommand}
+	set +e
+	(
+		${backupCommand}
+	)
+	DOKPLOY_VOLUME_BACKUP_STATUS=$?
+	(
+		set -e
+		${startCommand}
+	)
+	DOKPLOY_VOLUME_RESTART_STATUS=$?
+	set -e
+	if [ "$DOKPLOY_VOLUME_BACKUP_STATUS" -ne 0 ]; then
+		if [ "$DOKPLOY_VOLUME_RESTART_STATUS" -ne 0 ]; then
+			echo "Service restart also failed with exit code $DOKPLOY_VOLUME_RESTART_STATUS"
+		fi
+		exit "$DOKPLOY_VOLUME_BACKUP_STATUS"
+	fi
+	if [ "$DOKPLOY_VOLUME_RESTART_STATUS" -ne 0 ]; then
+		exit "$DOKPLOY_VOLUME_RESTART_STATUS"
+	fi
+	${uploadCommand}
+`;
+
 export const getVolumeServiceAppName = (
 	volumeBackup: Awaited<ReturnType<typeof findVolumeBackupById>>,
 ): string => {
@@ -167,16 +204,20 @@ export const backupVolume = async (
 		const serviceName = normalizeVolumeBackupServiceName(
 			volumeBackup.application?.appName || "",
 		);
-		return lockWrapper(`
-		echo "Stopping application to 0 replicas"
-		ACTUAL_REPLICAS=$(docker service inspect ${quoteVolumeBackupShellArg(serviceName)} --format "{{.Spec.Mode.Replicated.Replicas}}")
-		echo "Actual replicas: $ACTUAL_REPLICAS"
-		docker service update --replicas=0 ${quoteVolumeBackupShellArg(serviceName)}
-        ${backupCommand}
-		echo "Starting application to $ACTUAL_REPLICAS replicas"
-        docker service update --replicas=$ACTUAL_REPLICAS --with-registry-auth ${quoteVolumeBackupShellArg(serviceName)}
-		${uploadCommand}
-  `);
+		return lockWrapper(
+			createRestartSafeBackupCommand({
+				stopCommand: `
+				echo "Stopping application to 0 replicas"
+				ACTUAL_REPLICAS=$(docker service inspect ${quoteVolumeBackupShellArg(serviceName)} --format "{{.Spec.Mode.Replicated.Replicas}}")
+				echo "Actual replicas: $ACTUAL_REPLICAS"
+				docker service update --replicas=0 ${quoteVolumeBackupShellArg(serviceName)}`,
+				backupCommand,
+				startCommand: `
+				echo "Starting application to $ACTUAL_REPLICAS replicas"
+				docker service update --replicas=$ACTUAL_REPLICAS --with-registry-auth ${quoteVolumeBackupShellArg(serviceName)}`,
+				uploadCommand,
+			}),
+		);
 	}
 	if (serviceType === "compose") {
 		const compose = await findComposeById(
@@ -223,11 +264,13 @@ export const backupVolume = async (
 			echo "Compose container started"
 			`;
 		}
-		return lockWrapper(`
-        ${stopCommand}
-        ${backupCommand}
-        ${startCommand}
-		${uploadCommand}
-  `);
+		return lockWrapper(
+			createRestartSafeBackupCommand({
+				stopCommand,
+				backupCommand,
+				startCommand,
+				uploadCommand,
+			}),
+		);
 	}
 };

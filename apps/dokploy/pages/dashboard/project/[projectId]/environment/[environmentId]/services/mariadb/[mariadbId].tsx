@@ -23,6 +23,7 @@ import { UpdateMariadb } from "@/components/dashboard/mariadb/update-mariadb";
 import { ContainerFreeMonitoring } from "@/components/dashboard/monitoring/free/container/show-free-container-monitoring";
 import { ContainerPaidMonitoring } from "@/components/dashboard/monitoring/paid/container/show-paid-container-monitoring";
 import { ShowDatabaseAdvancedSettings } from "@/components/dashboard/shared/show-database-advanced-settings";
+import { TransferService } from "@/components/dashboard/shared/transfer-service";
 import { MariadbIcon } from "@/components/icons/data-tools-icons";
 import { DashboardLayout } from "@/components/layouts/dashboard-layout";
 import { AdvanceBreadcrumb } from "@/components/shared/advance-breadcrumb";
@@ -141,7 +142,7 @@ const Mariadb = (
 													</Label>
 												</TooltipTrigger>
 												<TooltipContent
-													className="z-[999] w-[300px]"
+													className="z-999 w-[300px]"
 													align="start"
 													side="top"
 												>
@@ -158,6 +159,13 @@ const Mariadb = (
 								<div className="flex flex-row gap-2 justify-end">
 									{permissions?.service.create && (
 										<UpdateMariadb mariadbId={mariadbId} />
+									)}
+									{permissions?.service.create && (
+										<TransferService
+											id={mariadbId}
+											type="mariadb"
+											serverId={data?.serverId}
+										/>
 									)}
 									{permissions?.service.delete && (
 										<DeleteService id={mariadbId} type="mariadb" />
@@ -199,7 +207,7 @@ const Mariadb = (
 										router.push(newPath, undefined, { shallow: true });
 									}}
 								>
-									<div className="flex flex-row items-center justify-between w-full gap-4 overflow-x-scroll">
+									<div className="flex flex-row items-center justify-between w-full gap-4 overflow-x-auto">
 										<TabsList
 											className={cn(
 												"md:grid md:w-fit max-md:overflow-y-scroll justify-start",
@@ -292,6 +300,7 @@ const Mariadb = (
 												<ShowDockerLogs
 													serverId={data?.serverId || ""}
 													appName={data?.appName || ""}
+													serviceId={data?.mariadbId}
 												/>
 											</div>
 										</TabsContent>

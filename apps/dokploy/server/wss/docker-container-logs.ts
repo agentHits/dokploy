@@ -4,6 +4,7 @@ import { resolveServerDestinationHost } from "@dokploy/server/utils/servers/dest
 import { spawn } from "node-pty";
 import { Client } from "ssh2";
 import { WebSocketServer } from "ws";
+import { canAccessDockerOverWss } from "./authorize";
 import { canAccessDockerLogsWebSocket } from "./docker-permission";
 import {
 	getShell,
@@ -43,7 +44,13 @@ export const setupDockerContainerLogsWebSocketServer = (
 		const since = url.searchParams.get("since") ?? "all";
 		const serverId = url.searchParams.get("serverId");
 		const runType = url.searchParams.get("runType");
+		const serviceId = url.searchParams.get("serviceId");
 		const { user, session } = await validateRequest(req);
+
+		if (!user || !session) {
+			ws.close();
+			return;
+		}
 
 		if (!containerId) {
 			ws.close(4000, "containerId no provided");
@@ -81,6 +88,11 @@ export const setupDockerContainerLogsWebSocketServer = (
 			}))
 		) {
 			ws.close();
+			return;
+		}
+
+		if (!(await canAccessDockerOverWss(user, session, serverId, serviceId))) {
+			ws.close(4003, "Not authorized");
 			return;
 		}
 

@@ -4,7 +4,7 @@ import { assertLocalHostAccess } from "@/server/api/utils/local-host-access";
 
 type WebSocketAuthContext = {
 	user: { id: string } | null;
-	session: { activeOrganizationId: string } | null;
+	session: { activeOrganizationId?: string | null } | null;
 };
 
 const getPermissionContext = ({
@@ -23,26 +23,30 @@ export const canAccessServerTerminalWebSocket = async ({
 	session,
 	serverId,
 }: WebSocketAuthContext & { serverId: string }) => {
-	if (!user || !session) {
+	const activeOrganizationId = session?.activeOrganizationId;
+	if (!user || !activeOrganizationId) {
 		return false;
 	}
 
 	try {
-		await checkPermission(getPermissionContext({ user, session }), {
-			server: ["execute"],
-		});
+		await checkPermission(
+			getPermissionContext({ user, session: { activeOrganizationId } }),
+			{
+				server: ["execute"],
+			},
+		);
 
 		if (serverId === "local") {
 			await assertLocalHostAccess({
 				user: { id: user.id },
-				session: { activeOrganizationId: session.activeOrganizationId },
+				session: { activeOrganizationId },
 			});
 			return true;
 		}
 
 		const accessibleServerIds = await getAccessibleServerIds({
 			userId: user.id,
-			activeOrganizationId: session.activeOrganizationId,
+			activeOrganizationId,
 		});
 
 		return accessibleServerIds.has(serverId);
@@ -55,14 +59,18 @@ export const canAccessMonitoringWebSocket = async ({
 	user,
 	session,
 }: WebSocketAuthContext) => {
-	if (!user || !session) {
+	const activeOrganizationId = session?.activeOrganizationId;
+	if (!user || !activeOrganizationId) {
 		return false;
 	}
 
 	try {
-		await checkPermission(getPermissionContext({ user, session }), {
-			monitoring: ["read"],
-		});
+		await checkPermission(
+			getPermissionContext({ user, session: { activeOrganizationId } }),
+			{
+				monitoring: ["read"],
+			},
+		);
 		return true;
 	} catch {
 		return false;

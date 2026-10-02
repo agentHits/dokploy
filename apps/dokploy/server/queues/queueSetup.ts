@@ -13,8 +13,8 @@ import type { DeploymentJob } from "./queue-types";
  * Deployment queue.
  *
  * Self-hosted uses an in-memory, per-group FIFO queue with configurable
- * concurrency per server (enterprise-gated). Cloud does not use the queue at
- * all — deployments run directly in the background — so we expose a no-op.
+ * concurrency per server. Cloud does not use the queue at all — deployments
+ * run directly in the background — so we expose a no-op.
  */
 
 interface DeploymentQueue {
@@ -48,7 +48,8 @@ const createInMemoryQueue = (): DeploymentQueue => {
 	queue.process(processDeploymentJob);
 
 	return {
-		add: (_name, data) => queue.add(data),
+		add: (_name, data, opts) =>
+			queue.add(data, typeof opts?.jobId === "string" ? opts.jobId : undefined),
 		getJobs: (states) => queue.getJobs(states),
 		close: () => queue.close(),
 		on: () => {},

@@ -53,7 +53,7 @@ export const buildKnownHostsCommand = ({
 	knownHostsPath: string;
 	port: number;
 }) =>
-	`${quoteShellArgs(["ssh-keyscan", "-p", String(port), domain])} >> ${quoteShellArgument(knownHostsPath)};`;
+	`${quoteShellArgs(["ssh-keyscan", "-p", String(port), domain])} >> ${quoteShellArgument(knownHostsPath)} || true;`;
 
 export const buildPrivateKeyWriteCommand = (
 	privateKey: string,
@@ -80,6 +80,7 @@ export const buildGitSshEnvironmentCommand = ({
 	}
 
 	commandArgs.push("-o", `UserKnownHostsFile=${knownHostsPath}`);
+	commandArgs.push("-o", "StrictHostKeyChecking=accept-new");
 
 	return `export ${quoteEnvironmentAssignment("GIT_SSH_COMMAND", quoteShellArgs(commandArgs))};`;
 };

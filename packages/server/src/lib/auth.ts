@@ -1,5 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import { apiKey } from "@better-auth/api-key";
+import { passkey } from "@better-auth/passkey";
+import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
 import * as bcrypt from "bcrypt";
 import { betterAuth } from "better-auth";
@@ -13,6 +15,7 @@ import * as schema from "../db/schema";
 import { getTrustedOrigins, getUserByToken } from "../services/admin";
 import { checkPermission } from "../services/permission";
 import { createAuditLog } from "../services/proprietary/audit-log";
+import { resolveOrganizationDefaultRole } from "../services/proprietary/license-key";
 import {
 	getWebServerSettings,
 	updateWebServerSettings,
@@ -223,6 +226,9 @@ const { handler, api } = betterAuth({
 		user: {
 			create: {
 				before: async (_user, context) => {
+					if (context?.path.includes("/scim")) {
+						return { data: { emailVerified: true } };
+					}
 					if (!IS_CLOUD) {
 						const xDokployToken =
 							context?.request?.headers?.get("x-dokploy-token");
@@ -271,6 +277,7 @@ const { handler, api } = betterAuth({
 				},
 				after: async (user, context) => {
 					const isSSORequest = context?.path.includes("/sso");
+					const isSCIMRequest = context?.path.includes("/scim");
 					const isAdminPresent = await db.query.member.findFirst({
 						where: eq(schema.member.role, "owner"),
 					});
@@ -304,6 +311,24 @@ const { handler, api } = betterAuth({
 						} catch (error) {
 							console.error("Error submitting to HubSpot", error);
 						}
+					}
+
+					if (isSCIMRequest) {
+						const membership = await db.query.member.findFirst({
+							where: eq(schema.member.userId, user.id),
+						});
+						if (membership) {
+							const defaultRole = await resolveOrganizationDefaultRole(
+								membership.organizationId,
+							);
+							if (defaultRole !== membership.role) {
+								await db
+									.update(schema.member)
+									.set({ role: defaultRole })
+									.where(eq(schema.member.id, membership.id));
+							}
+						}
+						return;
 					}
 
 					if (IS_CLOUD || !isAdminPresent) {
@@ -347,10 +372,13 @@ const { handler, api } = betterAuth({
 								message: "SSO email domain is not allowed for this provider",
 							});
 						}
+						const defaultRole = provider.organizationId
+							? await resolveOrganizationDefaultRole(provider.organizationId)
+							: "member";
 						await db.insert(schema.member).values({
 							userId: user.id,
-							organizationId: provider.organizationId,
-							role: "member",
+							organizationId: provider?.organizationId || "",
+							role: defaultRole,
 							createdAt: new Date(),
 							isDefault: true,
 						});
@@ -380,28 +408,6 @@ const { handler, api } = betterAuth({
 							activeOrganizationId: member?.organization.id,
 						},
 					};
-				},
-				after: async (session) => {
-					const orgId = (
-						session as typeof session & { activeOrganizationId?: string }
-					).activeOrganizationId;
-					if (!orgId) return;
-					const memberRecord = await db.query.member.findFirst({
-						where: and(
-							eq(schema.member.userId, session.userId),
-							eq(schema.member.organizationId, orgId),
-						),
-						with: { user: true },
-					});
-					if (!memberRecord) return;
-					await createAuditLog({
-						organizationId: orgId,
-						userId: session.userId,
-						userEmail: memberRecord.user.email,
-						userRole: memberRecord.role,
-						action: "login",
-						resourceType: "session",
-					});
 				},
 			},
 			delete: {
@@ -493,6 +499,21 @@ const { handler, api } = betterAuth({
 				},
 			},
 		}),
+		scim({
+			beforeSCIMTokenGenerated: async ({ user }) => {
+				const dbUser = await db.query.user.findFirst({
+					where: eq(schema.user.id, user.id),
+					columns: { enableEnterpriseFeatures: true },
+				});
+
+				if (!dbUser?.enableEnterpriseFeatures) {
+					throw new APIError("FORBIDDEN", {
+						message: "SCIM provisioning requires an enterprise license",
+					});
+				}
+			},
+		}),
+		passkey(),
 		twoFactor(),
 		organization({
 			ac,
@@ -521,6 +542,9 @@ const _auth = {
 	createApiKey: api.createApiKey,
 	registerSSOProvider: api.registerSSOProvider,
 	updateSSOProvider: api.updateSSOProvider,
+	generateSCIMToken: api.generateSCIMToken,
+	listSCIMProviderConnections: api.listSCIMProviderConnections,
+	deleteSCIMProviderConnection: api.deleteSCIMProviderConnection,
 };
 
 export type AuthType = typeof _auth;

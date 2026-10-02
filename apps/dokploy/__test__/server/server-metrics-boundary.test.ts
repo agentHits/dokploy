@@ -265,6 +265,10 @@ describe("server.getServerMetrics target boundary", () => {
 					Authorization: "Bearer stored-remote-token",
 				},
 			},
+			{
+				allowPrivateNetwork: true,
+				fieldName: "Monitoring metrics URL",
+			},
 		);
 	});
 
@@ -296,6 +300,10 @@ describe("server.getServerMetrics target boundary", () => {
 				headers: {
 					Authorization: "Bearer stored-local-token",
 				},
+			},
+			{
+				allowPrivateNetwork: true,
+				fieldName: "Monitoring metrics URL",
 			},
 		);
 	});

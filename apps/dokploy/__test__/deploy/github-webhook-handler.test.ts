@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
 	queueAdd: vi.fn(),
 	verify: vi.fn(),
 	shouldDeploy: vi.fn(),
+	createPreviewDeployment: vi.fn(),
+	findPreviewDeploymentByApplicationId: vi.fn(),
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -64,10 +66,11 @@ vi.mock("@dokploy/server", () => ({
 	IS_CLOUD: false,
 	shouldDeploy: mocks.shouldDeploy,
 	checkUserRepositoryPermissions: vi.fn(),
-	createPreviewDeployment: vi.fn(),
+	createPreviewDeployment: mocks.createPreviewDeployment,
 	createSecurityBlockedComment: vi.fn(),
 	findGithubById: vi.fn(),
-	findPreviewDeploymentByApplicationId: vi.fn(),
+	findPreviewDeploymentByApplicationId:
+		mocks.findPreviewDeploymentByApplicationId,
 	findPreviewDeploymentsByPullRequestId: vi.fn(),
 	getBitbucketHeaders: vi.fn(() => ({})),
 	removePreviewDeployment: vi.fn(),
@@ -113,7 +116,10 @@ const createResponse = () => {
 	return res;
 };
 
-const createPushRequest = (branch: string) =>
+const createPushRequest = (
+	branch: string,
+	owner: { login?: string; name?: string } = { login: "agentHits" },
+) =>
 	({
 		headers: {
 			"x-hub-signature-256": "sha256=test-signature",
@@ -138,9 +144,7 @@ const createPushRequest = (branch: string) =>
 				full_name: "agentHits/dokploy",
 				clone_url: "https://github.com/agentHits/dokploy.git",
 				html_url: "https://github.com/agentHits/dokploy",
-				owner: {
-					login: "agentHits",
-				},
+				owner,
 			},
 		},
 	}) as unknown as NextApiRequest;
@@ -194,10 +198,16 @@ describe("GitHub app webhook auto-deploy", () => {
 		});
 	});
 
-	it("matches push events using repository owner login", async () => {
+	it("matches push events using repository owner name when available", async () => {
 		const res = createResponse();
 
-		await handler(createPushRequest("main"), res);
+		await handler(
+			createPushRequest("main", {
+				login: "agentHits-login",
+				name: "agentHits",
+			}),
+			res,
+		);
 
 		expect(mocks.queueAdd).toHaveBeenCalledWith(
 			"deployments",
@@ -215,7 +225,35 @@ describe("GitHub app webhook auto-deploy", () => {
 		expect(res.json).toHaveBeenCalledWith({ message: "Deployed 1 apps" });
 	});
 
-	it("matches compose push events using repository owner login", async () => {
+	it("keeps remote application server id in queued push deployments", async () => {
+		mocks.applicationsFindMany.mockResolvedValue([
+			{
+				applicationId: "application-id",
+				serverId: "server-application",
+				watchPaths: null,
+			},
+		]);
+		const res = createResponse();
+
+		await handler(createPushRequest("main"), res);
+
+		expect(mocks.queueAdd).toHaveBeenCalledWith(
+			"deployments",
+			expect.objectContaining({
+				applicationId: "application-id",
+				applicationType: "application",
+				server: true,
+				serverId: "server-application",
+				type: "deploy",
+			}),
+			expect.objectContaining({
+				removeOnComplete: true,
+				removeOnFail: true,
+			}),
+		);
+	});
+
+	it("matches compose push events using repository owner login fallback", async () => {
 		mocks.applicationsFindMany.mockResolvedValue([]);
 		mocks.composeFindMany.mockImplementation(({ where }) => {
 			const matches =
@@ -232,7 +270,7 @@ describe("GitHub app webhook auto-deploy", () => {
 					? [
 							{
 								composeId: "compose-id",
-								serverId: null,
+								serverId: "server-compose",
 								watchPaths: null,
 							},
 						]
@@ -248,6 +286,8 @@ describe("GitHub app webhook auto-deploy", () => {
 			expect.objectContaining({
 				applicationType: "compose",
 				composeId: "compose-id",
+				server: true,
+				serverId: "server-compose",
 				type: "deploy",
 			}),
 			expect.objectContaining({
@@ -259,7 +299,7 @@ describe("GitHub app webhook auto-deploy", () => {
 		expect(res.json).toHaveBeenCalledWith({ message: "Deployed 1 apps" });
 	});
 
-	it("matches tag events using repository owner login", async () => {
+	it("matches tag events using repository owner login fallback", async () => {
 		mocks.applicationsFindMany.mockImplementation(({ where }) => {
 			const matches =
 				getConditionValue(where, "application.sourceType") === "github" &&
@@ -312,5 +352,159 @@ describe("GitHub app webhook auto-deploy", () => {
 		expect(mocks.queueAdd).not.toHaveBeenCalled();
 		expect(res.status).toHaveBeenCalledWith(200);
 		expect(res.json).toHaveBeenCalledWith({ message: "No apps to deploy" });
+	});
+});
+
+describe("GitHub app webhook preview deployments", () => {
+	const createApplication = (
+		overrides: Record<string, unknown> = {},
+	): Record<string, unknown> => ({
+		applicationId: "application-id",
+		name: "my-app",
+		serverId: null,
+		previewLabels: [],
+		previewLimit: 3,
+		previewDeployments: [],
+		previewRequireCollaboratorPermissions: false,
+		...overrides,
+	});
+
+	const createPreviewDeployments = (total: number) =>
+		Array.from({ length: total }, (_, index) => ({
+			previewDeploymentId: `existing-preview-${index}`,
+		}));
+
+	const createPullRequestRequest = (action: string) =>
+		({
+			headers: {
+				"x-hub-signature-256": "sha256=test-signature",
+				"x-github-event": "pull_request",
+			},
+			body: {
+				installation: {
+					id: 12345,
+				},
+				action,
+				pull_request: {
+					id: 987,
+					number: 42,
+					title: "feat: add preview",
+					html_url: "https://github.com/agentHits/dokploy/pull/42",
+					labels: [],
+					user: {
+						login: "agentHits",
+					},
+					head: {
+						ref: "feature",
+						sha: "abc123",
+					},
+					base: {
+						ref: "main",
+					},
+				},
+				repository: {
+					name: "dokploy",
+					owner: {
+						login: "agentHits",
+					},
+				},
+			},
+		}) as unknown as NextApiRequest;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.githubFindFirst.mockResolvedValue({
+			githubId: "github-provider-id",
+			githubInstallationId: 12345,
+			githubWebhookSecret: "webhook-secret",
+		});
+		mocks.verify.mockResolvedValue(true);
+		mocks.queueAdd.mockResolvedValue({ id: "job-id" });
+		mocks.createPreviewDeployment.mockResolvedValue({
+			previewDeploymentId: "new-preview-id",
+		});
+		mocks.findPreviewDeploymentByApplicationId.mockResolvedValue(undefined);
+	});
+
+	it("redeploys an existing preview even when the limit is reached", async () => {
+		mocks.applicationsFindMany.mockResolvedValue([
+			createApplication({
+				previewLimit: 2,
+				previewDeployments: createPreviewDeployments(3),
+			}),
+		]);
+		mocks.findPreviewDeploymentByApplicationId.mockResolvedValue({
+			previewDeploymentId: "existing-preview-0",
+		});
+		const res = createResponse();
+
+		await handler(createPullRequestRequest("synchronize"), res);
+
+		expect(mocks.createPreviewDeployment).not.toHaveBeenCalled();
+		expect(mocks.queueAdd).toHaveBeenCalledWith(
+			"deployments",
+			expect.objectContaining({
+				applicationId: "application-id",
+				applicationType: "application-preview",
+				previewDeploymentId: "existing-preview-0",
+				type: "deploy",
+			}),
+			expect.objectContaining({
+				removeOnComplete: true,
+				removeOnFail: true,
+			}),
+		);
+		expect(res.status).toHaveBeenCalledWith(200);
+	});
+
+	it("does not create a new preview once the limit is reached", async () => {
+		mocks.applicationsFindMany.mockResolvedValue([
+			createApplication({
+				previewLimit: 2,
+				previewDeployments: createPreviewDeployments(2),
+			}),
+		]);
+		const res = createResponse();
+
+		await handler(createPullRequestRequest("opened"), res);
+
+		expect(mocks.createPreviewDeployment).not.toHaveBeenCalled();
+		expect(mocks.queueAdd).not.toHaveBeenCalled();
+		expect(res.status).toHaveBeenCalledWith(200);
+	});
+
+	it("falls back to the default limit when none is configured", async () => {
+		mocks.applicationsFindMany.mockResolvedValue([
+			createApplication({
+				previewLimit: null,
+				previewDeployments: createPreviewDeployments(2),
+			}),
+		]);
+		const res = createResponse();
+
+		await handler(createPullRequestRequest("opened"), res);
+
+		expect(mocks.createPreviewDeployment).toHaveBeenCalledWith(
+			expect.objectContaining({
+				applicationId: "application-id",
+				branch: "feature",
+				pullRequestId: 987,
+				pullRequestNumber: 42,
+			}),
+		);
+		expect(mocks.queueAdd).toHaveBeenCalledWith(
+			"deployments",
+			expect.objectContaining({
+				applicationId: "application-id",
+				applicationType: "application-preview",
+				previewDeploymentId: "new-preview-id",
+				type: "deploy",
+			}),
+			expect.objectContaining({
+				removeOnComplete: true,
+				removeOnFail: true,
+			}),
+		);
+		expect(res.status).toHaveBeenCalledWith(200);
 	});
 });

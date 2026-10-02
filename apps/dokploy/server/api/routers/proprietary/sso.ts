@@ -8,6 +8,7 @@ import {
 	requestToHeaders,
 } from "@dokploy/server/index";
 import { auth } from "@dokploy/server/lib/auth";
+import { invalidateTrustedOriginsCache } from "@dokploy/server/services/admin";
 import { getWebServerSettings } from "@dokploy/server/services/web-server-settings";
 import {
 	REDACTED_SECRET_VALUE,
@@ -555,6 +556,7 @@ export const ssoRouter = createTRPCRouter({
 				.update(user)
 				.set({ trustedOrigins: next })
 				.where(eq(user.id, ownerId));
+			invalidateTrustedOriginsCache();
 			return { success: true };
 		}),
 	removeTrustedOrigin: enterpriseOwnerProcedure
@@ -582,6 +584,7 @@ export const ssoRouter = createTRPCRouter({
 				.update(user)
 				.set({ trustedOrigins: next })
 				.where(eq(user.id, ownerId));
+			invalidateTrustedOriginsCache();
 			return { success: true };
 		}),
 	updateTrustedOrigin: enterpriseOwnerProcedure
@@ -617,6 +620,7 @@ export const ssoRouter = createTRPCRouter({
 				.update(user)
 				.set({ trustedOrigins: next })
 				.where(eq(user.id, ownerId));
+			invalidateTrustedOriginsCache();
 			return { success: true };
 		}),
 });

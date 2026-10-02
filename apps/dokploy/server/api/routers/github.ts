@@ -11,6 +11,7 @@ import {
 	updateGitProvider,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
+import { parseGithubBaseUrl } from "@dokploy/server/utils/providers/github";
 import {
 	buildGithubAppSetupStateProviderId,
 	canManageGitProviderOAuth,
@@ -58,8 +59,22 @@ const getGithubAppCallbackUrl = (req: {
 		: "/api/providers/github/setup";
 };
 
+// The Enterprise host comes from the authenticated user's own input and is
+// validated here, then sealed into the signed state — the setup callback
+// never trusts a linkable query parameter for the host.
+const requireGithubBaseUrl = (githubUrl: string) => {
+	const parsed = parseGithubBaseUrl(githubUrl);
+	if ("error" in parsed) {
+		throw new TRPCError({ code: "BAD_REQUEST", message: parsed.error });
+	}
+	return parsed.url;
+};
+
 const apiGithubAppSetupState = z.discriminatedUnion("action", [
-	z.object({ action: z.literal("init") }),
+	z.object({
+		action: z.literal("init"),
+		githubUrl: z.string().trim().max(200).optional(),
+	}),
 	z.object({ action: z.literal("setup"), githubId: z.string().min(1) }),
 ]);
 const GITHUB_APP_SETUP_STATE_TTL_MS = 60 * 60 * 1000;
@@ -89,6 +104,9 @@ export const githubRouter = createTRPCRouter({
 				state: signGitProviderOAuthState({
 					providerType: "github-app",
 					providerId,
+					...(input.action === "init" && input.githubUrl !== undefined
+						? { githubUrl: requireGithubBaseUrl(input.githubUrl) }
+						: {}),
 					redirectUri: getGithubAppCallbackUrl(ctx.req),
 					sessionId: ctx.session.id,
 					userId: ctx.session.userId,
@@ -144,6 +162,7 @@ export const githubRouter = createTRPCRouter({
 			.map((provider) => {
 				return {
 					githubId: provider.githubId,
+					githubUrl: provider.githubUrl,
 					gitProvider: {
 						...provider.gitProvider,
 					},
@@ -160,6 +179,8 @@ export const githubRouter = createTRPCRouter({
 			await assertGitProviderAccess(gitProviderId, ctx.session);
 
 			try {
+				const github = await findGithubById(input.githubId);
+				await assertGitProviderAccess(ctx.session, github.gitProvider);
 				const result = await getGithubRepositories(input.githubId);
 				return `Found ${result.length} repositories`;
 			} catch (err) {

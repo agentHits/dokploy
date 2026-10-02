@@ -92,6 +92,7 @@ export const backups = pgTable("backup", {
 		.notNull()
 		.references(() => destinations.destinationId, { onDelete: "cascade" }),
 	keepLatestCount: integer("keepLatestCount"),
+	includeEncryptionKey: boolean("includeEncryptionKey").notNull().default(true),
 	backupType: backupType("backupType").notNull().default("database"),
 	databaseType: databaseType("databaseType").notNull(),
 	composeId: text("composeId").references(
@@ -203,6 +204,7 @@ const createSchema = createInsertSchema(backups, {
 	mongoId: z.string().nullable().optional(),
 	libsqlId: z.string().nullable().optional(),
 	userId: z.string().nullable().optional(),
+	includeEncryptionKey: z.boolean().optional(),
 	metadata: apiBackupMetadata,
 });
 
@@ -224,11 +226,14 @@ export const apiCreateBackup = createSchema
 		backupType: true,
 		composeId: true,
 		serviceName: true,
+		includeEncryptionKey: true,
 		metadata: true,
 	})
 	.extend({
 		metadata: apiBackupMetadata,
 		serviceName: safeBackupShellName("Service name").nullable().optional(),
+		includeEncryptionKey: z.boolean().optional(),
+		backupType: z.enum(["database", "compose"]),
 	});
 
 export const apiFindOneBackup = z.object({
@@ -258,6 +263,7 @@ export const apiUpdateBackup = createSchema
 	.extend({
 		metadata: apiBackupMetadata,
 		serviceName: safeBackupShellName("Service name").nullable().optional(),
+		includeEncryptionKey: z.boolean().optional(),
 	});
 
 export const apiRestoreBackup = z.object({

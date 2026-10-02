@@ -46,13 +46,20 @@ import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 import { api } from "@/utils/api";
 import { useWhitelabeling } from "@/utils/hooks/use-whitelabeling";
+import { DeleteAccountByEmail } from "./delete-account-by-email";
 
-type User = typeof authClient.$Infer.Session.user;
+type AdminListUser = NonNullable<
+	Awaited<ReturnType<typeof authClient.admin.listUsers>>["data"]
+>["users"][number] & {
+	allowImpersonation?: boolean;
+	lastName?: string | null;
+	role?: string | null;
+};
 
 export const ImpersonationBar = () => {
 	const { config: whitelabeling } = useWhitelabeling();
-	const [users, setUsers] = useState<User[]>([]);
-	const [selectedUser, setSelectedUser] = useState<User | null>(null);
+	const [users, setUsers] = useState<AdminListUser[]>([]);
+	const [selectedUser, setSelectedUser] = useState<AdminListUser | null>(null);
 	const [isImpersonating, setIsImpersonating] = useState(false);
 	const [open, setOpen] = useState(false);
 	const [isLoading, setIsLoading] = useState(false);
@@ -77,13 +84,13 @@ export const ImpersonationBar = () => {
 				},
 			});
 
-			const filteredUsers = response.data?.users.filter(
-				// @ts-expect-error
+			const responseUsers = (response.data?.users ?? []) as AdminListUser[];
+			const filteredUsers = responseUsers.filter(
 				(user) => user.allowImpersonation && data?.user?.email !== user.email,
 			);
 
 			if (!response.error) {
-				setUsers(filteredUsers || []);
+				setUsers(filteredUsers);
 			}
 		} catch (error) {
 			console.error("Error fetching users:", error);
@@ -196,7 +203,7 @@ export const ImpersonationBar = () => {
 										>
 											{selectedUser ? (
 												<div className="flex items-center gap-2">
-													<UserIcon className="mr-2 h-4 w-4 flex-shrink-0" />
+													<UserIcon className="mr-2 h-4 w-4 shrink-0" />
 													<span className="truncate flex flex-col items-start">
 														<span className="text-sm font-medium">
 															{`${selectedUser.name} ${selectedUser.lastName}`.trim() ||
@@ -244,7 +251,7 @@ export const ImpersonationBar = () => {
 																	}}
 																>
 																	<span className="flex items-center gap-2 flex-1">
-																		<UserIcon className="h-4 w-4 flex-shrink-0" />
+																		<UserIcon className="h-4 w-4 shrink-0" />
 																		<span className="flex flex-col items-start">
 																			<span className="text-sm font-medium">
 																				{`${user.name} ${user.lastName}`.trim() ||
@@ -281,6 +288,7 @@ export const ImpersonationBar = () => {
 									<Shield className="h-4 w-4" />
 									Impersonate
 								</Button>
+								<DeleteAccountByEmail />
 							</div>
 						) : (
 							<div className="flex items-center gap-4 w-full flex-wrap">

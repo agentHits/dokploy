@@ -564,7 +564,7 @@ export const notificationRouter = createTRPCRouter({
 					}
 
 					organizationId = result?.[0]?.organizationId;
-					ServerName = "Remote";
+					ServerName = result?.[0]?.name ?? "Remote";
 				}
 
 				await sendServerThresholdNotifications(organizationId, {

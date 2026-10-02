@@ -9,7 +9,7 @@ import {
 	findMySqlById,
 	getAccessibleServerIds,
 	getContainerLogs,
-	getServiceContainerCommand,
+	getServiceContainer,
 	getWebServerSettings,
 	IS_CLOUD,
 	rebuildDatabase,
@@ -28,6 +28,7 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
+import { getServiceContainerCommand } from "@dokploy/server/utils/backups/utils";
 import {
 	preserveSecretPlaceholderFields,
 	redactDatabaseServiceSecrets,
@@ -466,9 +467,17 @@ export const mysqlRouter = createTRPCRouter({
 			const my = await findMySqlById(mysqlId);
 			const { appName, serverId, databaseUser, databaseRootPassword } = my;
 
-			const containerCmd = getServiceContainerCommand(appName);
+			const container = await getServiceContainer(appName, serverId);
+			if (!container) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: `No running container found for ${appName}`,
+				});
+			}
+
 			const targetUser = type === "root" ? "root" : databaseUser;
 
+			const containerCmd = getServiceContainerCommand(appName);
 			const passwordChangeCommand = buildMysqlPasswordChangeCommand({
 				client: "mysql",
 				databaseRootPassword,

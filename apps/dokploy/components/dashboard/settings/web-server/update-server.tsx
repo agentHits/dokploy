@@ -7,6 +7,7 @@ import {
 	Server,
 	Sparkles,
 	Stars,
+	X,
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -14,6 +15,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogClose,
 	DialogContent,
 	DialogTitle,
 	DialogTrigger,
@@ -109,7 +111,7 @@ export const UpdateServer = ({
 									size="sm"
 									onClick={() => onOpenChange?.(true)}
 								>
-									<Download className="h-4 w-4 flex-shrink-0" />
+									<Download className="h-4 w-4 shrink-0" />
 									{updateData ? (
 										<span className="font-medium truncate group-data-[collapsible=icon]:hidden">
 											Update Available
@@ -136,9 +138,9 @@ export const UpdateServer = ({
 					</TooltipProvider>
 				)}
 			</DialogTrigger>
-			<DialogContent className="max-w-lg">
-				<div className="flex items-center justify-between mb-8">
-					<DialogTitle className="text-2xl font-semibold">
+			<DialogContent className="max-w-lg" showCloseButton={false}>
+				<div className="flex items-center gap-2 mb-8">
+					<DialogTitle className="text-2xl font-semibold mr-auto">
 						Web Server Update
 					</DialogTitle>
 					{dokployVersionData && (
@@ -160,6 +162,12 @@ export const UpdateServer = ({
 							</div>
 						</div>
 					)}
+					<DialogClose asChild>
+						<Button variant="ghost" size="icon-sm" className="shrink-0">
+							<X />
+							<span className="sr-only">Close</span>
+						</Button>
+					</DialogClose>
 				</div>
 
 				{/* Initial state */}
@@ -263,7 +271,7 @@ export const UpdateServer = ({
 				{isUpdateAvailable && (
 					<div className="rounded-lg bg-[#16254D] p-4 mb-8">
 						<div className="flex gap-2">
-							<Info className="h-5 w-5 flex-shrink-0 text-[#5B9DFF]" />
+							<Info className="h-5 w-5 shrink-0 text-[#5B9DFF]" />
 							<div className="text-[#5B9DFF]">
 								We recommend reviewing the{" "}
 								<Link
@@ -287,13 +295,13 @@ export const UpdateServer = ({
 					<ToggleAutoCheckUpdates disabled={isPending} />
 				</div>
 
-				<div className="space-y-4 flex items-center justify-end mt-4	">
+				<div className="flex items-center justify-end mt-4">
 					<div className="flex items-center gap-2">
 						<Button variant="outline" onClick={() => onOpenChange?.(false)}>
 							Cancel
 						</Button>
 						{isUpdateAvailable ? (
-							<UpdateWebServer />
+							<UpdateWebServer buttonClassName="w-auto" />
 						) : (
 							<Button
 								variant="secondary"

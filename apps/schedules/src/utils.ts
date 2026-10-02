@@ -205,6 +205,9 @@ export const initializeJobs = async () => {
 		where: eq(schedules.enabled, true),
 		with: {
 			application: {
+				columns: {
+					applicationId: true,
+				},
 				with: {
 					server: true,
 				},
@@ -253,6 +256,9 @@ export const initializeJobs = async () => {
 		where: eq(volumeBackups.enabled, true),
 		with: {
 			application: {
+				columns: {
+					applicationId: true,
+				},
 				with: {
 					server: true,
 				},

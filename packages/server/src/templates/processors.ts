@@ -164,7 +164,7 @@ export function processValue(
 		}
 
 		if (varName === "username") {
-			return faker.internet.username().toLowerCase();
+			return faker.internet.userName().toLowerCase();
 		}
 
 		if (varName === "email") {

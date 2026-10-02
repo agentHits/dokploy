@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
 	addDomainToCompose,
 	clearOldDeployments,
@@ -5,12 +6,14 @@ import {
 	createCommand,
 	createCompose,
 	createComposeByTemplate,
+	createComposeDeploymentOperation,
 	createDomain,
 	createMount,
 	deleteMount,
 	execAsync,
 	execAsyncRemote,
 	findComposeById,
+	findComposeDeploymentOperation,
 	findDomainsByComposeId,
 	findProjectById,
 	findServerById,
@@ -21,6 +24,7 @@ import {
 	getWebServerSettings,
 	IS_CLOUD,
 	loadServices,
+	markDeploymentOperationDispatched,
 	randomizeComposeFile,
 	randomizeIsolatedDeploymentComposeFile,
 	removeCompose,
@@ -31,7 +35,9 @@ import {
 	stopCompose,
 	updateCompose,
 	updateDeploymentStatus,
+	upsertComposeEnvironment,
 } from "@dokploy/server";
+import { paths } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
 import {
 	canEditDeployGitSource,
@@ -46,6 +52,7 @@ import {
 import {
 	type CompleteTemplate,
 	fetchTemplateFiles,
+	fetchTemplateLogo,
 	fetchTemplatesList,
 } from "@dokploy/server/templates/github";
 import { processTemplate } from "@dokploy/server/templates/processors";
@@ -53,8 +60,6 @@ import { assertCustomGitUrlAllowed } from "@dokploy/server/utils/providers/git";
 import {
 	preserveSecretPlaceholderFields,
 	redactDeployableServiceSecrets,
-	redactSecretFields,
-	redactSensitiveText,
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
@@ -68,12 +73,16 @@ import {
 	apiCreateCompose,
 	apiDeleteCompose,
 	apiDeployCompose,
+	apiDeployComposeExact,
+	apiDeployComposeExactResponse,
 	apiFetchServices,
 	apiFindCompose,
 	apiRandomizeCompose,
 	apiRedeployCompose,
 	apiSaveEnvironmentVariablesCompose,
 	apiUpdateCompose,
+	apiUpsertComposeEnv,
+	apiUpsertComposeEnvResponse,
 	compose as composeTable,
 	environments,
 	projects,
@@ -91,49 +100,6 @@ import { audit } from "../utils/audit";
 import { assertDeploySourceCredentialAccess } from "../utils/deploy-source-access";
 import { assertTargetEnvironmentAccess } from "../utils/placement-access";
 import { assertServiceEnvironmentReadAccess } from "../utils/service-environment";
-
-type SecretRecord = Record<string, unknown>;
-
-const redactCustomGitUrl = <T extends SecretRecord | null | undefined>(
-	record: T,
-) => {
-	if (!record) {
-		return record;
-	}
-
-	const redacted = { ...record };
-	if ("customGitUrl" in redacted) {
-		redacted.customGitUrl = redactSensitiveText(
-			redacted.customGitUrl as string | null | undefined,
-		);
-	}
-
-	return redacted as T;
-};
-
-const redactComposeSecrets = <T extends SecretRecord | null | undefined>(
-	record: T,
-) => {
-	if (!record) {
-		return record;
-	}
-
-	return redactSecretFields(
-		redactCustomGitUrl(
-			redactDeployableServiceSecrets(
-				redactGitProviderSecrets(
-					record as T & {
-						bitbucket?: object | null;
-						gitea?: object | null;
-						github?: object | null;
-						gitlab?: object | null;
-					},
-				),
-			),
-		),
-		["composeFile"],
-	);
-};
 
 const composeSourceUpdateFields = [
 	"bitbucketBranch",
@@ -214,6 +180,33 @@ const assertCurrentComposeSourceEditAccess = async (
 };
 
 export const composeRouter = createTRPCRouter({
+	env: createTRPCRouter({
+		upsert: protectedProcedure
+			.meta({
+				openapi: {
+					path: "/compose/env/upsert",
+					method: "POST",
+				},
+			})
+			.input(apiUpsertComposeEnv)
+			.output(apiUpsertComposeEnvResponse)
+			.mutation(async ({ input, ctx }) => {
+				await checkServicePermissionAndAccess(ctx, input.composeId, {
+					envVars: ["write"],
+				});
+				const result = await upsertComposeEnvironment(input);
+				if (!result.dryRun && result.changed) {
+					const currentCompose = await findComposeById(input.composeId);
+					await audit(ctx, {
+						action: "update",
+						resourceType: "compose",
+						resourceId: input.composeId,
+						resourceName: currentCompose.name,
+					});
+				}
+				return result;
+			}),
+	}),
 	create: protectedProcedure
 		.input(apiCreateCompose)
 		.mutation(async ({ ctx, input }) => {
@@ -265,7 +258,7 @@ export const composeRouter = createTRPCRouter({
 					resourceId: newService.composeId,
 					resourceName: newService.appName,
 				});
-				return redactComposeSecrets(newService);
+				return redactDeployableServiceSecrets(newService);
 			} catch (error) {
 				throw error;
 			}
@@ -319,7 +312,7 @@ export const composeRouter = createTRPCRouter({
 			}
 
 			return {
-				...redactComposeSecrets(compose),
+				...redactDeployableServiceSecrets(redactGitProviderSecrets(compose)),
 				hasGitProviderAccess,
 				unauthorizedProvider,
 			};
@@ -367,7 +360,7 @@ export const composeRouter = createTRPCRouter({
 				resourceId: input.composeId,
 				resourceName: updated?.name,
 			});
-			return redactComposeSecrets(updated);
+			return redactDeployableServiceSecrets(updated);
 		}),
 	saveEnvironment: protectedProcedure
 		.input(apiSaveEnvironmentVariablesCompose)
@@ -381,9 +374,10 @@ export const composeRouter = createTRPCRouter({
 				preserveSecretPlaceholderFields(
 					{
 						env: input.env,
+						createEnvFile: input.createEnvFile,
 					},
 					currentCompose,
-					["env"],
+					["env", "createEnvFile"],
 				),
 			);
 
@@ -445,7 +439,9 @@ export const composeRouter = createTRPCRouter({
 				resourceId: composeResult.composeId,
 				resourceName: composeResult.appName,
 			});
-			return redactComposeSecrets(composeResult);
+			return redactDeployableServiceSecrets(
+				redactGitProviderSecrets(composeResult),
+			);
 		}),
 	cleanQueues: protectedProcedure
 		.input(apiFindCompose)
@@ -598,6 +594,7 @@ export const composeRouter = createTRPCRouter({
 				descriptionLog: input.description || "",
 				server: !!compose.serverId,
 				serverId: compose.serverId ?? undefined,
+				freshVolumes: input.freshVolumes,
 			};
 
 			if (IS_CLOUD && compose.serverId) {
@@ -632,6 +629,79 @@ export const composeRouter = createTRPCRouter({
 				composeId: compose.composeId,
 			};
 		}),
+	deployExact: protectedProcedure
+		.meta({
+			openapi: {
+				path: "/compose/deploy/exact",
+				method: "POST",
+			},
+		})
+		.input(apiDeployComposeExact)
+		.output(apiDeployComposeExactResponse)
+		.mutation(async ({ input, ctx }) => {
+			await checkServicePermissionAndAccess(ctx, input.composeId, {
+				deployment: ["create"],
+			});
+			const created = await createComposeDeploymentOperation({
+				composeId: input.composeId,
+				sourceRevision: input.expectedRevision,
+				idempotencyKey: input.idempotencyKey,
+			});
+			if (created.deduplicated) {
+				return {
+					composeId: created.operation.composeId,
+					operationId: created.operation.operationId,
+					sourceRevision: created.operation.sourceRevision,
+					resolvedRevision: created.operation.resolvedRevision,
+					status: created.operation.status,
+					deduplicated: true,
+				};
+			}
+
+			const jobData: DeploymentJob = {
+				composeId: input.composeId,
+				titleLog: "Exact deployment",
+				descriptionLog: "Immutable source recovery deployment",
+				type: "deploy",
+				applicationType: "compose",
+				server: !!created.compose.serverId,
+				serverId: created.compose.serverId ?? undefined,
+				operationId: created.operation.operationId,
+				expectedRevision: created.operation.sourceRevision,
+			};
+			try {
+				if (IS_CLOUD && created.compose.serverId) {
+					await deploy(jobData);
+				} else {
+					await myQueue.add("deployments", jobData, {
+						jobId: created.operation.operationId,
+						removeOnComplete: true,
+						removeOnFail: true,
+					});
+				}
+				await markDeploymentOperationDispatched(
+					created.operation.operationId,
+					"queued",
+				);
+			} catch {
+				await markDeploymentOperationDispatched(
+					created.operation.operationId,
+					"dispatch_unknown",
+				);
+			}
+			const operation = await findComposeDeploymentOperation(
+				input.composeId,
+				created.operation.operationId,
+			);
+			return {
+				composeId: operation.composeId,
+				operationId: operation.operationId,
+				sourceRevision: operation.sourceRevision,
+				resolvedRevision: operation.resolvedRevision,
+				status: operation.status,
+				deduplicated: false,
+			};
+		}),
 	redeploy: protectedProcedure
 		.input(apiRedeployCompose)
 		.mutation(async ({ input, ctx }) => {
@@ -647,6 +717,7 @@ export const composeRouter = createTRPCRouter({
 				descriptionLog: input.description || "",
 				server: !!compose.serverId,
 				serverId: compose.serverId ?? undefined,
+				freshVolumes: input.freshVolumes,
 			};
 			if (IS_CLOUD && compose.serverId) {
 				deploy(jobData).catch((error) => {
@@ -719,7 +790,12 @@ export const composeRouter = createTRPCRouter({
 				service: ["create"],
 			});
 			const compose = await findComposeById(input.composeId);
-			const command = createCommand(compose);
+			const { COMPOSE_PATH } = paths(!!compose.serverId);
+			const projectPath = join(COMPOSE_PATH, compose.appName, "code");
+			const command = createCommand(
+				compose,
+				compose.mounts.length > 0 ? projectPath : undefined,
+			);
 			return `docker ${command}`;
 		}),
 	refreshToken: protectedProcedure
@@ -778,7 +854,10 @@ export const composeRouter = createTRPCRouter({
 				}
 			}
 
-			const template = await fetchTemplateFiles(input.id, input.baseUrl);
+			const [template, templateLogo] = await Promise.all([
+				fetchTemplateFiles(input.id, input.baseUrl),
+				fetchTemplateLogo(input.id, input.baseUrl),
+			]);
 
 			let serverIp = "127.0.0.1";
 
@@ -817,6 +896,7 @@ export const composeRouter = createTRPCRouter({
 				sourceType: "raw",
 				appName: appName,
 				isolatedDeployment: template.config.config?.isolated !== false,
+				icon: templateLogo,
 			});
 
 			await addNewService(ctx, compose.composeId);
@@ -852,7 +932,7 @@ export const composeRouter = createTRPCRouter({
 				resourceId: compose.composeId,
 				resourceName: compose.name,
 			});
-			return redactComposeSecrets(compose);
+			return redactDeployableServiceSecrets(compose);
 		}),
 
 	templates: protectedProcedure
@@ -926,7 +1006,6 @@ export const composeRouter = createTRPCRouter({
 				customGitSSHKeyId: null,
 
 				sourceType: "github", // Reset to default
-				composeStatus: "idle",
 				watchPaths: null,
 				enableSubmodules: false,
 			});
@@ -976,7 +1055,7 @@ export const composeRouter = createTRPCRouter({
 				resourceId: input.composeId,
 				resourceName: updatedCompose.name,
 			});
-			return redactComposeSecrets(updatedCompose);
+			return redactDeployableServiceSecrets(updatedCompose);
 		}),
 
 	processTemplate: protectedProcedure

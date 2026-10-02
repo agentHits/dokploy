@@ -1,9 +1,12 @@
 # syntax=docker/dockerfile:1
 FROM node:24.4.0-slim AS base
 ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
-RUN corepack prepare pnpm@10.22.0 --activate
+ENV PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"
+ENV PNPM_CONFIG_MINIMUM_RELEASE_AGE=0
+ENV PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false
+RUN npm install -g corepack@0.35.0 \
+    && corepack enable \
+    && corepack prepare pnpm@11.10.0 --activate
 
 FROM base AS build
 ARG DOKPLOY_OFFICIAL_VERSION=v0.29.8
@@ -39,7 +42,7 @@ ENV NODE_ENV=production
 ENV DOKPLOY_OFFICIAL_VERSION=$DOKPLOY_OFFICIAL_VERSION
 ENV DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION
 
-RUN apt-get update && apt-get install -y curl unzip zip apache2-utils iproute2 rsync git-lfs && git lfs install && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y tini curl unzip zip apache2-utils iproute2 rsync git-lfs && git lfs install && rm -rf /var/lib/apt/lists/*
 
 # Copy only the necessary files
 COPY --from=build /prod/dokploy/.next ./.next
@@ -68,9 +71,17 @@ RUN curl -sSL https://nixpacks.com/install.sh -o install.sh \
 
 # Install Railpack
 ARG RAILPACK_VERSION=0.15.4
-RUN curl -sSL https://railpack.com/install.sh -o install-railpack.sh \
-    && RAILPACK_VERSION="$RAILPACK_VERSION" bash install-railpack.sh -y \
-    && rm install-railpack.sh
+ARG TARGETARCH
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+        amd64) railpack_arch="x86_64" ;; \
+        arm64) railpack_arch="arm64" ;; \
+        *) echo "Unsupported Railpack architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/railwayapp/railpack/releases/download/v${RAILPACK_VERSION}/railpack-v${RAILPACK_VERSION}-${railpack_arch}-unknown-linux-musl.tar.gz" -o railpack.tar.gz; \
+    tar -xzf railpack.tar.gz railpack; \
+    install -m 0755 railpack /usr/local/bin/railpack; \
+    rm railpack railpack.tar.gz
 
 # Install buildpacks
 COPY --from=buildpacksio/pack:0.39.1 /usr/local/bin/pack /usr/local/bin/pack
@@ -80,4 +91,8 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
   CMD curl -fs http://localhost:3000/api/trpc/settings.health || exit 1
 
-  CMD ["sh", "-c", "pnpm run wait-for-postgres && exec pnpm start"]
+# tini reaps HEALTHCHECK child processes that Node (as PID 1) leaves defunct.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+# Ejecutar node directamente: pnpm como wrapper queda residente (~100MB RSS)
+  CMD ["sh", "-c", "node -r dotenv/config dist/wait-for-postgres.mjs && node -r dotenv/config dist/migration.mjs && exec node -r dotenv/config dist/server.mjs"]

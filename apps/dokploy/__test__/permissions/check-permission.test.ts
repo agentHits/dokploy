@@ -140,6 +140,13 @@ describe("member is denied org-level enterprise resources (CVE: bypass via stati
 		).rejects.toThrow();
 	});
 
+	it("member is denied server.terminal", async () => {
+		memberToReturn = mockMemberData("member");
+		await expect(
+			checkPermission(ctx, { server: ["terminal"] }),
+		).rejects.toThrow();
+	});
+
 	it("member is denied registry.create", async () => {
 		memberToReturn = mockMemberData("member");
 		await expect(
@@ -219,6 +226,31 @@ describe("legacy boolean overrides for member", () => {
 	it("member fails docker.read with canAccessToDocker=false", async () => {
 		memberToReturn = mockMemberData("member");
 		await expect(checkPermission(ctx, { docker: ["read"] })).rejects.toThrow();
+	});
+
+	it("member passes gitProviders.create with canAccessToGitProviders=true", async () => {
+		memberToReturn = mockMemberData("member", {
+			canAccessToGitProviders: true,
+		});
+		await expect(
+			checkPermission(ctx, { gitProviders: ["create"] }),
+		).resolves.toBeUndefined();
+	});
+
+	it("member passes gitProviders.delete with canAccessToGitProviders=true", async () => {
+		memberToReturn = mockMemberData("member", {
+			canAccessToGitProviders: true,
+		});
+		await expect(
+			checkPermission(ctx, { gitProviders: ["delete"] }),
+		).resolves.toBeUndefined();
+	});
+
+	it("member fails gitProviders.create with canAccessToGitProviders=false", async () => {
+		memberToReturn = mockMemberData("member");
+		await expect(
+			checkPermission(ctx, { gitProviders: ["create"] }),
+		).rejects.toThrow();
 	});
 });
 

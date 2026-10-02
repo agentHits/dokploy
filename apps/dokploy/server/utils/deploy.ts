@@ -38,6 +38,13 @@ export const deploy = async (jobData: DeploymentJob) => {
 			},
 			body: JSON.stringify(signedJobData),
 		});
+		if (
+			jobData.applicationType === "compose" &&
+			jobData.operationId &&
+			!result.ok
+		) {
+			throw new Error("Exact deployment dispatch was not accepted");
+		}
 
 		const data = await result.json();
 		return data;
@@ -88,9 +95,23 @@ export type QueueJobRow = {
 	state: string;
 };
 
-export const fetchDeployApiJobs = async (
+export type DeployApiJobsResult =
+	| { available: true; jobs: QueueJobRow[] }
+	| {
+			available: false;
+			reasonCode:
+				| "not-configured"
+				| "network-error"
+				| "remote-error"
+				| "invalid-response";
+	  };
+
+export const fetchDeployApiJobsResult = async (
 	serverId: string,
-): Promise<QueueJobRow[]> => {
+): Promise<DeployApiJobsResult> => {
+	if (!process.env.SERVER_URL) {
+		return { available: false, reasonCode: "not-configured" };
+	}
 	try {
 		const signedRequest = await signDeploymentJobsReadRequest(serverId);
 		const res = await fetch(`${process.env.SERVER_URL}/jobs`, {
@@ -101,9 +122,27 @@ export const fetchDeployApiJobs = async (
 			},
 			body: JSON.stringify(signedRequest),
 		});
-		if (!res.ok) return [];
-		return (await res.json()) as QueueJobRow[];
+		if (!res.ok) {
+			return { available: false, reasonCode: "remote-error" };
+		}
+		let data: unknown;
+		try {
+			data = await res.json();
+		} catch {
+			return { available: false, reasonCode: "invalid-response" };
+		}
+		if (!Array.isArray(data)) {
+			return { available: false, reasonCode: "invalid-response" };
+		}
+		return { available: true, jobs: data as QueueJobRow[] };
 	} catch {
-		return [];
+		return { available: false, reasonCode: "network-error" };
 	}
+};
+
+export const fetchDeployApiJobs = async (
+	serverId: string,
+): Promise<QueueJobRow[]> => {
+	const result = await fetchDeployApiJobsResult(serverId);
+	return result.available ? result.jobs : [];
 };

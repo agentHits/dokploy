@@ -13,12 +13,16 @@ const getDockerExecShellCommand = (command: string) => {
 	return `docker exec -i $CONTAINER_ID sh -c ${quoteRestoreShellArg(command)}`;
 };
 
+// User-controlled values are passed to the container via `docker exec -e` and
+// read as "$VAR" inside a single-quoted inner script, so they never enter the
+// inner command text. See the matching note in backups/utils.ts.
 export const getPostgresRestoreCommand = (
 	database: string,
 	databaseUser: string,
 ) => {
+	const safeDatabase = normalizeRestoreDatabaseName(database);
 	return getDockerExecShellCommand(
-		`pg_restore -U ${quoteRestoreShellArg(databaseUser)} -d ${quoteRestoreShellArg(database)} -O --clean --if-exists`,
+		`pg_restore -U ${quoteRestoreShellArg(databaseUser)} -d ${quoteRestoreShellArg(safeDatabase)} -O --clean --if-exists`,
 	);
 };
 
@@ -27,8 +31,9 @@ export const getMariadbRestoreCommand = (
 	databaseUser: string,
 	databasePassword: string,
 ) => {
+	const safeDatabase = normalizeRestoreDatabaseName(database);
 	return getDockerExecShellCommand(
-		`mariadb -u ${quoteRestoreShellArg(databaseUser)} -p${quoteRestoreShellArg(databasePassword)} ${quoteRestoreShellArg(database)}`,
+		`mariadb -u ${quoteRestoreShellArg(databaseUser)} -p${quoteRestoreShellArg(databasePassword)} ${quoteRestoreShellArg(safeDatabase)}`,
 	);
 };
 
@@ -36,8 +41,9 @@ export const getMysqlRestoreCommand = (
 	database: string,
 	databasePassword: string,
 ) => {
+	const safeDatabase = normalizeRestoreDatabaseName(database);
 	return getDockerExecShellCommand(
-		`mysql -u root -p${quoteRestoreShellArg(databasePassword)} ${quoteRestoreShellArg(database)}`,
+		`mysql -u root -p${quoteRestoreShellArg(databasePassword)} ${quoteRestoreShellArg(safeDatabase)}`,
 	);
 };
 
@@ -46,8 +52,9 @@ export const getMongoRestoreCommand = (
 	databaseUser: string,
 	databasePassword: string,
 ) => {
+	const safeDatabase = normalizeRestoreDatabaseName(database);
 	return getDockerExecShellCommand(
-		`mongorestore --username ${quoteRestoreShellArg(databaseUser)} --password ${quoteRestoreShellArg(databasePassword)} --authenticationDatabase admin --db ${quoteRestoreShellArg(database)} --archive --drop`,
+		`mongorestore --username ${quoteRestoreShellArg(databaseUser)} --password ${quoteRestoreShellArg(databasePassword)} --authenticationDatabase admin --db ${quoteRestoreShellArg(safeDatabase)} --archive --drop`,
 	);
 };
 
@@ -98,6 +105,10 @@ const generateRestoreCommand = (
 	}
 };
 
+// Dumps taken with `--databases` carry `USE`/`CREATE DATABASE` statements that
+// would redirect the restore away from the database selected in the dialog.
+export const stripDatabaseSwitchCommand = `grep -viE '^[[:space:]]*(use|create[[:space:]]+database)[[:space:]]'`;
+
 const getMongoSpecificCommand = (
 	rcloneCommand: string,
 	restoreCommand: string,
@@ -146,7 +157,9 @@ export const getRestoreCommand = ({
 	const restoreCommand = generateRestoreCommand(type, credentials);
 	let cmd = `CONTAINER_ID=$(${containerSearch})`;
 
-	if (type !== "mongo") {
+	if (type === "mysql" || type === "mariadb") {
+		cmd += ` && ${rcloneCommand} | ${stripDatabaseSwitchCommand} | ${restoreCommand}`;
+	} else if (type !== "mongo") {
 		cmd += ` && ${rcloneCommand} | ${restoreCommand}`;
 	} else {
 		cmd += ` && ${getMongoSpecificCommand(rcloneCommand, restoreCommand, backupFile || "")}`;

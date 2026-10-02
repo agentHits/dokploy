@@ -1,6 +1,7 @@
 import {
 	assertGitProviderAccess,
 	assertGitProviderManagementAccess,
+	canViewGitProviderSecrets,
 	createGitlab,
 	findGitlabById,
 	findGitlabGitProviderId,
@@ -120,6 +121,8 @@ export const gitlabRouter = createTRPCRouter({
 			await assertGitProviderManagementAccess(gitProviderId, ctx.session);
 
 			try {
+				const gitlab = await findGitlabById(input.gitlabId);
+				await assertGitProviderAccess(ctx.session, gitlab.gitProvider);
 				const result = await testGitlabConnection(input);
 
 				return `Found ${result} repositories`;

@@ -1,4 +1,4 @@
-import { readSecret } from "../db/constants";
+import fs from "node:fs";
 
 const DEVELOPMENT_AUTH_SECRET =
 	"dokploy-development-auth-secret-change-me-0000000000";
@@ -6,6 +6,14 @@ const BUILD_AUTH_SECRET = "dokploy-build-auth-secret-build-only-0000000000";
 const TEST_AUTH_SECRET = "dokploy-test-auth-secret-00000000000000000000";
 
 const { BETTER_AUTH_SECRET, BETTER_AUTH_SECRET_FILE } = process.env;
+
+function readAuthSecret(path: string): string {
+	try {
+		return fs.readFileSync(path, "utf8").trim();
+	} catch {
+		throw new Error(`Cannot read secret at ${path}`);
+	}
+}
 
 function isProductionBuild() {
 	return (
@@ -20,7 +28,7 @@ function resolveBetterAuthSecret(): string {
 		return BETTER_AUTH_SECRET;
 	}
 	if (BETTER_AUTH_SECRET_FILE) {
-		return readSecret(BETTER_AUTH_SECRET_FILE);
+		return readAuthSecret(BETTER_AUTH_SECRET_FILE);
 	}
 
 	if (process.env.NODE_ENV === "test") {

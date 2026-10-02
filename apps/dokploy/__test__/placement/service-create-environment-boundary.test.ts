@@ -524,36 +524,32 @@ describe("service create target environment access boundary", () => {
 		});
 	});
 
-	it.each(
-		createCases(),
-	)("denies $label before persistence when the caller lacks target environment access", async ({
-		call,
-		persistMock,
-	}) => {
-		await expect(call()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+	it.each(createCases())(
+		"denies $label before persistence when the caller lacks target environment access",
+		async ({ call, persistMock }) => {
+			await expect(call()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
-		expect(persistMock).not.toHaveBeenCalled();
-		expect(permissionMocks.addNewService).not.toHaveBeenCalled();
-	});
+			expect(persistMock).not.toHaveBeenCalled();
+			expect(permissionMocks.addNewService).not.toHaveBeenCalled();
+		},
+	);
 
-	it.each(
-		createCases(),
-	)("keeps $label available when the caller has target environment access", async ({
-		call,
-		persistMock,
-	}) => {
-		permissionMocks.findMemberByUserId.mockResolvedValue({
-			role: "member",
-			accessedProjects: ["project-1"],
-			accessedEnvironments: ["env-target"],
-			accessedServices: [],
-		});
+	it.each(createCases())(
+		"keeps $label available when the caller has target environment access",
+		async ({ call, persistMock }) => {
+			permissionMocks.findMemberByUserId.mockResolvedValue({
+				role: "member",
+				accessedProjects: ["project-1"],
+				accessedEnvironments: ["env-target"],
+				accessedServices: [],
+			});
 
-		await expect(call()).resolves.toEqual(expect.any(Object));
+			await expect(call()).resolves.toEqual(expect.any(Object));
 
-		expect(persistMock).toHaveBeenCalled();
-		expect(permissionMocks.addNewService).toHaveBeenCalled();
-	});
+			expect(persistMock).toHaveBeenCalled();
+			expect(permissionMocks.addNewService).toHaveBeenCalled();
+		},
+	);
 
 	it("denies compose template import side effects without domain or volume create permission", async () => {
 		permissionMocks.checkServicePermissionAndAccess.mockImplementation(
