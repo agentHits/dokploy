@@ -75,8 +75,10 @@ const createCaller = () =>
 	} as never);
 
 const dangerousPassword = "pa'$(touch /tmp/registry-pwn); echo";
+// Usernames keep their case (ECR requires exactly "AWS"); the boundary
+// under test is shell-escaping, not case normalization.
 const dangerousUsername = "User;$(id)";
-const normalizedDangerousUsername = "user;$(id)";
+const normalizedDangerousUsername = dangerousUsername;
 
 describe("registry router remote test login boundary", () => {
 	beforeEach(() => {
