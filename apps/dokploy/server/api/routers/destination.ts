@@ -21,7 +21,6 @@ import {
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { desc, eq } from "drizzle-orm";
-import { quote } from "shell-quote";
 import { createTRPCRouter, withPermission } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import {

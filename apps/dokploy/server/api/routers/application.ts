@@ -62,7 +62,6 @@ import {
 	protectedProcedure,
 	withPermission,
 } from "@/server/api/trpc";
-import { buildApplicationEnvUpsertDeploymentJob } from "@/server/api/utils/application-env-upsert";
 import { audit } from "@/server/api/utils/audit";
 import { assertDeploySourceCredentialAccess } from "@/server/api/utils/deploy-source-access";
 import { assertContainerMetricsServiceAccess } from "@/server/api/utils/monitoring-access";

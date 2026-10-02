@@ -20,7 +20,7 @@ type Project = {
 function selectAccessibleEnvironment(
 	project: Project | null | undefined,
 ): Environment | null {
-	if (!project || !project.environments || project.environments.length === 0) {
+	if (!project?.environments || project.environments.length === 0) {
 		return null;
 	}
 

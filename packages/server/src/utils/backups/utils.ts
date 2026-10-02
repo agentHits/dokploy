@@ -437,7 +437,7 @@ export const generateBackupCommand = (backup: BackupSchedule) => {
 export const getBackupCommand = (
 	backup: BackupSchedule,
 	rcloneCommand: string,
-	rcloneDeleteCommand: string,
+	_rcloneDeleteCommand: string,
 	logPath: string,
 ) => {
 	if (!isBackupScheduleTargetBound(backup)) {

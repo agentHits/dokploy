@@ -1,7 +1,6 @@
 import {
 	assertGitProviderAccess,
 	assertGitProviderManagementAccess,
-	canViewGitProviderSecrets,
 	createBitbucket,
 	findBitbucketById,
 	findBitbucketGitProviderId,

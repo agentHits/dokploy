@@ -372,7 +372,7 @@ export const StepTwo = ({ templateInfo, setTemplateInfo }: StepProps) => {
 																	handleDomainChange(
 																		index,
 																		"port",
-																		Number.parseInt(e.target.value),
+																		Number.parseInt(e.target.value, 10),
 																	)
 																}
 																placeholder="Port"
