@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
 	execAsync: vi.fn(),
 	execAsyncRemote: vi.fn(),
+	writeFileRemote: vi.fn(),
 	paths: vi.fn(),
 }));
 
@@ -13,6 +14,7 @@ vi.mock("@dokploy/server/constants", () => ({
 vi.mock("@dokploy/server/utils/process/execAsync", () => ({
 	execAsync: mocks.execAsync,
 	execAsyncRemote: mocks.execAsyncRemote,
+	writeFileRemote: mocks.writeFileRemote,
 }));
 
 const { readConfigInPath, writeTraefikConfigInPath, writeTraefikConfigRemote } =
@@ -81,10 +83,16 @@ describe("Traefik file path boundary", () => {
 
 		await writeTraefikConfigInPath(remotePath, "http: {}", "server-1");
 
-		const writeCommand = mocks.execAsyncRemote.mock.calls.at(-1)?.[1];
-		expect(writeCommand).toContain(
-			`base64 -d > "/etc/dokploy/traefik/dynamic/app'\\$(id).yml"`,
+		// Remote writes go over SFTP (no shell), so the payload must arrive
+		// intact and no shell command may carry raw file text.
+		expect(mocks.writeFileRemote).toHaveBeenLastCalledWith(
+			"server-1",
+			"/etc/dokploy/traefik/dynamic/app'$(id).yml",
+			"http: {}",
 		);
+		for (const [, command] of mocks.execAsyncRemote.mock.calls) {
+			expect(command).not.toContain("http: {}");
+		}
 	});
 
 	it("writes remote Traefik YAML as encoded data instead of raw shell text", async () => {
@@ -106,20 +114,19 @@ describe("Traefik file path boundary", () => {
 			"server-1",
 		);
 
-		const writeCommand = mocks.execAsyncRemote.mock.calls.at(-1)?.[1] as string;
-		expect(writeCommand).toMatch(
-			/^echo "[A-Za-z0-9+/=]+" \| base64 -d > \/etc\/dokploy\/traefik\/dynamic\/middlewares\.yml$/,
+		const [serverId, remotePath, payload] =
+			mocks.writeFileRemote.mock.calls.at(-1) ?? [];
+		expect(serverId).toBe("server-1");
+		expect(remotePath).toBe(
+			"/etc/dokploy/traefik/dynamic/middlewares.yml",
 		);
-		expect(writeCommand).not.toContain("echo '");
-		expect(writeCommand).not.toContain("touch /tmp/pwn");
-		expect(writeCommand).not.toContain("$(id)");
-
-		const encodedPayload = writeCommand.match(/^echo "([^"]+)"/)?.[1] ?? "";
-		const decodedPayload = Buffer.from(encodedPayload, "base64").toString(
-			"utf8",
-		);
-		expect(decodedPayload).toContain("touch /tmp/pwn");
-		expect(decodedPayload).toContain("$(id)");
+		// SFTP carries YAML as data, never as shell text.
+		expect(payload).toContain("touch /tmp/pwn");
+		expect(payload).toContain("$(id)");
+		for (const [, command] of mocks.execAsyncRemote.mock.calls) {
+			expect(command).not.toContain("touch /tmp/pwn");
+			expect(command).not.toContain("redirect-app-1");
+		}
 	});
 
 	it("quotes remote Traefik YAML destination paths before shell execution", async () => {
@@ -129,12 +136,15 @@ describe("Traefik file path boundary", () => {
 			"server-1",
 		);
 
-		const writeCommand = mocks.execAsyncRemote.mock.calls.at(-1)?.[1] as string;
-		expect(writeCommand).toContain(
-			`base64 -d > "/etc/dokploy/traefik/dynamic/middlewares'\\$(id).yml"`,
+		const [serverId, remotePath] = mocks.writeFileRemote.mock.calls.at(-1) ?? [];
+		expect(serverId).toBe("server-1");
+		// SFTP takes the resolved path as data: no shell quoting layers,
+		// but also no unquoted shell redirection.
+		expect(remotePath).toBe(
+			"/etc/dokploy/traefik/dynamic/middlewares'$(id).yml",
 		);
-		expect(writeCommand).not.toContain(
-			"> /etc/dokploy/traefik/dynamic/middlewares'$(id).yml",
-		);
+		for (const [, command] of mocks.execAsyncRemote.mock.calls) {
+			expect(command).not.toContain("middlewares'$(id).yml");
+		}
 	});
 });

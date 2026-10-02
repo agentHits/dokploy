@@ -1,4 +1,4 @@
-import { parse } from "shell-quote";
+import { parse, quote } from "shell-quote";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dangerousDestination = {
@@ -135,11 +135,31 @@ const expectS3CredentialsAsEnvironment = (command: string, args: string[]) => {
 };
 
 const extractUploadRcloneCommand = (backupCommand: string) => {
-	const match = backupCommand.match(
-		/\|\s+((?:RCLONE_CONFIG_[\s\S]*?)?rclone rcat .*?)(?:\s*;|\s+2>&1)/,
+	// Parse with shell-quote so quoted ';' inside the rclone target does not
+	// truncate the extraction.
+	const parts = parseShellArgs(backupCommand);
+	const rcatIndex = parts.indexOf("rcat");
+	expect(rcatIndex).toBeGreaterThan(-1);
+	const envStart = parts.findIndex((part) =>
+		part.startsWith("RCLONE_CONFIG_"),
 	);
-	expect(match?.[1]).toBeDefined();
-	return match?.[1] || "";
+	expect(envStart).toBeGreaterThan(-1);
+	expect(envStart).toBeLessThan(rcatIndex);
+	const targetIndex = parts.findIndex(
+		(part, index) => index > rcatIndex && part.startsWith("dokploys3:"),
+	);
+	expect(targetIndex).toBeGreaterThan(rcatIndex);
+	const requote = (part: string) => {
+		const eq = part.indexOf("=");
+		if (eq > 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(part.slice(0, eq))) {
+			return `${part.slice(0, eq)}=${quote([part.slice(eq + 1)])}`;
+		}
+		return quote([part]);
+	};
+	return parts
+		.slice(envStart, targetIndex + 1)
+		.map(requote)
+		.join(" ");
 };
 
 describe("destination rclone command boundary", () => {

@@ -8,15 +8,20 @@ vi.mock("@dokploy/server/services/permission", () => {
 	};
 });
 
-vi.mock("@dokploy/server/index", () => ({
-	IS_CLOUD: true,
-	hasValidLicense: vi.fn(async () => false),
-	updateApplication: mockUpdateApplication,
-	findApplicationById: vi.fn(async () => ({
-		applicationId: "app-1",
-		appName: "example-app",
-	})),
-}));
+vi.mock("@dokploy/server/index", async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import("@dokploy/server/index")>();
+	return {
+		...actual,
+		IS_CLOUD: true,
+		hasValidLicense: vi.fn(async () => false),
+		updateApplication: mockUpdateApplication,
+		findApplicationById: vi.fn(async () => ({
+			applicationId: "app-1",
+			appName: "example-app",
+		})),
+	};
+});
 
 vi.mock("@dokploy/server/lib/auth", () => ({
 	validateRequest: vi.fn(),
@@ -24,6 +29,12 @@ vi.mock("@dokploy/server/lib/auth", () => ({
 
 vi.mock("@/server/api/utils/audit", () => ({
 	audit: vi.fn(async () => undefined),
+}));
+
+// Access guards are covered by deploy-source-credential-access.test.ts;
+// here they would require a full provider database.
+vi.mock("@/server/api/utils/deploy-source-access", () => ({
+	assertDeploySourceCredentialAccess: vi.fn(async () => undefined),
 }));
 
 const { applicationRouter } = await import("@/server/api/routers/application");

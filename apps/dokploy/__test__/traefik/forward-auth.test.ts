@@ -153,9 +153,9 @@ describe("buildForwardAuthEnv", () => {
 		);
 	});
 
-	test("allows unverified emails so OIDC providers don't 500 the callback", () => {
+	test("does not allow unverified OIDC emails (hardened default)", () => {
 		const env = buildForwardAuthEnv(baseOptions);
-		expect(env).toContain(
+		expect(env).not.toContain(
 			"OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL=true",
 		);
 	});

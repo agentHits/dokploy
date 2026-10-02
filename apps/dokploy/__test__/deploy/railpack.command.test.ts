@@ -23,7 +23,7 @@ const createApplication = (
 	}) as unknown as ApplicationNested;
 
 const getSecretsHash = (command: string) => {
-	const match = command.match(/secrets-hash=([a-f0-9]{64})/);
+	const match = command.match(/secrets-hash\\?=([a-f0-9]{64})/);
 	if (!match?.[1]) {
 		throw new Error("secrets-hash build arg was not found");
 	}
@@ -35,8 +35,8 @@ describe("getRailpackCommand", () => {
 	it("includes secrets-hash without clean cache", () => {
 		const command = getRailpackCommand(createApplication());
 
-		expect(command).toContain("--build-arg secrets-hash=");
-		expect(command).not.toContain("cache-key=");
+		expect(command).toMatch(/--build-arg secrets-hash\\?=[a-f0-9]{64}/);
+		expect(command).not.toMatch(/cache-key\\?=/);
 	});
 
 	it("includes cache-key only when clean cache is enabled", () => {
@@ -46,17 +46,15 @@ describe("getRailpackCommand", () => {
 			}),
 		);
 
-		expect(command).toContain("--build-arg secrets-hash=");
-		expect(command).toContain("--build-arg cache-key=");
+		expect(command).toMatch(/--build-arg secrets-hash\\?=[a-f0-9]{64}/);
+		expect(command).toMatch(/--build-arg cache-key\\?=/);
 	});
 
-	it("installs Railpack through sudo for non-root users", () => {
+	it("does not fetch a remote Railpack installer during build command generation", () => {
 		const command = getRailpackCommand(createApplication());
 
-		expect(command).toContain(
-			'$SUDO_CMD bash -c "$(curl -fsSL https://railpack.com/install.sh)"',
-		);
-		expect(command).toContain("sudo -n true 2>/dev/null");
+		expect(command).not.toContain("railpack.com/install.sh");
+		expect(command).toContain("Railpack is not installed");
 	});
 
 	it("changes secrets-hash when an environment value changes", () => {

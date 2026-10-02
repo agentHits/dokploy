@@ -97,15 +97,6 @@ fi
 # Ensure we have a builder with containerd (isolated per build)
 ${quoteShellArgs(["docker", "buildx", "create", "--name", builderName, "--driver", "docker-container"])} || true
 export RAILPACK_VERSION=${application.railpackVersion}
-# use sudo for non-root so the install can write to /usr/local/bin
-if [ "$(id -u)" -eq 0 ]; then
-	SUDO_CMD=""
-elif sudo -n true 2>/dev/null; then
-	SUDO_CMD="sudo"
-else
-	SUDO_CMD=""
-fi
-$SUDO_CMD bash -c "$(curl -fsSL https://railpack.com/install.sh)"
 
 echo "Preparing Railpack build plan..." ;
 ${quoteShellArgs(["railpack", ...prepareArgs])} || {
