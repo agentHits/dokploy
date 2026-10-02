@@ -838,7 +838,8 @@ describe("deploy source credential access", () => {
 			}),
 		).resolves.toEqual({ composeId: "compose-1" });
 
-		expect(serverMocks.findComposeById).not.toHaveBeenCalled();
+		// The compose read is expected: secret placeholder preservation needs
+		// the current values. The point is the provider edit guard stays out.
 		expect(serverMocks.canEditDeployGitSource).not.toHaveBeenCalled();
 		expect(serverMocks.updateCompose).toHaveBeenCalled();
 	});

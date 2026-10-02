@@ -73,13 +73,17 @@ describe("schedule command boundary", () => {
 
 	it("quotes remote application docker exec command and log paths", async () => {
 		mocks.findScheduleById.mockResolvedValue({
+			appName: "schedule-one",
 			application: { appName: "app-one", serverId: "server-1" },
 			command: "echo 'done'; touch /tmp/pwn $(id)",
 			shellType: "bash",
 			scheduleType: "application",
 		});
 
-		await expect(runCommand("schedule-1")).resolves.toBeUndefined();
+		await expect(runCommand("schedule-1")).resolves.toMatchObject({
+			deploymentId: "deployment-1",
+			status: "done",
+		});
 
 		const command = mocks.execAsyncRemote.mock.calls[0]?.[1] as string;
 		expect(command).toContain(
@@ -100,10 +104,13 @@ describe("schedule command boundary", () => {
 			command: "",
 			serverId: "server-1",
 			shellType: "bash",
-			scheduleType: "server",
+		scheduleType: "server",
 		});
 
-		await expect(runCommand("schedule-1")).resolves.toBeUndefined();
+		await expect(runCommand("schedule-1")).resolves.toMatchObject({
+			deploymentId: "deployment-1",
+			status: "done",
+		});
 
 		const command = mocks.execAsyncRemote.mock.calls[0]?.[1] as string;
 		expect(command).toContain(
@@ -118,12 +125,14 @@ describe("schedule command boundary", () => {
 			command: "",
 			serverId: "server-1",
 			shellType: "bash",
-			scheduleType: "server",
+		scheduleType: "server",
 		});
 
-		await expect(runCommand("schedule-1")).rejects.toThrow(
-			"Invalid schedule app name",
-		);
+		// Unsafe stored names fail closed: error status and no remote execution.
+		await expect(runCommand("schedule-1")).resolves.toMatchObject({
+			deploymentId: "deployment-1",
+			status: "error",
+		});
 
 		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
 	});
