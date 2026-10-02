@@ -140,9 +140,7 @@ const extractUploadRcloneCommand = (backupCommand: string) => {
 	const parts = parseShellArgs(backupCommand);
 	const rcatIndex = parts.indexOf("rcat");
 	expect(rcatIndex).toBeGreaterThan(-1);
-	const envStart = parts.findIndex((part) =>
-		part.startsWith("RCLONE_CONFIG_"),
-	);
+	const envStart = parts.findIndex((part) => part.startsWith("RCLONE_CONFIG_"));
 	expect(envStart).toBeGreaterThan(-1);
 	expect(envStart).toBeLessThan(rcatIndex);
 	const targetIndex = parts.findIndex(

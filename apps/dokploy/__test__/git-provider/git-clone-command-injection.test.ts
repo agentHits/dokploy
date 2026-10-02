@@ -72,8 +72,8 @@ describe("cloneGitRepository command (customGitUrl path)", () => {
 			"https://github.com/o/r.git$(touch /tmp/pwned)",
 			"main",
 		);
-	expect(markerLeaksAsShellSyntax(command, "touch")).toBe(false);
-	expect(command).toMatch(/git .*clone/);
+		expect(markerLeaksAsShellSyntax(command, "touch")).toBe(false);
+		expect(command).toMatch(/git .*clone/);
 	});
 
 	it("does not let a malicious customGitBranch inject shell operators", async () => {

@@ -18,7 +18,9 @@ vi.mock("@dokploy/server/utils/providers/oauth-state", () => ({
 	canManageGitProviderOAuth: mockCanManage,
 	GITHUB_APP_INIT_STATE_PROVIDER_ID: "gh_init",
 	getGithubIdFromAppSetupStateProviderId: (providerId: string) =>
-		providerId.startsWith("gh_setup:") ? providerId.slice("gh_setup:".length) : null,
+		providerId.startsWith("gh_setup:")
+			? providerId.slice("gh_setup:".length)
+			: null,
 	verifyGitProviderOAuthState: mockVerifyState,
 }));
 vi.mock("@dokploy/server", () => ({
@@ -61,7 +63,9 @@ const buildRes = () => {
 
 const call = async (query: Record<string, unknown>) => {
 	const res = buildRes();
-	const req = { query, headers: {} } as unknown as Parameters<typeof handler>[0];
+	const req = { query, headers: {} } as unknown as Parameters<
+		typeof handler
+	>[0];
 	await handler(req, res as unknown as Parameters<typeof handler>[1]);
 	return res;
 };

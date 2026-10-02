@@ -8,8 +8,8 @@ const mocks = vi.hoisted(() => ({
 	removeRepeatableByKey: vi.fn(),
 }));
 
-	// apps/dokploy has no bullmq of its own; mock the schedules copy by path
-	// so the mock intercepts apps/schedules sources under test.
+// apps/dokploy has no bullmq of its own; mock the schedules copy by path
+// so the mock intercepts apps/schedules sources under test.
 vi.mock("../../../schedules/node_modules/bullmq", () => ({
 	Queue: vi.fn(function Queue() {
 		return {

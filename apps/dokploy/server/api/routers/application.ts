@@ -937,11 +937,11 @@ export const applicationRouter = createTRPCRouter({
 				input.applicationId,
 				preserveSecretPlaceholderFields(
 					{
-					dockerImage: input.dockerImage,
-					username: input.username,
-					password: input.password,
-					sourceType: "docker" as const,
-					registryUrl: input.registryUrl,
+						dockerImage: input.dockerImage,
+						username: input.username,
+						password: input.password,
+						sourceType: "docker" as const,
+						registryUrl: input.registryUrl,
 					},
 					currentApplication,
 					["password"],

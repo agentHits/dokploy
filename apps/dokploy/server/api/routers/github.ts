@@ -1,6 +1,5 @@
 import {
 	assertGitProviderAccess,
-	canViewGitProviderSecrets,
 	findGithubById,
 	findGithubGitProviderId,
 	getAccessibleGitProviderIds,
@@ -72,7 +71,10 @@ const requireGithubBaseUrl = (githubUrl: string) => {
 };
 
 const apiGithubAppSetupState = z.discriminatedUnion("action", [
-	z.object({ action: z.literal("init"), githubUrl: z.string().trim().max(200).optional() }),
+	z.object({
+		action: z.literal("init"),
+		githubUrl: z.string().trim().max(200).optional(),
+	}),
 	z.object({ action: z.literal("setup"), githubId: z.string().min(1) }),
 ]);
 const GITHUB_APP_SETUP_STATE_TTL_MS = 60 * 60 * 1000;

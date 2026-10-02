@@ -9,8 +9,7 @@ vi.mock("@dokploy/server/services/permission", () => {
 });
 
 vi.mock("@dokploy/server/index", async (importOriginal) => {
-	const actual =
-		await importOriginal<typeof import("@dokploy/server/index")>();
+	const actual = await importOriginal<typeof import("@dokploy/server/index")>();
 	return {
 		...actual,
 		IS_CLOUD: true,

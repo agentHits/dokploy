@@ -104,7 +104,7 @@ describe("schedule command boundary", () => {
 			command: "",
 			serverId: "server-1",
 			shellType: "bash",
-		scheduleType: "server",
+			scheduleType: "server",
 		});
 
 		await expect(runCommand("schedule-1")).resolves.toMatchObject({
@@ -125,7 +125,7 @@ describe("schedule command boundary", () => {
 			command: "",
 			serverId: "server-1",
 			shellType: "bash",
-		scheduleType: "server",
+			scheduleType: "server",
 		});
 
 		// Unsafe stored names fail closed: error status and no remote execution.
