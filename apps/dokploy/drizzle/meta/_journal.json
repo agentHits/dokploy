@@ -1387,6 +1387,13 @@
       "when": 1790948904000,
       "tag": "0197_sso_domain_verified_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 198,
+      "version": "7",
+      "when": 1790969854332,
+      "tag": "0198_add_gitlab_webhook_secret",
+      "breakpoints": true
     }
   ]
 }
