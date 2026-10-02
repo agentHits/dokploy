@@ -84,6 +84,7 @@
 		"@uiw/react-codemirror": "^4.23.12",
 		"@xterm/addon-attach": "0.10.0",
 		"@xterm/addon-clipboard": "0.1.0",
+		"@xterm/addon-fit": "0.10.0",
 		"@xterm/xterm": "^5.5.0",
 		"adm-zip": "^0.5.16",
 		"ai": "^6.0.86",

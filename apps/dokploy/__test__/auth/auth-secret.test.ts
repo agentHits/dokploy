@@ -14,6 +14,7 @@ describe("betterAuthSecret", () => {
 		vi.unstubAllEnvs();
 		vi.stubEnv("BETTER_AUTH_SECRET", "");
 		vi.stubEnv("BETTER_AUTH_SECRET_FILE", "");
+		vi.stubEnv("POSTGRES_PASSWORD", "test-postgres-password-000000000000");
 	});
 
 	afterEach(() => {

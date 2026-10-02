@@ -100,6 +100,7 @@ export * from "./utils/builders/utils";
 export * from "./utils/cluster/upload";
 export * from "./utils/crons/enterprise";
 export * from "./utils/databases/rebuild";
+export * from "./utils/deployments/signed-job";
 export * from "./utils/docker/collision";
 export * from "./utils/docker/compose";
 export * from "./utils/docker/compose/configs";

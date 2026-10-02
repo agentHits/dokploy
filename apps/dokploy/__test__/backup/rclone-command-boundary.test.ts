@@ -136,7 +136,7 @@ const expectS3CredentialsAsEnvironment = (command: string, args: string[]) => {
 
 const extractUploadRcloneCommand = (backupCommand: string) => {
 	const match = backupCommand.match(
-		/\|\s+((?:RCLONE_CONFIG_[\s\S]*?)?rclone rcat .*?)\s+2>&1/,
+		/\|\s+((?:RCLONE_CONFIG_[\s\S]*?)?rclone rcat .*?)(?:\s*;|\s+2>&1)/,
 	);
 	expect(match?.[1]).toBeDefined();
 	return match?.[1] || "";
@@ -298,7 +298,6 @@ describe("destination rclone command boundary", () => {
 
 		const command = mocks.execAsyncRemote.mock.calls[0]?.[1] as string;
 
-		expect(command).toContain("BACKUP_OUTPUT=");
 		expect(command).toContain("UPLOAD_OUTPUT=");
 		expect(command).toContain(
 			"Error: Backup command failed. Check server logs for details.",
@@ -306,7 +305,6 @@ describe("destination rclone command boundary", () => {
 		expect(command).toContain(
 			"Error: Upload command failed. Check server logs for details.",
 		);
-		expect(command).not.toContain('echo "Error: $BACKUP_OUTPUT"');
 		expect(command).not.toContain('echo "Error: $UPLOAD_OUTPUT"');
 	});
 

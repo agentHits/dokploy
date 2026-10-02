@@ -3,10 +3,13 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { paths } from "@dokploy/server/constants";
 import type { Domain } from "@dokploy/server/services/domain";
-import { quote } from "shell-quote";
 import { parse, stringify } from "yaml";
 import { quoteShellArg } from "../filesystem/safe-path";
-import { execAsync, execAsyncRemote } from "../process/execAsync";
+import {
+	execAsync,
+	execAsyncRemote,
+	writeFileRemote,
+} from "../process/execAsync";
 import type { FileConfig, HttpLoadBalancerService } from "./file-types";
 
 export const createTraefikConfig = (appName: string) => {
@@ -77,7 +80,7 @@ export const removeTraefikConfigRemote = async (
 	try {
 		const { DYNAMIC_TRAEFIK_PATH } = paths(true);
 		const configPath = path.join(DYNAMIC_TRAEFIK_PATH, `${appName}.yml`);
-		await execAsyncRemote(serverId, `rm -f ${quote([configPath])}`);
+		await execAsyncRemote(serverId, `rm -f ${quoteShellArg(configPath)}`);
 	} catch (error) {
 		console.error(
 			`Error removing remote traefik config for ${appName}:`,

@@ -5,7 +5,7 @@ import {
 	assertSignedDeploymentCancelJob,
 	assertSignedDeploymentJobsReadRequest,
 	assertSignedDeploymentQueueJob,
-} from "@dokploy/server/utils/deployments/signed-job";
+} from "@dokploy/server";
 import { zValidator } from "@hono/zod-validator";
 import { Inngest } from "inngest";
 import { serve as serveInngest } from "inngest/hono";

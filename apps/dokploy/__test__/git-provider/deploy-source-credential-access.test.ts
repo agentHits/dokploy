@@ -550,39 +550,42 @@ describe("deploy source credential access", () => {
 		["runtime registry", "registryId"],
 		["build registry", "buildRegistryId"],
 		["rollback registry", "rollbackRegistryId"],
-	] as const)("rejects another organization's %s before application persistence", async (_label, field) => {
-		serverMocks.findRegistryById.mockResolvedValueOnce({
-			registryId: "registry-org-2",
-			organizationId: "org-2",
-		});
-
-		try {
-			await expect(
-				applicationRouter.createCaller(createContext()).update({
-					applicationId: "app-1",
-					[field]: "registry-org-2",
-				}),
-			).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-			expect(permissionMocks.checkPermission).toHaveBeenCalledWith(
-				expect.objectContaining({
-					session: expect.objectContaining({
-						activeOrganizationId: "org-1",
-					}),
-				}),
-				{ registry: ["read"] },
-			);
-			expect(serverMocks.findRegistryById).toHaveBeenCalledWith(
-				"registry-org-2",
-			);
-			expect(serverMocks.updateApplication).not.toHaveBeenCalled();
-		} finally {
-			serverMocks.findRegistryById.mockReset();
-			serverMocks.findRegistryById.mockResolvedValue({
-				registryId: "registry-1",
-				organizationId: "org-1",
+	] as const)(
+		"rejects another organization's %s before application persistence",
+		async (_label, field) => {
+			serverMocks.findRegistryById.mockResolvedValueOnce({
+				registryId: "registry-org-2",
+				organizationId: "org-2",
 			});
-		}
-	});
+
+			try {
+				await expect(
+					applicationRouter.createCaller(createContext()).update({
+						applicationId: "app-1",
+						[field]: "registry-org-2",
+					}),
+				).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+				expect(permissionMocks.checkPermission).toHaveBeenCalledWith(
+					expect.objectContaining({
+						session: expect.objectContaining({
+							activeOrganizationId: "org-1",
+						}),
+					}),
+					{ registry: ["read"] },
+				);
+				expect(serverMocks.findRegistryById).toHaveBeenCalledWith(
+					"registry-org-2",
+				);
+				expect(serverMocks.updateApplication).not.toHaveBeenCalled();
+			} finally {
+				serverMocks.findRegistryById.mockReset();
+				serverMocks.findRegistryById.mockResolvedValue({
+					registryId: "registry-1",
+					organizationId: "org-1",
+				});
+			}
+		},
+	);
 
 	it("rejects registry binding when registry read permission is missing", async () => {
 		permissionMocks.checkPermission.mockRejectedValueOnce(

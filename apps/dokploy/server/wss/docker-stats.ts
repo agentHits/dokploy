@@ -11,8 +11,8 @@ import {
 import { quote } from "shell-quote";
 import { WebSocketServer } from "ws";
 import { assertContainerMetricsServiceAccess } from "@/server/api/utils/monitoring-access";
-import { canAccessMonitoringWebSocket } from "./server-permission";
 import { canAccessDockerOverWss } from "./authorize";
+import { canAccessMonitoringWebSocket } from "./server-permission";
 
 type AppType = "application" | "stack" | "docker-compose";
 
@@ -107,7 +107,7 @@ export const setupDockerStatsMonitoringSocketServer = (
 			return;
 		}
 
-		if (!user || !session) {
+		if (!user || !session || !session.activeOrganizationId) {
 			ws.close();
 			return;
 		}

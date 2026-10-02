@@ -189,7 +189,7 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 								)}
 							</span>
 						}
-							placeholder={["NODE_ENV=production", "PORT=3000"].join("\n")}
+						placeholder={["NODE_ENV=production", "PORT=3000"].join("\n")}
 						completionSource={completionSource}
 						projectId={data?.environment?.projectId}
 						environmentId={data?.environment?.environmentId}

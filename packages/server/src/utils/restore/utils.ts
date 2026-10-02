@@ -20,8 +20,9 @@ export const getPostgresRestoreCommand = (
 	database: string,
 	databaseUser: string,
 ) => {
+	const safeDatabase = normalizeRestoreDatabaseName(database);
 	return getDockerExecShellCommand(
-		`pg_restore -U ${quoteRestoreShellArg(databaseUser)} -d ${quoteRestoreShellArg(database)} -O --clean --if-exists`,
+		`pg_restore -U ${quoteRestoreShellArg(databaseUser)} -d ${quoteRestoreShellArg(safeDatabase)} -O --clean --if-exists`,
 	);
 };
 
@@ -30,8 +31,9 @@ export const getMariadbRestoreCommand = (
 	databaseUser: string,
 	databasePassword: string,
 ) => {
+	const safeDatabase = normalizeRestoreDatabaseName(database);
 	return getDockerExecShellCommand(
-		`mariadb -u ${quoteRestoreShellArg(databaseUser)} -p${quoteRestoreShellArg(databasePassword)} ${quoteRestoreShellArg(database)}`,
+		`mariadb -u ${quoteRestoreShellArg(databaseUser)} -p${quoteRestoreShellArg(databasePassword)} ${quoteRestoreShellArg(safeDatabase)}`,
 	);
 };
 
@@ -39,8 +41,9 @@ export const getMysqlRestoreCommand = (
 	database: string,
 	databasePassword: string,
 ) => {
+	const safeDatabase = normalizeRestoreDatabaseName(database);
 	return getDockerExecShellCommand(
-		`mysql -u root -p${quoteRestoreShellArg(databasePassword)} ${quoteRestoreShellArg(database)}`,
+		`mysql -u root -p${quoteRestoreShellArg(databasePassword)} ${quoteRestoreShellArg(safeDatabase)}`,
 	);
 };
 
@@ -49,8 +52,9 @@ export const getMongoRestoreCommand = (
 	databaseUser: string,
 	databasePassword: string,
 ) => {
+	const safeDatabase = normalizeRestoreDatabaseName(database);
 	return getDockerExecShellCommand(
-		`mongorestore --username ${quoteRestoreShellArg(databaseUser)} --password ${quoteRestoreShellArg(databasePassword)} --authenticationDatabase admin --db ${quoteRestoreShellArg(database)} --archive --drop`,
+		`mongorestore --username ${quoteRestoreShellArg(databaseUser)} --password ${quoteRestoreShellArg(databasePassword)} --authenticationDatabase admin --db ${quoteRestoreShellArg(safeDatabase)} --archive --drop`,
 	);
 };
 

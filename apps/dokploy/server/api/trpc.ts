@@ -82,13 +82,13 @@ export const createTRPCContext = async (opts: CreateNextContextOptions) => {
 	return createInnerTRPCContext({
 		req,
 		res,
-		session: session
+		session: (session
 			? {
 					...session,
 					activeOrganizationId: session.activeOrganizationId || "",
 				}
-			: null,
-		user: user
+			: null) as CreateContextOptions["session"],
+		user: (user
 			? {
 					...user,
 					email: user.email,
@@ -96,7 +96,7 @@ export const createTRPCContext = async (opts: CreateNextContextOptions) => {
 					id: user.id,
 					ownerId: user.ownerId,
 				}
-			: null,
+			: null) as CreateContextOptions["user"],
 	});
 };
 

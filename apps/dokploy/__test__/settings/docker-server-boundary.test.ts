@@ -394,7 +394,7 @@ describe("settings Docker server boundary", () => {
 		await expect(createCaller().updateServer()).resolves.toBe(true);
 
 		expect(mocks.getAgentHitsUpdateCommand).toHaveBeenCalledWith(
-			"v0.29.8",
+			"v0.30.6",
 			"off_v0.29.8/Fork_159+next",
 			"v0.30.0",
 		);

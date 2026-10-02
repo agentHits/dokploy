@@ -169,6 +169,10 @@ export const scheduleRouter = createTRPCRouter({
 						"server",
 						input.serverId,
 					);
+					const member = await findMemberByUserId(
+						ctx.user.id,
+						ctx.session.activeOrganizationId,
+					);
 					if (member.role !== "owner" && member.role !== "admin") {
 						throw new TRPCError({
 							code: "FORBIDDEN",

@@ -10,8 +10,8 @@ import { publicIpv4, publicIpv6 } from "public-ip";
 import { Client, type ConnectConfig } from "ssh2";
 import { WebSocketServer } from "ws";
 import { getDockerHost } from "../utils/docker";
-import { canAccessServerTerminalWebSocket } from "./server-permission";
 import { canAccessTerminalOverWss } from "./authorize";
+import { canAccessServerTerminalWebSocket } from "./server-permission";
 import {
 	parseResizeMessage,
 	parseTerminalSize,
@@ -98,7 +98,7 @@ export const setupTerminalWebSocketServer = (
 			url.searchParams.get("rows"),
 		);
 		const { user, session } = await validateRequest(req);
-		if (!user || !session || !serverId) {
+		if (!user || !session || !session.activeOrganizationId || !serverId) {
 			ws.close();
 			return;
 		}

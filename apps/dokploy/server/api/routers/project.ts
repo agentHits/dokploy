@@ -39,12 +39,12 @@ import {
 	findMemberByUserId,
 	hasPermission,
 } from "@dokploy/server/services/permission";
+import { serviceColumns } from "@dokploy/server/services/project";
 import {
 	preserveSecretPlaceholderFields,
 	redactProjectNestedSecrets,
 	redactSecretFields,
 } from "@dokploy/server/utils/security/redaction";
-import { serviceColumns } from "@dokploy/server/services/project";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";

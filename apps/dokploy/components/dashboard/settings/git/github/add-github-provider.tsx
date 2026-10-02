@@ -123,7 +123,7 @@ export const AddGithubProvider = () => {
 							</div>
 							<form
 								action={
-								isOrganization
+									isOrganization
 										? `https://github.com/organizations/${organizationName}/settings/apps/new?state=${encodeURIComponent(githubAppSetupState?.state ?? "")}`
 										: `https://github.com/settings/apps/new?state=${encodeURIComponent(githubAppSetupState?.state ?? "")}`
 								}

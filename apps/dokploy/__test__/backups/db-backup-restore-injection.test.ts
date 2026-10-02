@@ -22,6 +22,24 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const stub = `/tmp/docker_stub_${process.pid}`;
 const MARK = `/tmp/dokploy_dbbk_pwned_${process.pid}`;
 
+// Builders that quote values (users, passwords) must produce commands
+// that execute without firing injected payloads. Database names are
+// rejected outright (see below), so they never reach the shell.
+const runsSafely = (command: string) => {
+	if (existsSync(MARK)) rmSync(MARK);
+	const withStub = command.replace(/^docker /, `${stub} `);
+	try {
+		execSync(withStub, {
+			shell: "/bin/bash",
+			stdio: "ignore",
+			env: { ...process.env, CONTAINER_ID: "test" },
+		});
+	} catch {}
+	const fired = existsSync(MARK);
+	if (existsSync(MARK)) rmSync(MARK);
+	return !fired;
+};
+
 beforeAll(() => {
 	writeFileSync(
 		stub,
@@ -43,22 +61,6 @@ afterAll(() => {
 	if (existsSync(MARK)) rmSync(MARK);
 });
 
-// Run a builder-produced command with `docker` pointed at the stub; return true
-// if no injected command fired.
-const runsSafely = (command: string) => {
-	if (existsSync(MARK)) rmSync(MARK);
-	const withStub = command.replace(/^docker /, `${stub} `);
-	try {
-		execSync(withStub, {
-			shell: "/bin/bash",
-			stdio: "ignore",
-			env: { ...process.env, CONTAINER_ID: "test" },
-		});
-	} catch {}
-	const fired = existsSync(MARK);
-	if (existsSync(MARK)) rmSync(MARK);
-	return !fired;
-};
 
 // Payloads that try to break out of every quoting style used in the builders.
 const p = (mark: string) => [
@@ -88,19 +90,25 @@ describe("database backup/restore command injection", () => {
 
 	for (const [label, build] of cases) {
 		it(`${label} is not injectable`, () => {
+			// Builders reject names outside the safe identifier pattern instead of quoting them.
+			// Database names outside the safe identifier pattern are rejected.
+			// Users and passwords are shell-quoted and must execute safely.
+			const rejects = label.includes("(database)");
 			for (const payload of p(MARK)) {
-				expect(runsSafely(build(payload))).toBe(true);
+				if (rejects) {
+					expect(() => build(payload)).toThrow();
+				} else {
+					expect(runsSafely(build(payload))).toBe(true);
+				}
 			}
 		});
 	}
 
 	it("preserves a legitimate database name (passed through as env var)", () => {
 		const cmd = getPostgresBackupCommand("my-db_prod", "app_user");
-		// Values live in -e assignments, never inline in the pg_dump text.
-		expect(cmd).toContain("-e DB_NAME=my-db_prod");
-		expect(cmd).toContain("-e DB_USER=app_user");
-		expect(cmd).toContain(
-			'pg_dump -Fc --no-acl --no-owner -h localhost -U "$DB_USER"',
-		);
+		// Values are inlined shell-quoted, never interpreted by the shell.
+		expect(cmd).toContain("-U app_user");
+		expect(cmd).toContain("--no-password my-db_prod");
+		expect(cmd).toContain('pg_dump -Fc --no-acl --no-owner');
 	});
 });

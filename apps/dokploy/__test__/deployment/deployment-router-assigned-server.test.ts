@@ -317,34 +317,34 @@ describe("deployment router assigned-server boundary", () => {
 		expect(mocks.markDeploymentOperationDispatched).not.toHaveBeenCalled();
 	});
 
-	it.each([
-		"succeeded",
-		"failed",
-	] as const)("sqa-reconcile-01: does not repair a final %s operation", async (status) => {
-		mocks.findComposeDeploymentOperation.mockResolvedValue({
-			operationId: "operation-1",
-			composeId: "compose-1",
-			sourceRevision: "0123456789abcdef0123456789abcdef01234567",
-			resolvedRevision: null,
-			status,
-			deploymentId: null,
-			deployment: null,
-			createdAt: "2026-07-20T00:00:00.000Z",
-			updatedAt: "2026-07-20T00:00:00.000Z",
-		});
+	it.each(["succeeded", "failed"] as const)(
+		"sqa-reconcile-01: does not repair a final %s operation",
+		async (status) => {
+			mocks.findComposeDeploymentOperation.mockResolvedValue({
+				operationId: "operation-1",
+				composeId: "compose-1",
+				sourceRevision: "0123456789abcdef0123456789abcdef01234567",
+				resolvedRevision: null,
+				status,
+				deploymentId: null,
+				deployment: null,
+				createdAt: "2026-07-20T00:00:00.000Z",
+				updatedAt: "2026-07-20T00:00:00.000Z",
+			});
 
-		const result = await createCaller().reconcile({
-			composeId: "compose-1",
-			operationId: "operation-1",
-			repair: true,
-		});
+			const result = await createCaller().reconcile({
+				composeId: "compose-1",
+				operationId: "operation-1",
+				repair: true,
+			});
 
-		expect(result.repairPerformed).toBe(false);
-		expect(result.queue).toEqual({ state: "queue-empty" });
-		expect(mocks.deploy).not.toHaveBeenCalled();
-		expect(mocks.myQueueAdd).not.toHaveBeenCalled();
-		expect(mocks.markDeploymentOperationDispatched).not.toHaveBeenCalled();
-	});
+			expect(result.repairPerformed).toBe(false);
+			expect(result.queue).toEqual({ state: "queue-empty" });
+			expect(mocks.deploy).not.toHaveBeenCalled();
+			expect(mocks.myQueueAdd).not.toHaveBeenCalled();
+			expect(mocks.markDeploymentOperationDispatched).not.toHaveBeenCalled();
+		},
+	);
 
 	it("sqa-reconcile-02: does not repair a running operation", async () => {
 		mocks.findComposeDeploymentOperation.mockResolvedValue({

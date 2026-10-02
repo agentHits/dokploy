@@ -14,7 +14,13 @@ import {
 	assertMemberLimit,
 	assertOrganizationLimit,
 } from "@/server/api/utils/plan-limits";
-import { invitation, member, organization, user } from "@/server/db/schema";
+import {
+	invitation,
+	member,
+	organization,
+	organizationRole,
+	user,
+} from "@/server/db/schema";
 import { createTRPCRouter, protectedProcedure, withPermission } from "../trpc";
 
 const assertAdminRoleAssignmentAllowed = (callerRole: string) => {

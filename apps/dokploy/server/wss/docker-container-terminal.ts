@@ -4,14 +4,13 @@ import { resolveServerDestinationHost } from "@dokploy/server/utils/servers/dest
 import { spawn } from "node-pty";
 import { Client } from "ssh2";
 import { WebSocketServer } from "ws";
-import { canAccessDockerTerminalWebSocket } from "./docker-permission";
-import { isValidContainerId, isValidShell } from "./utils";
 import { canAccessDockerOverWss } from "./authorize";
+import { canAccessDockerTerminalWebSocket } from "./docker-permission";
 import {
-		isValidContainerId,
-		isValidShell,
-		parseResizeMessage,
-		parseTerminalSize,
+	isValidContainerId,
+	isValidShell,
+	parseResizeMessage,
+	parseTerminalSize,
 } from "./utils";
 
 export const setupDockerContainerTerminalWebSocketServer = (
@@ -47,6 +46,11 @@ export const setupDockerContainerTerminalWebSocketServer = (
 			url.searchParams.get("rows"),
 		);
 		const { user, session } = await validateRequest(req);
+
+		if (!user || !session || !session.activeOrganizationId) {
+			ws.close();
+			return;
+		}
 
 		if (!containerId) {
 			ws.close(4000, "containerId not provided");

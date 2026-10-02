@@ -11,19 +11,9 @@ import {
 
 export type BillingPlan = "legacy" | "hobby" | "startup";
 
-export const getCurrentPlanForUser = async (
-	userId: string,
-): Promise<BillingPlan | null> => {
-	if (!IS_CLOUD) return null;
-
-	const owner = await findUserById(userId);
-	if (!owner?.stripeCustomerId) return null;
-
-	const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-		apiVersion: "2026-06-24.dahlia",
 export const getStripeClient = () =>
 	new Stripe(process.env.STRIPE_SECRET_KEY!, {
-		apiVersion: "2026-06-24.dahlia",
+		apiVersion: "2024-09-30.acacia",
 	});
 
 export const planFromPriceIds = (priceIds: string[]): BillingPlan | null => {

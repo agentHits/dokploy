@@ -37,7 +37,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
 	// getMultipartBody doesn't accept maxBodySize, so we cap it here instead.
 	const contentLength = Number(req.headers["content-length"]);
 	const isMultipart = req.headers["content-type"]?.startsWith(
-			"multipart/form-data",
+		"multipart/form-data",
 	);
 
 	if (isMultipart && !Number.isFinite(contentLength)) {
@@ -54,7 +54,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
 		return;
 	}
 
-	// @ts-ignore
+	// @ts-expect-error
 	return createOpenApiNextHandler({
 		router: appRouter,
 		createContext: createTRPCContext,

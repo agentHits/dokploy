@@ -99,21 +99,20 @@ export const runCommand = async (scheduleId: string) => {
 				throw new Error(message);
 			}
 
-
-		if (serverId) {
-			try {
-				const dockerExecCommand = quoteShellArgs([
-					"docker",
-					"exec",
-					containerId,
-					shellType,
-					"-c",
-					command,
-				]);
-				const quotedLogPath = quoteShellArg(deployment.logPath);
-				await execAsyncRemote(
-					serverId,
-					`
+			if (serverId) {
+				try {
+					const dockerExecCommand = quoteShellArgs([
+						"docker",
+						"exec",
+						containerId,
+						shellType,
+						"-c",
+						command,
+					]);
+					const quotedLogPath = quoteShellArg(deployment.logPath);
+					await execAsyncRemote(
+						serverId,
+						`
 					set -e
 					echo ${quoteShellArg(
 						`Running schedule command for ${scheduleType} container ${containerId}`,
@@ -124,11 +123,11 @@ export const runCommand = async (scheduleId: string) => {
 					}
 					echo "✅ Command executed successfully" >> ${quotedLogPath};
 					`,
-				);
-			} catch (error) {
-				await updateDeploymentStatus(deployment.deploymentId, "error");
-				throw error;
-			}
+					);
+				} catch (error) {
+					await updateDeploymentStatus(deployment.deploymentId, "error");
+					throw error;
+				}
 			} else {
 				const writeStream = createWriteStream(deployment.logPath, {
 					flags: "a",
@@ -166,7 +165,7 @@ export const runCommand = async (scheduleId: string) => {
 					writeStream.end();
 					throw error;
 				}
-		}
+			}
 			const writeStream = createWriteStream(deployment.logPath, { flags: "a" });
 			const { SCHEDULES_PATH } = paths();
 			const fullPath = getScheduleDirectory(SCHEDULES_PATH, appName);

@@ -13,6 +13,7 @@ export const getRemoteDocker = async (serverId?: string | null) => {
 		port: server.port,
 		username: server.username,
 		protocol: "ssh",
+		// @ts-expect-error - @types/dockerode 3.3.23 lacks sshOptions, supported at runtime
 		sshOptions: {
 			privateKey: server.sshKey?.privateKey,
 		},

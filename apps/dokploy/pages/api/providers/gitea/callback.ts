@@ -62,10 +62,11 @@ export default async function handler(
 	}
 
 	const { session, user } = await validateRequest(req);
+	const sessionId = session && "id" in session ? session.id : undefined;
 	if (
-		!session?.id ||
-		!session.userId ||
-		!session.activeOrganizationId ||
+		!sessionId ||
+		!session?.userId ||
+		!session?.activeOrganizationId ||
 		!user
 	) {
 		return redirectWithError(res, "Authentication required");
@@ -75,7 +76,7 @@ export default async function handler(
 	try {
 		statePayload = verifyGitProviderOAuthState(state as string, {
 			providerType: "gitea",
-			sessionId: session.id,
+			sessionId,
 			userId: session.userId,
 			organizationId: session.activeOrganizationId,
 		});

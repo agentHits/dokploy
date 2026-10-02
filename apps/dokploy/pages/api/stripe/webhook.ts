@@ -32,11 +32,6 @@ function getSubscriptionServersQuantity(
 	}, 0);
 }
 
-function getInvoiceSubscriptionId(invoice: Stripe.Invoice) {
-	const subscription = invoice.parent?.subscription_details?.subscription;
-	return typeof subscription === "string" ? subscription : subscription?.id;
-}
-
 export const config = {
 	api: {
 		bodyParser: false,
@@ -51,7 +46,7 @@ export default async function handler(
 		return res.status(400).send("Webhook Error: Missing Stripe Secret Key");
 	}
 	const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-		apiVersion: "2026-06-24.dahlia",
+		apiVersion: "2024-09-30.acacia",
 		maxNetworkRetries: 3,
 	});
 

@@ -173,18 +173,18 @@ describe("exact deployment worker claim", () => {
 		expect(mocks.finalizeDeploymentOperation).not.toHaveBeenCalled();
 	});
 
-	it.each([
-		false,
-		undefined,
-	])("p2-worker-03: claim false stops exact cloud execution when server is %s", async (server) => {
-		mocks.claimDeploymentOperation.mockResolvedValue(false);
+	it.each([false, undefined])(
+		"p2-worker-03: claim false stops exact cloud execution when server is %s",
+		async (server) => {
+			mocks.claimDeploymentOperation.mockResolvedValue(false);
 
-		await deployCloudJob({ ...exactJob, server });
+			await deployCloudJob({ ...exactJob, server });
 
-		expect(mocks.deployCompose).not.toHaveBeenCalled();
-		expect(mocks.finalizeDeploymentOperation).not.toHaveBeenCalled();
-		expect(mocks.updateCompose).not.toHaveBeenCalled();
-	});
+			expect(mocks.deployCompose).not.toHaveBeenCalled();
+			expect(mocks.finalizeDeploymentOperation).not.toHaveBeenCalled();
+			expect(mocks.updateCompose).not.toHaveBeenCalled();
+		},
+	);
 
 	it("finalizes and attempts compose cleanup after a claimed local failure", async () => {
 		mocks.claimDeploymentOperation.mockResolvedValue(true);
@@ -271,24 +271,24 @@ describe("exact deployment worker claim", () => {
 		});
 	});
 
-	it.each([
-		false,
-		undefined,
-	])("p2-worker-01 EXACT_CLOUD_EXECUTION_USES_SIGNED_SERVER_ID_NOT_SERVER_HINT: executes when server is %s", async (server) => {
-		mocks.claimDeploymentOperation.mockResolvedValue(true);
-		mocks.deployCompose.mockResolvedValue(undefined);
+	it.each([false, undefined])(
+		"p2-worker-01 EXACT_CLOUD_EXECUTION_USES_SIGNED_SERVER_ID_NOT_SERVER_HINT: executes when server is %s",
+		async (server) => {
+			mocks.claimDeploymentOperation.mockResolvedValue(true);
+			mocks.deployCompose.mockResolvedValue(undefined);
 
-		await deployCloudJob({ ...exactJob, server });
+			await deployCloudJob({ ...exactJob, server });
 
-		expect(mocks.deployCompose).toHaveBeenCalledOnce();
-		expect(mocks.deployCompose).toHaveBeenCalledWith(
-			expect.objectContaining({
-				composeId: "compose-1",
-				operationId: "operation-1",
-				expectedRevision: revision,
-			}),
-		);
-	});
+			expect(mocks.deployCompose).toHaveBeenCalledOnce();
+			expect(mocks.deployCompose).toHaveBeenCalledWith(
+				expect.objectContaining({
+					composeId: "compose-1",
+					operationId: "operation-1",
+					expectedRevision: revision,
+				}),
+			);
+		},
+	);
 
 	it("p2-worker: preserves the server hint for a legacy compose job", async () => {
 		await deployCloudJob({
@@ -394,43 +394,48 @@ describe("compose recovery authorized caller contracts", () => {
 	it.each([
 		"prefix__DOKPLOY_REDACTED_SECRET__suffix",
 		"prefix[REDACTED]suffix",
-	])("sqa-env-02: rejects Compose placeholder %s without side effects", async (value) => {
-		await expect(
-			createCaller().env.upsert({
-				composeId: "compose-1",
-				variables: { API_TOKEN: value },
-			}),
-		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+	])(
+		"sqa-env-02: rejects Compose placeholder %s without side effects",
+		async (value) => {
+			await expect(
+				createCaller().env.upsert({
+					composeId: "compose-1",
+					variables: { API_TOKEN: value },
+				}),
+			).rejects.toMatchObject({ code: "BAD_REQUEST" });
 
-		expect(routerMocks.checkServicePermissionAndAccess).toHaveBeenCalledOnce();
-		expect(mocks.findComposeById).not.toHaveBeenCalled();
-		expect(serviceDbMocks.composeFindFirst).not.toHaveBeenCalled();
-		expect(routerMocks.audit).not.toHaveBeenCalled();
-		expect(routerMocks.myQueueAdd).not.toHaveBeenCalled();
-		expect(routerMocks.deploy).not.toHaveBeenCalled();
-	});
+			expect(
+				routerMocks.checkServicePermissionAndAccess,
+			).toHaveBeenCalledOnce();
+			expect(mocks.findComposeById).not.toHaveBeenCalled();
+			expect(serviceDbMocks.composeFindFirst).not.toHaveBeenCalled();
+			expect(routerMocks.audit).not.toHaveBeenCalled();
+			expect(routerMocks.myQueueAdd).not.toHaveBeenCalled();
+			expect(routerMocks.deploy).not.toHaveBeenCalled();
+		},
+	);
 
-	it.each([
-		"main",
-		"A".repeat(40),
-		"a".repeat(39),
-		"a".repeat(41),
-	])("sqa-deploy-01: rejects invalid exact revision %s before side effects", async (expectedRevision) => {
-		await expect(
-			createCaller().deployExact({
-				composeId: "compose-1",
-				expectedRevision,
-				idempotencyKey: "release-operation-key",
-			}),
-		).rejects.toBeDefined();
+	it.each(["main", "A".repeat(40), "a".repeat(39), "a".repeat(41)])(
+		"sqa-deploy-01: rejects invalid exact revision %s before side effects",
+		async (expectedRevision) => {
+			await expect(
+				createCaller().deployExact({
+					composeId: "compose-1",
+					expectedRevision,
+					idempotencyKey: "release-operation-key",
+				}),
+			).rejects.toBeDefined();
 
-		expect(routerMocks.checkServicePermissionAndAccess).not.toHaveBeenCalled();
-		expect(mocks.createComposeDeploymentOperation).not.toHaveBeenCalled();
-		expect(routerMocks.audit).not.toHaveBeenCalled();
-		expect(routerMocks.myQueueAdd).not.toHaveBeenCalled();
-		expect(routerMocks.deploy).not.toHaveBeenCalled();
-		expect(mocks.markDeploymentOperationDispatched).not.toHaveBeenCalled();
-	});
+			expect(
+				routerMocks.checkServicePermissionAndAccess,
+			).not.toHaveBeenCalled();
+			expect(mocks.createComposeDeploymentOperation).not.toHaveBeenCalled();
+			expect(routerMocks.audit).not.toHaveBeenCalled();
+			expect(routerMocks.myQueueAdd).not.toHaveBeenCalled();
+			expect(routerMocks.deploy).not.toHaveBeenCalled();
+			expect(mocks.markDeploymentOperationDispatched).not.toHaveBeenCalled();
+		},
+	);
 
 	it("sqa-deploy-02: rejects an authorized raw source without dispatch", async () => {
 		serviceDbMocks.composeFindFirst.mockResolvedValue({
@@ -457,85 +462,85 @@ describe("compose recovery authorized caller contracts", () => {
 	it.each([
 		{ cloud: false, serverId: null },
 		{ cloud: true, serverId: "server-1" },
-	])("sqa-deploy-03: dispatches one $cloud runtime job for a concurrent same-key replay", async ({
-		cloud,
-		serverId,
-	}) => {
-		mocks.IS_CLOUD = cloud;
-		serviceDbMocks.composeFindFirst.mockResolvedValue({
-			composeId: "compose-1",
-			sourceType: "git",
-			env: "API_TOKEN=old",
-			serverId,
-		});
-		serviceDbMocks.insertReturning
-			.mockResolvedValueOnce([operation])
-			.mockResolvedValueOnce([]);
-		serviceDbMocks.operationFindFirst.mockResolvedValue(operation);
-		const input = {
-			composeId: "compose-1",
-			expectedRevision: revision,
-			idempotencyKey: "release-operation-key",
-		};
+	])(
+		"sqa-deploy-03: dispatches one $cloud runtime job for a concurrent same-key replay",
+		async ({ cloud, serverId }) => {
+			mocks.IS_CLOUD = cloud;
+			serviceDbMocks.composeFindFirst.mockResolvedValue({
+				composeId: "compose-1",
+				sourceType: "git",
+				env: "API_TOKEN=old",
+				serverId,
+			});
+			serviceDbMocks.insertReturning
+				.mockResolvedValueOnce([operation])
+				.mockResolvedValueOnce([]);
+			serviceDbMocks.operationFindFirst.mockResolvedValue(operation);
+			const input = {
+				composeId: "compose-1",
+				expectedRevision: revision,
+				idempotencyKey: "release-operation-key",
+			};
 
-		const results = await Promise.all([
-			createCaller().deployExact(input),
-			createCaller().deployExact(input),
-		]);
+			const results = await Promise.all([
+				createCaller().deployExact(input),
+				createCaller().deployExact(input),
+			]);
 
-		expect(results.map(({ operationId }) => operationId)).toEqual([
-			"operation-1",
-			"operation-1",
-		]);
-		expect(results.map(({ deduplicated }) => deduplicated).sort()).toEqual([
-			false,
-			true,
-		]);
-		expect(routerMocks.myQueueAdd).toHaveBeenCalledTimes(cloud ? 0 : 1);
-		expect(routerMocks.deploy).toHaveBeenCalledTimes(cloud ? 1 : 0);
-		expect(serviceDbMocks.insert).toHaveBeenCalledTimes(2);
-		expect(serviceDbMocks.operationFindFirst).toHaveBeenCalledOnce();
-		expect(mocks.markDeploymentOperationDispatched).toHaveBeenCalledOnce();
-	});
+			expect(results.map(({ operationId }) => operationId)).toEqual([
+				"operation-1",
+				"operation-1",
+			]);
+			expect(results.map(({ deduplicated }) => deduplicated).sort()).toEqual([
+				false,
+				true,
+			]);
+			expect(routerMocks.myQueueAdd).toHaveBeenCalledTimes(cloud ? 0 : 1);
+			expect(routerMocks.deploy).toHaveBeenCalledTimes(cloud ? 1 : 0);
+			expect(serviceDbMocks.insert).toHaveBeenCalledTimes(2);
+			expect(serviceDbMocks.operationFindFirst).toHaveBeenCalledOnce();
+			expect(mocks.markDeploymentOperationDispatched).toHaveBeenCalledOnce();
+		},
+	);
 
 	it.each([
 		{ cloud: false, serverId: null },
 		{ cloud: true, serverId: "server-1" },
-	])("sqa-deploy-04: does not redispatch a same-key mismatched revision in $cloud runtime", async ({
-		cloud,
-		serverId,
-	}) => {
-		mocks.IS_CLOUD = cloud;
-		serviceDbMocks.composeFindFirst.mockResolvedValue({
-			composeId: "compose-1",
-			sourceType: "git",
-			env: "API_TOKEN=old",
-			serverId,
-		});
-		serviceDbMocks.insertReturning
-			.mockResolvedValueOnce([operation])
-			.mockResolvedValueOnce([]);
-		serviceDbMocks.operationFindFirst.mockResolvedValue(operation);
-		await createCaller().deployExact({
-			composeId: "compose-1",
-			expectedRevision: revision,
-			idempotencyKey: "release-operation-key",
-		});
-
-		await expect(
-			createCaller().deployExact({
+	])(
+		"sqa-deploy-04: does not redispatch a same-key mismatched revision in $cloud runtime",
+		async ({ cloud, serverId }) => {
+			mocks.IS_CLOUD = cloud;
+			serviceDbMocks.composeFindFirst.mockResolvedValue({
 				composeId: "compose-1",
-				expectedRevision: "f".repeat(40),
+				sourceType: "git",
+				env: "API_TOKEN=old",
+				serverId,
+			});
+			serviceDbMocks.insertReturning
+				.mockResolvedValueOnce([operation])
+				.mockResolvedValueOnce([]);
+			serviceDbMocks.operationFindFirst.mockResolvedValue(operation);
+			await createCaller().deployExact({
+				composeId: "compose-1",
+				expectedRevision: revision,
 				idempotencyKey: "release-operation-key",
-			}),
-		).rejects.toMatchObject({ code: "CONFLICT" });
+			});
 
-		expect(routerMocks.myQueueAdd).toHaveBeenCalledTimes(cloud ? 0 : 1);
-		expect(routerMocks.deploy).toHaveBeenCalledTimes(cloud ? 1 : 0);
-		expect(serviceDbMocks.insert).toHaveBeenCalledTimes(2);
-		expect(serviceDbMocks.operationFindFirst).toHaveBeenCalledOnce();
-		expect(mocks.markDeploymentOperationDispatched).toHaveBeenCalledOnce();
-	});
+			await expect(
+				createCaller().deployExact({
+					composeId: "compose-1",
+					expectedRevision: "f".repeat(40),
+					idempotencyKey: "release-operation-key",
+				}),
+			).rejects.toMatchObject({ code: "CONFLICT" });
+
+			expect(routerMocks.myQueueAdd).toHaveBeenCalledTimes(cloud ? 0 : 1);
+			expect(routerMocks.deploy).toHaveBeenCalledTimes(cloud ? 1 : 0);
+			expect(serviceDbMocks.insert).toHaveBeenCalledTimes(2);
+			expect(serviceDbMocks.operationFindFirst).toHaveBeenCalledOnce();
+			expect(mocks.markDeploymentOperationDispatched).toHaveBeenCalledOnce();
+		},
+	);
 
 	it("p2-replay-01 DURABLE_REPLAY_PRECEDES_CURRENT_SOURCE_ELIGIBILITY: returns an existing operation after source changes to raw", async () => {
 		serviceDbMocks.composeFindFirst.mockResolvedValue({

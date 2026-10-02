@@ -22,10 +22,11 @@ export default async function handler(
 	}
 
 	const { session, user } = await validateRequest(req);
+	const sessionId = session && "id" in session ? session.id : undefined;
 	if (
-		!session?.id ||
-		!session.userId ||
-		!session.activeOrganizationId ||
+		!sessionId ||
+		!session?.userId ||
+		!session?.activeOrganizationId ||
 		!user
 	) {
 		return res.status(401).json({ error: "Authentication required" });
@@ -36,7 +37,7 @@ export default async function handler(
 		statePayload = verifyGitProviderOAuthState(state, {
 			providerType: "gitlab",
 			providerId: gitlabId,
-			sessionId: session.id,
+			sessionId,
 			userId: session.userId,
 			organizationId: session.activeOrganizationId,
 		});

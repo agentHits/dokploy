@@ -10,15 +10,13 @@ import {
 	getContainerProcesses,
 	getDokployUrl,
 	getPublicIpWithFallback,
+	getServicesByServerId,
 	getWebServerSettings,
 	haveActiveServices,
 	IS_CLOUD,
 	redactServer,
-	redactServers,
-	getServicesByServerId,
-	haveActiveServices,
-	IS_CLOUD,
 	redactServerSshKey,
+	redactServers,
 	removeDeploymentsByServerId,
 	resolveServerMetricsConfigUpdate,
 	serverAudit,
@@ -28,8 +26,10 @@ import {
 	updateServerById,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
-import { checkPermission } from "@dokploy/server/services/permission";
-import { findMemberByUserId } from "@dokploy/server/services/permission";
+import {
+	checkPermission,
+	findMemberByUserId,
+} from "@dokploy/server/services/permission";
 import { hasValidLicense } from "@dokploy/server/services/proprietary/license-key";
 import { assertSshKeyAccess } from "@dokploy/server/services/ssh-key";
 import { isRedactedSecretValue } from "@dokploy/server/utils/security/redaction";
@@ -63,6 +63,7 @@ import {
 	redis,
 	server,
 } from "@/server/db/schema";
+import { assertBuildsConcurrencyAllowed } from "@/server/queues/concurrency";
 import { applyDockerCleanupSchedule } from "@/server/utils/docker-cleanup";
 
 const getMetricsTarget = async (
@@ -606,6 +607,7 @@ export const serverRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			try {
 				await assertServerAccess(ctx, input.serverId);
+				const currentServer = await findServerById(input.serverId);
 				const activeServers = await haveActiveServices(input.serverId);
 
 				if (activeServers) {

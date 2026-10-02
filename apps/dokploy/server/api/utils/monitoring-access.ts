@@ -15,7 +15,7 @@ import { eq } from "drizzle-orm";
 
 type MonitoringAccessCtx = {
 	session: {
-		activeOrganizationId: string;
+		activeOrganizationId?: string | null;
 	};
 	user: {
 		id: string;
@@ -186,6 +186,16 @@ export const assertContainerMetricsServiceAccess = async (
 	appName: string,
 	serverId?: string,
 ) => {
+	if (!ctx.session.activeOrganizationId) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not authorized to access this monitored service",
+		});
+	}
+	const permissionCtx = {
+		user: ctx.user,
+		session: { activeOrganizationId: ctx.session.activeOrganizationId },
+	};
 	const service = await findMonitoringServiceByAppName(appName);
 	if (
 		!service ||
@@ -205,7 +215,7 @@ export const assertContainerMetricsServiceAccess = async (
 		});
 	}
 
-	await checkServicePermissionAndAccess(ctx, service.id, {
+	await checkServicePermissionAndAccess(permissionCtx, service.id, {
 		monitoring: ["read"],
 	});
 };
