@@ -54,12 +54,14 @@ export const processDeploymentJob = async (job: InMemoryJob) => {
 					descriptionLog: job.data.descriptionLog,
 					operationId: job.data.operationId,
 					expectedRevision: job.data.expectedRevision,
+					freshVolumes: job.data.freshVolumes,
 				});
 			} else if (job.data.type === "redeploy") {
 				await rebuildCompose({
 					composeId: job.data.composeId,
 					titleLog: job.data.titleLog,
 					descriptionLog: job.data.descriptionLog,
+					freshVolumes: job.data.freshVolumes,
 				});
 			}
 		} else if (job.data.applicationType === "application-preview") {

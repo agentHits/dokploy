@@ -23,6 +23,7 @@ import { ShowGeneralMysql } from "@/components/dashboard/mysql/general/show-gene
 import { ShowInternalMysqlCredentials } from "@/components/dashboard/mysql/general/show-internal-mysql-credentials";
 import { UpdateMysql } from "@/components/dashboard/mysql/update-mysql";
 import { ShowDatabaseAdvancedSettings } from "@/components/dashboard/shared/show-database-advanced-settings";
+import { TransferService } from "@/components/dashboard/shared/transfer-service";
 import { MysqlIcon } from "@/components/icons/data-tools-icons";
 import { DashboardLayout } from "@/components/layouts/dashboard-layout";
 import { AdvanceBreadcrumb } from "@/components/shared/advance-breadcrumb";
@@ -159,6 +160,13 @@ const MySql = (
 										{permissions?.service.create && (
 											<UpdateMysql mysqlId={mysqlId} />
 										)}
+										{permissions?.service.create && (
+											<TransferService
+												id={mysqlId}
+												type="mysql"
+												serverId={data?.serverId}
+											/>
+										)}
 										{permissions?.service.delete && (
 											<DeleteService id={mysqlId} type="mysql" />
 										)}
@@ -199,7 +207,7 @@ const MySql = (
 											router.push(newPath, undefined, { shallow: true });
 										}}
 									>
-										<div className="flex flex-row items-center justify-between w-full gap-4 overflow-x-scroll">
+										<div className="flex flex-row items-center justify-between w-full gap-4 overflow-x-auto">
 											<TabsList
 												className={cn(
 													"md:grid md:w-fit max-md:overflow-y-scroll justify-start ",
@@ -272,6 +280,7 @@ const MySql = (
 													<ShowDockerLogs
 														serverId={data?.serverId || ""}
 														appName={data?.appName || ""}
+														serviceId={data?.mysqlId}
 													/>
 												</div>
 											</TabsContent>

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
+import { useEnvCompletionSource } from "@/components/shared/env-autocomplete";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
@@ -53,6 +54,13 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 		},
 	);
 
+	const completionSource = useEnvCompletionSource({
+		projectEnv: data?.environment?.project?.env,
+		environmentEnv: data?.environment?.env,
+		projectId: data?.environment?.projectId,
+		environmentId: data?.environment?.environmentId,
+	});
+
 	const form = useForm<EnvironmentSchema>({
 		defaultValues: {
 			env: "",
@@ -74,14 +82,16 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 		buildSecrets: revealedEnvironment?.buildSecrets ?? data?.buildSecrets ?? "",
 		createEnvFile: data?.createEnvFile ?? true,
 	};
+	const { isDirty } = form.formState;
 	const hasChanges =
 		currentEnv !== baselineEnvironment.env ||
 		currentBuildArgs !== baselineEnvironment.buildArgs ||
 		currentBuildSecrets !== baselineEnvironment.buildSecrets ||
 		currentCreateEnvFile !== baselineEnvironment.createEnvFile;
 
+	// Skip reset while editing so background refetches don't wipe edits
 	useEffect(() => {
-		if (data) {
+		if (data && !isDirty) {
 			setRevealedEnvironment(null);
 			form.reset({
 				env: data.env || "",
@@ -90,7 +100,7 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 				createEnvFile: data.createEnvFile ?? true,
 			});
 		}
-	}, [data, form]);
+	}, [data, isDirty, form]);
 
 	const onSubmit = async (formData: EnvironmentSchema) => {
 		mutateAsync({
@@ -103,6 +113,7 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 			.then(async () => {
 				toast.success("Environments Added");
 				setRevealedEnvironment(null);
+				form.reset(formData);
 				await refetch();
 			})
 			.catch(() => {
@@ -178,7 +189,10 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 								)}
 							</span>
 						}
-						placeholder={["NODE_ENV=production", "PORT=3000"].join("\n")}
+							placeholder={["NODE_ENV=production", "PORT=3000"].join("\n")}
+						completionSource={completionSource}
+						projectId={data?.environment?.projectId}
+						environmentId={data?.environment?.environmentId}
 						isRevealing={isRevealingEnvironment}
 						onReveal={handleReveal}
 					/>
@@ -202,6 +216,7 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 								</span>
 							}
 							placeholder="NPM_TOKEN=xyz"
+							completionSource={completionSource}
 							isRevealing={isRevealingEnvironment}
 							onReveal={handleReveal}
 						/>
@@ -226,6 +241,7 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 								</span>
 							}
 							placeholder="NPM_TOKEN=xyz"
+							completionSource={completionSource}
 							isRevealing={isRevealingEnvironment}
 							onReveal={handleReveal}
 						/>

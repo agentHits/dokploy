@@ -8,9 +8,58 @@ import {
 	recordAdvancedStats,
 	validateRequest,
 } from "@dokploy/server";
+import { quote } from "shell-quote";
 import { WebSocketServer } from "ws";
 import { assertContainerMetricsServiceAccess } from "@/server/api/utils/monitoring-access";
 import { canAccessMonitoringWebSocket } from "./server-permission";
+import { canAccessDockerOverWss } from "./authorize";
+
+type AppType = "application" | "stack" | "docker-compose";
+
+// Swarm task names are "<service>.<slot>.<taskId>"; the manager's local
+// `docker ps` only sees containers scheduled on this host, so a task running
+// on another node looks identical to a stopped one. `docker service ps` is
+// swarm-aggregated and answers from the manager regardless of which node the
+// task landed on, so we use it here to tell the two cases apart.
+const findRemoteSwarmNode = async (
+	appName: string,
+	appType: AppType,
+): Promise<string | null> => {
+	if (appType === "docker-compose") {
+		return null;
+	}
+
+	// `docker service ps --format {{.Name}}` only prints "<service>.<slot>",
+	// never the taskId, so we match on the task ID instead — the last segment
+	// of the stack task name — rather than trying to reconstruct the full name.
+	const [serviceName, taskId] =
+		appType === "stack"
+			? [appName.split(".").slice(0, -2).join("."), appName.split(".").pop()]
+			: [appName, null];
+
+	if (!serviceName) {
+		return null;
+	}
+
+	try {
+		const { stdout } = await execAsync(
+			`docker service ps ${quote([serviceName])} --filter "desired-state=running" --no-trunc --format '{"ID":"{{.ID}}","Node":"{{.Node}}","CurrentState":"{{.CurrentState}}"}'`,
+		);
+
+		for (const line of stdout.trim().split("\n")) {
+			if (!line) continue;
+			const task = JSON.parse(line);
+			const isMatch = taskId ? task.ID === taskId : true;
+			if (isMatch && task.CurrentState?.startsWith("Running")) {
+				return task.Node;
+			}
+		}
+	} catch {
+		// Not a swarm service (or the swarm CLI isn't available) — fall back to "not running".
+	}
+
+	return null;
+};
 
 export const setupDockerStatsMonitoringSocketServer = (
 	server: http.Server<typeof http.IncomingMessage, typeof http.ServerResponse>,
@@ -46,6 +95,7 @@ export const setupDockerStatsMonitoringSocketServer = (
 			| "application"
 			| "stack"
 			| "docker-compose";
+		const serviceId = url.searchParams.get("serviceId");
 		const { user, session } = await validateRequest(req);
 
 		if (!appName) {
@@ -81,6 +131,10 @@ export const setupDockerStatsMonitoringSocketServer = (
 			return;
 		}
 
+		if (!(await canAccessDockerOverWss(user, session, null, serviceId))) {
+			ws.close(4003, "Not authorized");
+			return;
+		}
 		const intervalId = setInterval(async () => {
 			try {
 				// Special case: when monitoring "dokploy", get host system stats instead of container stats
@@ -116,8 +170,14 @@ export const setupDockerStatsMonitoringSocketServer = (
 				});
 
 				const container = containers[0];
-				if (container?.State !== "running") {
-					ws.close(4000, "Container not running");
+				if (!container || container?.State !== "running") {
+					const remoteNode = await findRemoteSwarmNode(appName, appType);
+					ws.close(
+						4000,
+						remoteNode
+							? `Container running on remote node "${remoteNode}"`.slice(0, 123)
+							: "Container not running",
+					);
 					return;
 				}
 				const { stdout, stderr } = await execAsync(

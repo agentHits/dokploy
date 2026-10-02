@@ -14,6 +14,8 @@ import {
 	createVolumeBackupSchema,
 	mounts,
 	updateVolumeBackupSchema,
+	VOLUME_NAME_MESSAGE,
+	VOLUME_NAME_REGEX,
 	volumeBackups,
 } from "@dokploy/server/db/schema";
 import { checkServicePermissionAndAccess } from "@dokploy/server/services/permission";
@@ -335,14 +337,24 @@ export const volumeBackupsRouter = createTRPCRouter({
 			return await db.query.volumeBackups.findMany({
 				where: eq(volumeBackups[`${input.volumeBackupType}Id`], input.id),
 				with: {
-					application: true,
-					postgres: true,
-					mysql: true,
-					mariadb: true,
-					mongo: true,
-					redis: true,
-					compose: true,
-					libsql: true,
+					application: {
+						columns: { applicationId: true, appName: true, serverId: true },
+					},
+					postgres: {
+						columns: { postgresId: true, appName: true, serverId: true },
+					},
+					mysql: { columns: { mysqlId: true, appName: true, serverId: true } },
+					mariadb: {
+						columns: { mariadbId: true, appName: true, serverId: true },
+					},
+					mongo: { columns: { mongoId: true, appName: true, serverId: true } },
+					redis: { columns: { redisId: true, appName: true, serverId: true } },
+					compose: {
+						columns: { composeId: true, appName: true, serverId: true },
+					},
+					libsql: {
+						columns: { libsqlId: true, appName: true, serverId: true },
+					},
 				},
 				orderBy: [desc(volumeBackups.createdAt)],
 			});
@@ -558,7 +570,10 @@ export const volumeBackupsRouter = createTRPCRouter({
 			z.object({
 				backupFileName: z.string().min(1),
 				destinationId: z.string().min(1),
-				volumeName: z.string().min(1),
+				volumeName: z
+					.string()
+					.min(1)
+					.regex(VOLUME_NAME_REGEX, VOLUME_NAME_MESSAGE),
 				id: z.string().min(1),
 				serviceType: z.enum(["application", "compose"]),
 				serverId: z.string().optional(),

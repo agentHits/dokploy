@@ -9,7 +9,6 @@ import {
 	cleanQueue,
 	getJobRepeatable,
 	removeJob,
-	removeRepeatableJob,
 	scheduleJob,
 } from "./queue.js";
 import { signedJobQueueSchema } from "./schema.js";
@@ -47,24 +46,46 @@ app.post(
 	},
 );
 
-app.post(
-	"/update-backup",
-	zValidator("json", signedJobQueueSchema),
-	async (c) => {
-		const data = await assertSignedScheduledQueueJob(c.req.valid("json"), {
-			operation: "update",
-		});
-		const job = await getJobRepeatable(data);
-		if (job) {
-			const result = await removeRepeatableJob(job);
-			logger.info({ result }, "Job removed");
+app.post("/update-backup", zValidator("json", signedJobQueueSchema), async (c) => {
+	const data = await assertSignedScheduledQueueJob(c.req.valid("json"), {
+		operation: "update",
+	});
+	const job = await getJobRepeatable(data);
+	if (job) {
+		let result = false;
+		if (data.type === "backup") {
+			result = await removeJob({
+				backupId: data.backupId,
+				type: "backup",
+				cronSchedule: job.pattern || "",
+			});
+		} else if (data.type === "server") {
+			result = await removeJob({
+				serverId: data.serverId,
+				type: "server",
+				cronSchedule: job.pattern || "",
+			});
+		} else if (data.type === "schedule") {
+			result = await removeJob({
+				scheduleId: data.scheduleId,
+				type: "schedule",
+				cronSchedule: job.pattern || "",
+				timezone: job.tz || data.timezone,
+			});
+		} else if (data.type === "volume-backup") {
+			result = await removeJob({
+				volumeBackupId: data.volumeBackupId,
+				type: "volume-backup",
+				cronSchedule: job.pattern || "",
+			});
 		}
-		await scheduleJob(data);
-		logger.info("Backup updated successfully");
+		logger.info({ result }, "Job removed");
+	}
+	await scheduleJob(data);
+	logger.info("Backup updated successfully");
 
-		return c.json({ message: "Backup updated successfully" });
-	},
-);
+	return c.json({ message: "Backup updated successfully" });
+});
 
 app.post("/remove-job", zValidator("json", signedJobQueueSchema), async (c) => {
 	const data = await assertSignedScheduledQueueJob(c.req.valid("json"), {

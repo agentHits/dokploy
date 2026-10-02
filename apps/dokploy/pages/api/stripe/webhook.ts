@@ -9,6 +9,7 @@ import {
 	sendInvoiceEmail,
 	sendPaymentFailedEmail,
 } from "@/server/utils/stripe-notifications";
+import { sendTrialExpiringEmail } from "@/server/utils/trial-notifications";
 
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
@@ -77,6 +78,7 @@ export default async function handler(
 		"invoice.payment_failed",
 		"customer.deleted",
 		"checkout.session.completed",
+		"customer.subscription.trial_will_end",
 	];
 
 	if (!webhooksAllowed.includes(event.type)) {
@@ -113,6 +115,12 @@ export default async function handler(
 			}
 			const newServersQuantity = admin.serversQuantity;
 			await updateServersBasedOnQuantity(admin.id, newServersQuantity);
+			break;
+		}
+		case "customer.subscription.trial_will_end": {
+			const trialingSubscription = event.data.object as Stripe.Subscription;
+
+			await sendTrialExpiringEmail(stripe, trialingSubscription, event.created);
 			break;
 		}
 		case "customer.subscription.created": {
@@ -155,11 +163,9 @@ export default async function handler(
 				newSubscription.customer as string,
 			);
 
-			if (!admin) {
-				return res.status(400).send("Webhook Error: Admin not found");
-			}
-
-			if (admin.isEnterpriseCloud) {
+			// The account may already be gone when the deletion flow cancelled
+			// the subscription; nothing left to disable.
+			if (!admin || admin.isEnterpriseCloud) {
 				break;
 			}
 
@@ -181,7 +187,10 @@ export default async function handler(
 				break;
 			}
 
-			if (newSubscription.status === "active") {
+			if (
+				newSubscription.status === "active" ||
+				newSubscription.status === "trialing"
+			) {
 				const serversQuantity = getSubscriptionServersQuantity(
 					newSubscription?.items?.data ?? [],
 				);
@@ -229,6 +238,14 @@ export default async function handler(
 				break;
 			}
 
+			const admin = await findUserByStripeCustomerId(
+				subscription.customer as string,
+			);
+
+			if (!admin) {
+				return res.status(400).send("Webhook Error: Admin not found");
+			}
+
 			const serversQuantity = getSubscriptionServersQuantity(
 				subscription?.items?.data ?? [],
 			);
@@ -242,18 +259,10 @@ export default async function handler(
 					),
 				);
 
-			const admin = await findUserByStripeCustomerId(
-				subscription.customer as string,
-			);
-
-			if (!admin) {
-				return res.status(400).send("Webhook Error: Admin not found");
-			}
 			if (admin.isEnterpriseCloud) {
 				break;
 			}
-			const newServersQuantity = admin.serversQuantity;
-			await updateServersBasedOnQuantity(admin.id, newServersQuantity);
+			await updateServersBasedOnQuantity(admin.id, serversQuantity);
 
 			if (admin.sendInvoiceNotifications) {
 				await sendInvoiceEmail(newInvoice, admin);
@@ -310,11 +319,7 @@ export default async function handler(
 			const customer = event.data.object as Stripe.Customer;
 
 			const admin = await findUserByStripeCustomerId(customer.id);
-			if (!admin) {
-				return res.status(400).send("Webhook Error: Admin not found");
-			}
-
-			if (admin.isEnterpriseCloud) {
+			if (!admin || admin.isEnterpriseCloud) {
 				break;
 			}
 
@@ -362,6 +367,12 @@ const findUserByStripeCustomerId = async (stripeCustomerId: string) => {
 		where: eq(user.stripeCustomerId, stripeCustomerId),
 	});
 	return userResult;
+};
+
+const getInvoiceSubscriptionId = (invoice: Stripe.Invoice): string | null => {
+	const subscription = invoice.subscription;
+	if (typeof subscription === "string") return subscription;
+	return subscription?.id ?? null;
 };
 
 const activateServer = async (serverId: string) => {

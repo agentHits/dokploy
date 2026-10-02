@@ -9,7 +9,7 @@ import {
 	findMongoById,
 	getAccessibleServerIds,
 	getContainerLogs,
-	getServiceContainerCommand,
+	getServiceContainer,
 	getWebServerSettings,
 	IS_CLOUD,
 	rebuildDatabase,

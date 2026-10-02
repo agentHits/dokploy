@@ -8,6 +8,7 @@ import {
 	encodeBase64,
 	getEnvironmentVariablesObject,
 	prepareEnvironmentVariables,
+	prepareEnvironmentVariablesForFile,
 } from "../docker/utils";
 import { normalizeRelativeFilePath } from "../filesystem/safe-path";
 import {
@@ -15,20 +16,27 @@ import {
 	quoteShellArgs,
 	quoteShellArgument,
 } from "../shell";
+import { withResolvedVaultRefs } from "../vault";
 
 export type ComposeNested = InferResultType<
 	"compose",
 	{ environment: { with: { project: true } }; mounts: true; domains: true }
 >;
 
-export const getBuildComposeCommand = async (compose: ComposeNested) => {
+export const getBuildComposeCommand = async (rawCompose: ComposeNested) => {
+	const compose = await withResolvedVaultRefs(rawCompose);
 	const { COMPOSE_PATH } = paths(!!compose.serverId);
 	const { sourceType, appName, mounts, composeType, domains } = compose;
-	const command = createCommand(compose);
-	const envCommand = getCreateEnvFileCommand(compose);
 	const projectPath = join(COMPOSE_PATH, compose.appName, "code");
 	const quotedProjectPath = quoteShellArgument(projectPath);
 	const quotedAppName = quoteShellArgument(compose.appName);
+	const command = createCommand(
+		compose,
+		mounts.length > 0 ? projectPath : undefined,
+	);
+	const envCommand = compose.createEnvFile
+		? getCreateEnvFileCommand(compose)
+		: "";
 	const exportEnvCommand = getExportEnvCommand(compose);
 
 	const newCompose = await writeDomainsToCompose(compose, domains);
@@ -225,7 +233,7 @@ const createCustomDockerCommand = (command: string, appName: string) => {
 	return quoteShellArgs(args);
 };
 
-export const createCommand = (compose: ComposeNested) => {
+export const createCommand = (compose: ComposeNested, projectPath?: string) => {
 	const { composeType, appName, sourceType } = compose;
 	if (compose.command) {
 		return createCustomDockerCommand(compose.command, appName);
@@ -241,12 +249,15 @@ export const createCommand = (compose: ComposeNested) => {
 			"compose",
 			"-p",
 			appName,
+			...(projectPath ? ["--project-directory", projectPath] : []),
+			...(compose.createEnvFile ? ["--env-file", join(dirname(compose.composePath || "docker-compose.yml"), ".env")] : []),
 			"-f",
 			path,
 			"up",
 			"-d",
 			"--build",
 			"--remove-orphans",
+			...(compose.pullImages ? ["--pull", "always"] : []),
 		]);
 	}
 	if (composeType === "stack") {
@@ -285,10 +296,18 @@ export const getCreateEnvFileCommand = (compose: ComposeNested) => {
 		envContent += `\nCOMPOSE_PREFIX=${compose.suffix}`;
 	}
 
-	const envFileContent = prepareEnvironmentVariables(
-		envContent,
-		compose.environment.project.env,
-		compose.environment.env,
+	const envFileContent = (
+		compose.composeType === "stack"
+			? prepareEnvironmentVariables(
+					envContent,
+					compose.environment.project.env,
+					compose.environment.env,
+				)
+			: prepareEnvironmentVariablesForFile(
+					envContent,
+					compose.environment.project.env,
+					compose.environment.env,
+				)
 	).join("\n");
 
 	const encodedContent = encodeBase64(envFileContent);

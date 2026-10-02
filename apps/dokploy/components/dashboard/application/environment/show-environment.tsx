@@ -5,6 +5,8 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { CodeEditor } from "@/components/shared/code-editor";
+import { useEnvCompletionSource } from "@/components/shared/env-autocomplete";
+import { VaultImportDialog } from "@/components/shared/vault-import-dialog";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -16,16 +18,20 @@ import {
 import {
 	Form,
 	FormControl,
+	FormDescription,
 	FormField,
 	FormItem,
+	FormLabel,
 	FormMessage,
 } from "@/components/ui/form";
+import { Switch } from "@/components/ui/switch";
 import { Toggle } from "@/components/ui/toggle";
 import { api } from "@/utils/api";
 import type { ServiceType } from "../advanced/show-resources";
 
 const addEnvironmentSchema = z.object({
 	environment: z.string(),
+	createEnvFile: z.boolean(),
 });
 
 type EnvironmentSchema = z.infer<typeof addEnvironmentSchema>;
@@ -57,6 +63,12 @@ export const ShowEnvironment = ({ id, type }: Props) => {
 	const [revealedEnvironment, setRevealedEnvironment] = useState<string | null>(
 		null,
 	);
+	const completionSource = useEnvCompletionSource({
+		projectEnv: data?.environment?.project?.env,
+		environmentEnv: data?.environment?.env,
+		projectId: data?.environment?.projectId,
+		environmentId: data?.environment?.environmentId,
+	});
 
 	const mutationMap = {
 		compose: () => api.compose.saveEnvironment.useMutation(),
@@ -87,20 +99,34 @@ export const ShowEnvironment = ({ id, type }: Props) => {
 	const form = useForm<EnvironmentSchema>({
 		defaultValues: {
 			environment: "",
+			createEnvFile: true,
 		},
 		resolver: zodResolver(addEnvironmentSchema),
 	});
 
 	// Watch form value
 	const currentEnvironment = form.watch("environment");
+	const currentCreateEnvFile = form.watch("createEnvFile");
+	const composeData =
+		type === "compose"
+			? (data as { createEnvFile?: boolean; sourceType?: string } | undefined)
+			: undefined;
+
+	const showCreateEnvFileToggle =
+		type === "compose" &&
+		(composeData?.sourceType !== "raw" || composeData?.createEnvFile === false);
 	const baselineEnvironment = revealedEnvironment ?? data?.env ?? "";
-	const hasChanges = currentEnvironment !== baselineEnvironment;
+	const hasChanges =
+		currentEnvironment !== baselineEnvironment ||
+		(showCreateEnvFileToggle &&
+			currentCreateEnvFile !== (composeData?.createEnvFile ?? true));
 
 	useEffect(() => {
 		if (data) {
 			setRevealedEnvironment(null);
 			form.reset({
 				environment: data.env || "",
+				createEnvFile: composeData?.createEnvFile ?? true,
 			});
 		}
 	}, [data, form]);
@@ -115,6 +141,9 @@ export const ShowEnvironment = ({ id, type }: Props) => {
 			postgresId: id || "",
 			redisId: id || "",
 			env: formData.environment,
+			...(type === "compose" && {
+				createEnvFile: formData.createEnvFile,
+			}),
 		})
 			.then(async () => {
 				toast.success("Environments Added");
@@ -129,6 +158,7 @@ export const ShowEnvironment = ({ id, type }: Props) => {
 	const handleCancel = () => {
 		form.reset({
 			environment: baselineEnvironment,
+			createEnvFile: composeData?.createEnvFile ?? true,
 		});
 	};
 
@@ -226,6 +256,18 @@ export const ShowEnvironment = ({ id, type }: Props) => {
 								name="environment"
 								render={({ field }) => (
 									<FormItem>
+										<div className="flex justify-end">
+											<VaultImportDialog
+												projectId={data?.environment?.projectId}
+												environmentId={data?.environment?.environmentId}
+												currentEnv={field.value ?? ""}
+												onImport={(next) =>
+													form.setValue("environment", next, {
+														shouldDirty: true,
+													})
+												}
+											/>
+										</div>
 										<FormControl className="">
 											<CodeEditor
 												style={
@@ -234,6 +276,7 @@ export const ShowEnvironment = ({ id, type }: Props) => {
 													} as CSSProperties
 												}
 												language="properties"
+												completionSource={completionSource}
 												disabled={isEnvVisible}
 												className="font-mono"
 												wrapperClassName="compose-file-editor"
@@ -247,6 +290,34 @@ PORT=3000
 									</FormItem>
 								)}
 							/>
+
+							{showCreateEnvFileToggle && (
+								<FormField
+									control={form.control}
+									name="createEnvFile"
+									render={({ field }) => (
+										<FormItem className="flex flex-row items-center justify-between p-3 border rounded-lg shadow-xs">
+											<div className="space-y-0.5">
+												<FormLabel>Create Environment File</FormLabel>
+												<FormDescription>
+													When enabled, an .env file will be created in the same
+													directory as your compose file on every deploy.
+													Disable this to keep a repository-provided .env; the
+													variables above will then be ignored. Takes effect on
+													the next deploy.
+												</FormDescription>
+											</div>
+											<FormControl>
+												<Switch
+													checked={field.value}
+													onCheckedChange={field.onChange}
+													disabled={!canWrite}
+												/>
+											</FormControl>
+										</FormItem>
+									)}
+								/>
+							)}
 
 							{canWrite && (
 								<div className="flex flex-row justify-end gap-2">

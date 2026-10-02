@@ -13,6 +13,7 @@ import {
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
 import {
+	assertHostScheduleAccess,
 	createSchedule,
 	deleteSchedule,
 	findScheduleById,
@@ -160,23 +161,13 @@ export const scheduleRouter = createTRPCRouter({
 					);
 				}
 			} else {
-				if (input.scheduleType === "dokploy-server" && IS_CLOUD) {
-					throw new TRPCError({
-						code: "FORBIDDEN",
-						message:
-							"Host-level schedules are not available in the cloud version.",
-					});
-				}
-
 				await checkPermission(ctx, { schedule: ["create"] });
 
-				if (
-					input.scheduleType === "server" ||
-					input.scheduleType === "dokploy-server"
-				) {
-					const member = await findMemberByUserId(
-						ctx.user.id,
+				if (IS_CLOUD && input.scheduleType === "server" && input.serverId) {
+					await assertScheduledJobLimit(
 						ctx.session.activeOrganizationId,
+						"server",
+						input.serverId,
 					);
 					if (member.role !== "owner" && member.role !== "admin") {
 						throw new TRPCError({
@@ -244,6 +235,22 @@ export const scheduleRouter = createTRPCRouter({
 				});
 			}
 
+			await assertHostScheduleAccess(
+				ctx,
+				existingSchedule.scheduleType,
+				existingSchedule.serverId,
+			);
+			if (
+				input.scheduleType &&
+				input.scheduleType !== existingSchedule.scheduleType
+			) {
+				await assertHostScheduleAccess(
+					ctx,
+					input.scheduleType,
+					input.serverId ?? existingSchedule.serverId,
+				);
+			}
+
 			const serviceId =
 				existingSchedule.applicationId || existingSchedule.composeId;
 			if (serviceId) {
@@ -304,6 +311,12 @@ export const scheduleRouter = createTRPCRouter({
 		.input(z.object({ scheduleId: z.string() }))
 		.mutation(async ({ input, ctx }) => {
 			const scheduleItem = await findScheduleById(input.scheduleId);
+			await assertHostScheduleAccess(
+				ctx,
+				scheduleItem.scheduleType,
+				scheduleItem.serverId,
+			);
+
 			const serviceId = scheduleItem.applicationId || scheduleItem.composeId;
 			if (serviceId) {
 				await checkServicePermissionAndAccess(ctx, serviceId, {
@@ -386,9 +399,23 @@ export const scheduleRouter = createTRPCRouter({
 				where: where[input.scheduleType],
 				orderBy: [asc(schedules.createdAt)],
 				with: {
-					application: true,
+					application: {
+						columns: {
+							applicationId: true,
+							appName: true,
+							name: true,
+							serverId: true,
+						},
+					},
 					server: true,
-					compose: true,
+					compose: {
+						columns: {
+							composeId: true,
+							appName: true,
+							name: true,
+							serverId: true,
+						},
+					},
 					deployments: {
 						orderBy: [desc(deployments.createdAt)],
 					},
@@ -416,6 +443,12 @@ export const scheduleRouter = createTRPCRouter({
 		.input(z.object({ scheduleId: z.string().min(1) }))
 		.mutation(async ({ input, ctx }) => {
 			const scheduleItem = await findScheduleById(input.scheduleId);
+			await assertHostScheduleAccess(
+				ctx,
+				scheduleItem.scheduleType,
+				scheduleItem.serverId,
+			);
+
 			const serviceId = scheduleItem.applicationId || scheduleItem.composeId;
 			if (serviceId) {
 				await checkServicePermissionAndAccess(ctx, serviceId, {
@@ -426,13 +459,17 @@ export const scheduleRouter = createTRPCRouter({
 				await assertServerLevelScheduleAccess(ctx, scheduleItem);
 			}
 			try {
-				await runCommand(input.scheduleId);
+				const deployment = await runCommand(input.scheduleId);
 				await audit(ctx, {
 					action: "run",
 					resourceType: "schedule",
 					resourceId: input.scheduleId,
 				});
-				return true;
+				return {
+					status: deployment.status,
+					deploymentId: deployment.deploymentId,
+					logPath: deployment.logPath,
+				};
 			} catch (error) {
 				throw new TRPCError({
 					code: "INTERNAL_SERVER_ERROR",

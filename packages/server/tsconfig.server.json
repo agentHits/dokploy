@@ -8,17 +8,15 @@
 		"isolatedModules": false,
 		"noEmit": false,
 		"declaration": true,
-		"moduleResolution": "Bundler",
+		"moduleResolution": "bundler",
 		"rootDir": "./src",
-		"baseUrl": ".",
-		"ignoreDeprecations": "6.0",
 		"jsx": "react-jsx",
 		"paths": {
 			"@dokploy/server/*": ["./src/*"]
 		}
 	},
 	"include": ["next-env.d.ts", "./src/**/*"],
-	"exclude": ["**/dist", "tsup.ts"],
+	"exclude": ["**/dist", "tsup.ts", "src/lib/auth-cli.ts"],
 	"tsc-alias": {
 		"resolveFullPaths": true,
 		"verbose": false
