@@ -3,6 +3,7 @@ import {
 	findServerById,
 	getBuildCache,
 	getDockerDiskUsage,
+	resolveDockerDiskUsageDetailLimit,
 } from "@dokploy/server";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
@@ -13,6 +14,10 @@ export const dockerDiskUsageRouter = createTRPCRouter({
 	getDiskUsage: withPermission("docker", "read")
 		.input(
 			z.object({
+				detailLimit: z
+					.union([z.literal(5), z.literal(10), z.literal(15)])
+					.nullable()
+					.optional(),
 				serverId: z.string().optional(),
 			}),
 		)
@@ -23,7 +28,10 @@ export const dockerDiskUsageRouter = createTRPCRouter({
 					throw new TRPCError({ code: "UNAUTHORIZED" });
 				}
 			}
-			return await getDockerDiskUsage(input.serverId);
+			return await getDockerDiskUsage(
+				resolveDockerDiskUsageDetailLimit(input.detailLimit),
+				input.serverId,
+			);
 		}),
 
 	getBuildCache: withPermission("docker", "read")

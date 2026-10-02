@@ -35,7 +35,7 @@ const getDeploymentLogPathRoot = (
 
 type DeploymentLogAccessCtx = {
 	user: { id: string };
-	session: { activeOrganizationId: string };
+	session: { activeOrganizationId: string | null | undefined };
 };
 
 type ServiceOwnerFields = {
@@ -100,7 +100,14 @@ const assertServerDeploymentLogAccess = async (
 	ctx: DeploymentLogAccessCtx,
 	serverId: string,
 ) => {
-	await checkPermission(ctx, { deployment: ["read"] });
+	if (!ctx.session.activeOrganizationId) {
+		throw new Error("Unauthorized deployment log organization");
+	}
+	const permissionCtx = {
+		user: ctx.user,
+		session: { activeOrganizationId: ctx.session.activeOrganizationId },
+	};
+	await checkPermission(permissionCtx, { deployment: ["read"] });
 	const server = await findServerById(serverId);
 	if (server.organizationId !== ctx.session.activeOrganizationId) {
 		throw new Error("Unauthorized deployment log server");
@@ -111,7 +118,14 @@ const assertOrganizationDeploymentLogAccess = async (
 	ctx: DeploymentLogAccessCtx,
 	organizationId?: string | null,
 ) => {
-	await checkPermission(ctx, { deployment: ["read"] });
+	if (!ctx.session.activeOrganizationId) {
+		throw new Error("Unauthorized deployment log organization");
+	}
+	const permissionCtx = {
+		user: ctx.user,
+		session: { activeOrganizationId: ctx.session.activeOrganizationId },
+	};
+	await checkPermission(permissionCtx, { deployment: ["read"] });
 	if (organizationId !== ctx.session.activeOrganizationId) {
 		throw new Error("Unauthorized deployment log organization");
 	}
@@ -121,6 +135,13 @@ const assertDeploymentLogAccess = async (
 	ctx: DeploymentLogAccessCtx,
 	deployment: Awaited<ReturnType<typeof findDeploymentById>>,
 ) => {
+	if (!ctx.session.activeOrganizationId) {
+		throw new Error("Unauthorized deployment log organization");
+	}
+	const permissionCtx = {
+		user: ctx.user,
+		session: { activeOrganizationId: ctx.session.activeOrganizationId },
+	};
 	const serviceId =
 		deployment.applicationId ||
 		deployment.composeId ||
@@ -129,7 +150,7 @@ const assertDeploymentLogAccess = async (
 		getDatabaseOrComposeServiceId(deployment.schedule);
 
 	if (serviceId) {
-		await checkServicePermissionAndAccess(ctx, serviceId, {
+		await checkServicePermissionAndAccess(permissionCtx, serviceId, {
 			deployment: ["read"],
 		});
 		return;
@@ -195,7 +216,7 @@ export const setupDeploymentLogsWebSocketServer = (
 			return;
 		}
 
-		if (!user || !session) {
+		if (!user || !session || !session.activeOrganizationId) {
 			ws.close();
 			return;
 		}

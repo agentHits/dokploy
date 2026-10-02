@@ -436,8 +436,8 @@ export const generateBackupCommand = (backup: BackupSchedule) => {
 
 export const getBackupCommand = (
 	backup: BackupSchedule,
-	rcloneFlags: string[],
-	rcloneDestination: string,
+	rcloneCommand: string,
+	rcloneDeleteCommand: string,
 	logPath: string,
 ) => {
 	if (!isBackupScheduleTargetBound(backup)) {
@@ -446,8 +446,6 @@ export const getBackupCommand = (
 
 	const containerSearch = getContainerSearchCommand(backup);
 	const backupCommand = generateBackupCommand(backup);
-	const rcloneCommand = `rclone rcat ${rcloneFlags.join(" ")} "${rcloneDestination}"`;
-	const rcloneDeleteCommand = `rclone deletefile ${rcloneFlags.join(" ")} "${rcloneDestination}"`;
 
 	if (!containerSearch || !backupCommand) {
 		throw new Error("Backup command could not be generated.");

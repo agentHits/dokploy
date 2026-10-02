@@ -74,7 +74,7 @@ const defaultTemplateInfo: TemplateInfo = {
 	suggestions: [],
 };
 
-export const { useStepper, steps } = defineStepper([
+export const { useStepper, steps, Scoped } = defineStepper(
 	{
 		id: "needs",
 		title: "Describe your needs",
@@ -87,7 +87,7 @@ export const { useStepper, steps } = defineStepper([
 		id: "review",
 		title: "Review and Finalize",
 	},
-]);
+);
 
 interface Props {
 	environmentId: string;
@@ -171,24 +171,26 @@ export const TemplateGenerator = ({ environmentId }: Props) => {
 						<h2 className="text-lg font-semibold">Steps</h2>
 						<div className="flex items-center gap-2">
 							<span className="text-sm text-muted-foreground">
-								Step {stepper.index + 1} of {steps.length}
+								Step {stepper.current.index + 1} of {steps.length}
 							</span>
 							<div />
 						</div>
 					</div>
-					<>
+					<Scoped>
 						<nav aria-label="Checkout Steps" className="group my-4">
 							<ol
 								className="flex items-center justify-between gap-2"
 								aria-orientation="horizontal"
 							>
-								{stepper.steps.map((step, index, array) => (
+								{stepper.all.map((step, index, array) => (
 									<React.Fragment key={step.id}>
 										<li className="flex items-center gap-4 shrink-0">
 											<Button
 												type="button"
 												role="tab"
-												variant={index <= stepper.index ? "secondary" : "ghost"}
+												variant={
+													index <= stepper.current.index ? "secondary" : "ghost"
+												}
 												aria-current={
 													stepper.current.id === step.id ? "step" : undefined
 												}
@@ -204,7 +206,9 @@ export const TemplateGenerator = ({ environmentId }: Props) => {
 										{index < array.length - 1 && (
 											<Separator
 												className={`flex-1 ${
-													index < stepper.index ? "bg-primary" : "bg-muted"
+													index < stepper.current.index
+														? "bg-primary"
+														: "bg-muted"
 												}`}
 											/>
 										)}
@@ -212,7 +216,7 @@ export const TemplateGenerator = ({ environmentId }: Props) => {
 								))}
 							</ol>
 						</nav>
-						{stepper.match({
+						{stepper.switch({
 							needs: () => (
 								<>
 									{!haveAtleasOneProviderEnabled && (
@@ -288,7 +292,7 @@ export const TemplateGenerator = ({ environmentId }: Props) => {
 								/>
 							),
 						})}
-					</>
+					</Scoped>
 				</div>
 				<DialogFooter>
 					<div className="flex items-center justify-between w-full">

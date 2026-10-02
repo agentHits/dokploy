@@ -37,13 +37,23 @@ export const runLibsqlBackup = async (
 	const bucketDestination = `${appName}/${normalizeS3Path(prefix)}${backupFileName}`;
 	try {
 		const safeDestination = await assertRcloneS3DestinationAllowed(destination);
+		const rcloneTarget = getRcloneS3Destination(
+			safeDestination,
+			bucketDestination,
+		);
 		const rcloneCommand = buildRcloneS3Command("rcat", safeDestination, [
-			getRcloneS3Destination(safeDestination, bucketDestination),
+			rcloneTarget,
 		]);
+		const rcloneDeleteCommand = buildRcloneS3Command(
+			"deletefile",
+			safeDestination,
+			[rcloneTarget],
+		);
 
 		const backupCommand = getBackupCommand(
 			backup,
 			rcloneCommand,
+			rcloneDeleteCommand,
 			deployment.logPath,
 		);
 		if (libsql.serverId) {

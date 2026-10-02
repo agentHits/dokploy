@@ -247,7 +247,7 @@ export async function assertGitProviderAccess(
 			message: "You don't have access to this git provider",
 		});
 	}
-};
+}
 
 export const assertGitProviderManagementAccess = async (
 	gitProviderId: string | null | undefined,

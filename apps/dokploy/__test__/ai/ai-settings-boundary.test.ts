@@ -18,6 +18,9 @@ vi.mock("@dokploy/server/db", () => ({
 			ai: {
 				findFirst: mocks.aiFindFirst,
 			},
+			organization: {
+				findFirst: vi.fn(async () => null),
+			},
 		},
 	},
 }));

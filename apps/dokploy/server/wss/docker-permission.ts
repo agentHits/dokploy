@@ -10,7 +10,7 @@ import {
 
 type DockerWebSocketAuthContext = {
 	user: { id: string } | null;
-	session: { activeOrganizationId: string } | null;
+	session: { activeOrganizationId?: string | null } | null;
 	serverId?: string | null;
 	containerId?: string | null;
 	runType?: string | null;
@@ -26,7 +26,8 @@ const canAccessDockerByPermission = async ({
 }: DockerWebSocketAuthContext & {
 	permission: "read" | "execute";
 }) => {
-	if (!user || !session) {
+	const activeOrganizationId = session?.activeOrganizationId;
+	if (!user || !activeOrganizationId) {
 		return false;
 	}
 
@@ -34,21 +35,18 @@ const canAccessDockerByPermission = async ({
 		await checkPermission(
 			{
 				user: { id: user.id },
-				session: { activeOrganizationId: session.activeOrganizationId },
+				session: { activeOrganizationId: activeOrganizationId },
 			},
 			{ docker: [permission] },
 		);
-		const member = await findMemberByUserId(
-			user.id,
-			session.activeOrganizationId,
-		);
+		const member = await findMemberByUserId(user.id, activeOrganizationId);
 		if (member.role !== "owner" && member.role !== "admin") {
 			return false;
 		}
 		if (serverId) {
 			const accessibleIds = await getAccessibleServerIds({
 				userId: user.id,
-				activeOrganizationId: session.activeOrganizationId,
+				activeOrganizationId: activeOrganizationId,
 			});
 			return accessibleIds.has(serverId);
 		}
@@ -59,7 +57,7 @@ const canAccessDockerByPermission = async ({
 
 		const ctx = {
 			user: { id: user.id },
-			session: { activeOrganizationId: session.activeOrganizationId },
+			session: { activeOrganizationId: activeOrganizationId },
 		};
 		if (runType === "swarm" && permission === "read") {
 			await assertLocalDockerServiceAccess(ctx, containerId, permission);

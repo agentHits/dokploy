@@ -18,15 +18,18 @@ describe("Git provider URL boundary", () => {
 		["multicast", "224.0.0.1", 4],
 		["documentation IPv4", "203.0.113.10", 4],
 		["documentation IPv6", "2001:db8::1", 6],
-	] as const)("rejects public-looking provider hostnames that resolve to %s addresses", async (_label, address, family) => {
-		await expect(
-			assertGitProviderBaseUrlAllowed("https://git.example.com", {
-				allowPrivateNetwork: false,
-				fieldName: "Git provider URL",
-				lookup: async () => [{ address, family }],
-			}),
-		).rejects.toThrow(/Git provider URL/i);
-	});
+	] as const)(
+		"rejects public-looking provider hostnames that resolve to %s addresses",
+		async (_label, address, family) => {
+			await expect(
+				assertGitProviderBaseUrlAllowed("https://git.example.com", {
+					allowPrivateNetwork: false,
+					fieldName: "Git provider URL",
+					lookup: async () => [{ address, family }],
+				}),
+			).rejects.toThrow(/Git provider URL/i);
+		},
+	);
 
 	it("rejects provider hostnames when any resolved address is blocked", async () => {
 		await expect(

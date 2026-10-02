@@ -233,6 +233,7 @@ export const apiCreateBackup = createSchema
 		metadata: apiBackupMetadata,
 		serviceName: safeBackupShellName("Service name").nullable().optional(),
 		includeEncryptionKey: z.boolean().optional(),
+		backupType: z.enum(["database", "compose"]),
 	});
 
 export const apiFindOneBackup = z.object({

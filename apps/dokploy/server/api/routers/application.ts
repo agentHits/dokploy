@@ -4,7 +4,11 @@ import {
 	createDomain,
 	deleteAllMiddlewares,
 	findApplicationById,
+	findEnvironmentById,
+	findPreviewDeploymentsByApplicationId,
+	findProjectById,
 	findRegistryById,
+	generateTraefikMeDomain,
 	getAccessibleServerIds,
 	getApplicationStats,
 	getContainerLogs,
@@ -979,7 +983,9 @@ export const applicationRouter = createTRPCRouter({
 				currentApplication,
 				["customGitUrl"],
 			);
-			await assertCustomGitUrlAllowed(updateData.customGitUrl);
+			if (updateData.customGitUrl) {
+				await assertCustomGitUrlAllowed(updateData.customGitUrl);
+			}
 			await updateApplication(input.applicationId, updateData);
 			await audit(ctx, {
 				action: "update",

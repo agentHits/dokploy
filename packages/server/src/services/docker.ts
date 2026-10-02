@@ -5,6 +5,7 @@ import {
 	execAsyncRemote,
 } from "@dokploy/server/utils/process/execAsync";
 import { TRPCError } from "@trpc/server";
+import { quote } from "shell-quote";
 
 const dockerNodeIdentifierRegex = /^[a-zA-Z0-9._-]+$/;
 

@@ -232,6 +232,10 @@ const normalizeCreateMountInput = async (
 		return normalizedInput;
 	}
 
+	if (!normalizedInput.serviceType || !normalizedInput.serviceId) {
+		return normalizedInput;
+	}
+
 	const serviceContext = await findBindMountServiceContext(
 		normalizedInput.serviceType,
 		normalizedInput.serviceId,

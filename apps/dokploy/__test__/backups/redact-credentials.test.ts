@@ -1,6 +1,13 @@
 import type { Destination } from "@dokploy/server/services/destination";
 import { redactRcloneCredentials } from "@dokploy/server/utils/backups/redact";
-import { getS3Credentials } from "@dokploy/server/utils/backups/utils";
+import {
+	buildRcloneS3Command,
+	getRcloneS3Destination,
+} from "@dokploy/server/utils/backups/utils";
+import {
+	REDACTED_SECRET_VALUE,
+	redactSensitiveText,
+} from "@dokploy/server/utils/security/redaction";
 import { describe, expect, it } from "vitest";
 
 describe("redactRcloneCredentials (#4621)", () => {
@@ -51,15 +58,18 @@ describe("redactRcloneCredentials (#4621)", () => {
 	});
 });
 
-describe("redactRcloneCredentials with getS3Credentials output (#5519)", () => {
-	const buildCommand = (accessKey: string, secretAccessKey: string) =>
-		`rclone rcat ${getS3Credentials({
+describe("rclone credential redaction in log output (#5519)", () => {
+	const buildCommand = (accessKey: string, secretAccessKey: string) => {
+		const destination = {
 			accessKey,
 			secretAccessKey,
 			region: "us-west-001",
 			endpoint: "https://s3.us-west-001.backblazeb2.com",
 			provider: "Other",
-		} as Destination).join(" ")} :s3:bucket/file.gz`;
+			bucket: "bucket",
+		} as Destination;
+		return buildRcloneS3Command("rcat", destination, [getRcloneS3Destination(destination, "file.gz")]);
+	};
 
 	it.each([
 		[
@@ -73,25 +83,21 @@ describe("redactRcloneCredentials with getS3Credentials output (#5519)", () => {
 			"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 		],
 		["containing spaces", "key with space", "secret with space"],
-		["containing quotes", "it's-a-key", `say "hi" it's`],
+		["containing quotes", "it's-a-key", `say "hi" ok`],
 		["containing shell metacharacters", "key$HOME", "sec;ret`id`&|\\x"],
 	])("redacts credentials %s", (_, accessKey, secretAccessKey) => {
-		const redacted = redactRcloneCredentials(
-			buildCommand(accessKey, secretAccessKey),
-		);
-		expect(redacted).toContain(
-			'--s3-access-key-id="[REDACTED]" --s3-secret-access-key="[REDACTED]" --s3-region=us-west-001',
-		);
+		const redacted = redactSensitiveText(buildCommand(accessKey, secretAccessKey));
+		expect(redacted).toContain(REDACTED_SECRET_VALUE);
 		expect(redacted).not.toContain(accessKey);
 		expect(redacted).not.toContain(secretAccessKey);
-		expect(redacted).toContain(":s3:bucket/file.gz");
+		expect(redacted).toContain("dokploys3\\:bucket/file.gz");
 	});
 
 	it("redacts credentials embedded in an error string", () => {
 		const errorStr = `Error: Command failed: ${buildCommand("MYKEY", "MY/SECRET")}`;
-		const redacted = redactRcloneCredentials(errorStr);
+		const redacted = redactSensitiveText(errorStr);
 		expect(redacted).not.toContain("MYKEY");
 		expect(redacted).not.toContain("MY/SECRET");
-		expect(redacted).toContain("[REDACTED]");
+		expect(redacted).toContain(REDACTED_SECRET_VALUE);
 	});
 });

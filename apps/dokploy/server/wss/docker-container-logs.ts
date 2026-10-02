@@ -4,8 +4,8 @@ import { resolveServerDestinationHost } from "@dokploy/server/utils/servers/dest
 import { spawn } from "node-pty";
 import { Client } from "ssh2";
 import { WebSocketServer } from "ws";
-import { canAccessDockerLogsWebSocket } from "./docker-permission";
 import { canAccessDockerOverWss } from "./authorize";
+import { canAccessDockerLogsWebSocket } from "./docker-permission";
 import {
 	getShell,
 	isValidContainerId,
@@ -46,6 +46,11 @@ export const setupDockerContainerLogsWebSocketServer = (
 		const runType = url.searchParams.get("runType");
 		const serviceId = url.searchParams.get("serviceId");
 		const { user, session } = await validateRequest(req);
+
+		if (!user || !session) {
+			ws.close();
+			return;
+		}
 
 		if (!containerId) {
 			ws.close(4000, "containerId no provided");

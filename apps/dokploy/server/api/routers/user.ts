@@ -7,8 +7,8 @@ import {
 	findCredentialAccount,
 	findNotificationById,
 	findOrganizationById,
-	findServerById,
 	findPasskeysByUserId,
+	findServerById,
 	findUserById,
 	getAccessibleServerIds,
 	getDokployUrl,
@@ -31,8 +31,8 @@ import {
 	apiUpdateUser,
 	invitation,
 	member,
-	server,
 	organization,
+	server,
 	session,
 	user,
 } from "@dokploy/server/db/schema";
@@ -46,8 +46,7 @@ import { hasValidLicense } from "@dokploy/server/services/proprietary/license-ke
 import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
 import { TRPCError } from "@trpc/server";
 import * as bcrypt from "bcrypt";
-import { and, asc, eq, gt, inArray, ne } from "drizzle-orm";
-import { and, asc, desc, eq, gt, ne } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, ne } from "drizzle-orm";
 import { z } from "zod";
 import { apiKeyNameSchema } from "@/lib/api-keys";
 import { audit } from "@/server/api/utils/audit";

@@ -36,10 +36,14 @@ export const execAsync = async (
 		};
 	} catch (error) {
 		if (error instanceof Error) {
-			// @ts-expect-error - exec error has these properties
-			const exitCode = error.code;
-			const stdout = error.stdout?.toString() || "";
-			const stderr = error.stderr?.toString() || "";
+			const execError = error as NodeJS.ErrnoException & {
+				stdout?: unknown;
+				stderr?: unknown;
+			};
+			const exitCode =
+				typeof execError.code === "number" ? execError.code : undefined;
+			const stdout = execError.stdout?.toString() || "";
+			const stderr = execError.stderr?.toString() || "";
 
 			throw new ExecError(`Command execution failed: ${error.message}`, {
 				command,

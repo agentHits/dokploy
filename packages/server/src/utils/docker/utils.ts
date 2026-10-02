@@ -752,12 +752,15 @@ const inspectDockerVolumes = async (
 
 export const getDockerDiskUsage = async (
 	detailLimit: DockerDiskUsageDetailLimit = 10,
+	serverId?: string,
 ): Promise<DockerDiskUsageItem[]> => {
 	const summaryCommand = "docker system df --format '{{json .}}'";
 	const verboseCommand = "docker system df -v";
+	const runCommand = (command: string) =>
+		serverId ? execAsyncRemote(serverId, command) : execAsync(command);
 	const [summaryResult, verboseResult] = await Promise.all([
-		execAsync(summaryCommand),
-		execAsync(verboseCommand).catch(() => ({ stdout: "" })),
+		runCommand(summaryCommand),
+		runCommand(verboseCommand).catch(() => ({ stdout: "" })),
 	]);
 
 	const parsedDetails = parseDockerDiskUsageVerbose(verboseResult.stdout);
@@ -765,6 +768,12 @@ export const getDockerDiskUsage = async (
 		parsedDetails,
 		detailLimit,
 	);
+	if (serverId) {
+		return parseDockerDiskUsageSummary(summaryResult.stdout).map((item) => ({
+			...item,
+			details: [],
+		}));
+	}
 	const [containers, imageInspects, volumeInspects] = await Promise.all([
 		getDockerDiskUsageContainerReferences().catch(() => []),
 		inspectDockerImages(limitedDetails.images).catch(() => new Map()),

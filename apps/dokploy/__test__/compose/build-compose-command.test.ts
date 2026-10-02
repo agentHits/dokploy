@@ -110,14 +110,17 @@ describe("getBuildComposeCommand command boundary", () => {
 		["missing stack name", "stack deploy -c docker-compose.yml"],
 		["foreign stack name", "stack deploy -c docker-compose.yml other"],
 		["unsupported stack subcommand", "stack rm my-app"],
-	])("rejects custom compose commands containing %s", async (_, customCommand) => {
-		await expect(
-			getBuildComposeCommand({
-				...baseCompose,
-				command: customCommand,
-			}),
-		).rejects.toThrow("Invalid docker compose command");
-	});
+	])(
+		"rejects custom compose commands containing %s",
+		async (_, customCommand) => {
+			await expect(
+				getBuildComposeCommand({
+					...baseCompose,
+					command: customCommand,
+				}),
+			).rejects.toThrow("Invalid docker compose command");
+		},
+	);
 
 	it.each([
 		[
@@ -140,12 +143,15 @@ describe("getBuildComposeCommand command boundary", () => {
 			"stack deploy -c docker-compose.yml my-app",
 			"stack deploy -c docker-compose.yml my-app",
 		],
-	])("allows custom docker commands bound to %s", async (_, customCommand, expectedCommand) => {
-		const command = await getBuildComposeCommand({
-			...baseCompose,
-			command: customCommand,
-		});
+	])(
+		"allows custom docker commands bound to %s",
+		async (_, customCommand, expectedCommand) => {
+			const command = await getBuildComposeCommand({
+				...baseCompose,
+				command: customCommand,
+			});
 
-		expect(command).toContain(`docker ${expectedCommand}`);
-	});
+			expect(command).toContain(`docker ${expectedCommand}`);
+		},
+	);
 });

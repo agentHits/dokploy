@@ -8,10 +8,17 @@ vi.mock("@dokploy/server/services/permission", () => ({
 
 vi.mock("@dokploy/server", () => ({
 	IS_CLOUD: true,
+	findApplicationById: vi.fn(),
 	findComposeById: vi.fn(async () => ({
 		composeId: "compose-1",
 		name: "example-compose",
 	})),
+	findLibsqlById: vi.fn(),
+	findMariadbById: vi.fn(),
+	findMongoById: vi.fn(),
+	findMySqlById: vi.fn(),
+	findPostgresById: vi.fn(),
+	findRedisById: vi.fn(),
 	updateCompose: mockUpdateCompose,
 }));
 

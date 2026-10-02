@@ -29,6 +29,7 @@ import {
 	WEBSITE_URL,
 } from "@/server/utils/stripe";
 import {
+	adminProcedure,
 	createTRPCRouter,
 	ownerProcedure,
 	protectedProcedure,
@@ -122,12 +123,12 @@ export const stripeRouter = createTRPCRouter({
 			};
 		}),
 
-	getProducts: adminProcedure.query(async ({ ctx }) => {
+	getProducts: ownerProcedure.query(async ({ ctx }) => {
 		const user = await findUserById(ctx.user.ownerId);
 		const stripeCustomerId = user.stripeCustomerId;
 
 		const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-			apiVersion: "2026-06-24.dahlia",
+			apiVersion: "2024-09-30.acacia",
 		});
 
 		const products = await stripe.products.list({
@@ -237,7 +238,7 @@ export const stripeRouter = createTRPCRouter({
 		)
 		.mutation(async ({ ctx, input }) => {
 			const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-				apiVersion: "2026-06-24.dahlia",
+				apiVersion: "2024-09-30.acacia",
 			});
 
 			const items = getStripeItems(
@@ -295,7 +296,7 @@ export const stripeRouter = createTRPCRouter({
 		const stripeCustomerId = owner.stripeCustomerId;
 
 		const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-			apiVersion: "2026-06-24.dahlia",
+			apiVersion: "2024-09-30.acacia",
 		});
 
 		try {
@@ -327,7 +328,7 @@ export const stripeRouter = createTRPCRouter({
 		)
 		.mutation(async ({ ctx, input }) => {
 			const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-				apiVersion: "2026-06-24.dahlia",
+				apiVersion: "2024-09-30.acacia",
 			});
 			const owner = await findUserById(ctx.user.ownerId);
 
@@ -434,7 +435,7 @@ export const stripeRouter = createTRPCRouter({
 		}
 
 		const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-			apiVersion: "2026-06-24.dahlia",
+			apiVersion: "2024-09-30.acacia",
 		});
 
 		try {

@@ -85,9 +85,9 @@ describe("compose createCommand injection", () => {
 	it("allows a legitimate custom command", () => {
 		const cmd = createCommand({
 			...base,
-			command: "compose -f docker-compose.yml -p app up -d --build",
+			command: "compose -f docker-compose.yml -p compose-app up -d --build",
 		} as any);
-		expect(cmd).toBe("compose -f docker-compose.yml -p app up -d --build");
+		expect(cmd).toBe("compose -f docker-compose.yml -p compose-app up -d --build");
 	});
 
 	it("keeps a legitimate composePath intact", () => {

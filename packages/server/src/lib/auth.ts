@@ -195,14 +195,11 @@ const { handler, api } = betterAuth({
 				await sendVerificationEmail({
 					userName: user.name || "User",
 					email: user.email,
-					subject: "Reset your password",
-					text: `
-				<p>Click the link to reset your password: <a href="${url}">Reset Password</a></p>
-				`,
+					verificationUrl: url,
 				});
 			}
-			},
 		},
+	},
 	emailAndPassword: {
 		enabled: true,
 		autoSignIn: !IS_CLOUD,
@@ -226,178 +223,143 @@ const { handler, api } = betterAuth({
 		},
 	},
 	databaseHooks: {
-			user: {
-				create: {
-					before: async (_user, context) => {
-						if (context?.path.includes("/scim")) {
-							return { data: { emailVerified: true } };
-						}
-						if (!IS_CLOUD) {
-							const xDokployToken =
-								context?.request?.headers?.get("x-dokploy-token");
-							if (xDokployToken) {
-								let invitation: Awaited<ReturnType<typeof getUserByToken>>;
-								try {
-									invitation = await getUserByToken(xDokployToken);
-								} catch {
-									throw new APIError("BAD_REQUEST", {
-										message: "Invalid invitation token",
-									});
-								}
-								if (invitation.isExpired) {
-									throw new APIError("BAD_REQUEST", {
-										message: "Invitation has expired",
-									});
-								}
-								if (invitation.status !== "pending") {
-									throw new APIError("BAD_REQUEST", {
-										message: "Invitation has already been used",
-									});
-								}
-								if (
-									_user.email.toLowerCase().trim() !==
-									invitation.email.toLowerCase().trim()
-								) {
-									throw new APIError("BAD_REQUEST", {
-										message: "Email does not match invitation",
-									});
-								}
-							} else {
-								const isSSORequest = context?.path.includes("/sso");
-								if (isSSORequest) {
-									return;
-								}
-								const isAdminPresent = await db.query.member.findFirst({
-									where: eq(schema.member.role, "owner"),
-								});
-								if (isAdminPresent) {
-									throw new APIError("BAD_REQUEST", {
-										message: "Admin is already created",
-									});
-								}
-							}
-						}
-					},
-					after: async (user, context) => {
-						const isSSORequest = context?.path.includes("/sso");
-						const isSCIMRequest = context?.path.includes("/scim");
-						const isAdminPresent = await db.query.member.findFirst({
-							where: eq(schema.member.role, "owner"),
-						});
-
-						if (!IS_CLOUD && !isAdminPresent) {
-							await updateWebServerSettings({
-								serverIp: await getPublicIpWithFallback(),
-							});
-						}
-
-						if (IS_CLOUD) {
+		user: {
+			create: {
+				before: async (_user, context) => {
+					if (context?.path.includes("/scim")) {
+						return { data: { emailVerified: true } };
+					}
+					if (!IS_CLOUD) {
+						const xDokployToken =
+							context?.request?.headers?.get("x-dokploy-token");
+						if (xDokployToken) {
+							let invitation: Awaited<ReturnType<typeof getUserByToken>>;
 							try {
-								const hutk = getHubSpotUTK(
-									context?.request?.headers?.get("cookie") || undefined,
-								);
-								// Cast to include additional fields
-								const userWithFields = user as typeof user & {
-									lastName?: string;
-								};
-								const hubspotSuccess = await submitToHubSpot(
-									{
-										email: user.email,
-										firstName: user.name || "", // name is mapped to firstName column
-										lastName: userWithFields.lastName || "",
-									},
-									hutk,
-								);
-								if (!hubspotSuccess) {
-									console.error("Failed to submit to HubSpot");
-								}
-							} catch (error) {
-								console.error("Error submitting to HubSpot", error);
-							}
-						}
-
-						if (isSCIMRequest) {
-							const membership = await db.query.member.findFirst({
-								where: eq(schema.member.userId, user.id),
-							});
-							if (membership) {
-								const defaultRole = await resolveOrganizationDefaultRole(
-									membership.organizationId,
-								);
-								if (defaultRole !== membership.role) {
-									await db
-										.update(schema.member)
-										.set({ role: defaultRole })
-										.where(eq(schema.member.id, membership.id));
-								}
-							}
-							return;
-						}
-
-						if (IS_CLOUD || !isAdminPresent) {
-							await db.transaction(async (tx) => {
-								const organization = await tx
-									.insert(schema.organization)
-									.values({
-										name: "My Organization",
-										ownerId: user.id,
-										createdAt: new Date(),
-									})
-									.returning()
-									.then((res) => res[0]);
-
-								await tx.insert(schema.member).values({
-									userId: user.id,
-									organizationId: organization?.id || "",
-									role: "owner",
-									createdAt: new Date(),
-									isDefault: true, // Mark first organization as default
-								});
-							});
-						} else if (isSSORequest) {
-							const providerId = context?.params?.providerId;
-							if (!providerId) {
+								invitation = await getUserByToken(xDokployToken);
+							} catch {
 								throw new APIError("BAD_REQUEST", {
-									message: "Provider ID is required",
+									message: "Invalid invitation token",
 								});
 							}
-							const provider = await db.query.ssoProvider.findFirst({
-								where: eq(schema.ssoProvider.providerId, providerId),
-							});
-
-							if (!provider) {
+							if (invitation.isExpired) {
 								throw new APIError("BAD_REQUEST", {
-									message: "Provider not found",
+									message: "Invitation has expired",
 								});
 							}
-							const defaultRole = provider.organizationId
-								? await resolveOrganizationDefaultRole(provider.organizationId)
-								: "member";
-							await db.insert(schema.member).values({
-								userId: user.id,
-								organizationId: provider?.organizationId || "",
-								role: defaultRole,
-								createdAt: new Date(),
-								isDefault: true,
+							if (invitation.status !== "pending") {
+								throw new APIError("BAD_REQUEST", {
+									message: "Invitation has already been used",
+								});
+							}
+							if (
+								_user.email.toLowerCase().trim() !==
+								invitation.email.toLowerCase().trim()
+							) {
+								throw new APIError("BAD_REQUEST", {
+									message: "Email does not match invitation",
+								});
+							}
+						} else {
+							const isSSORequest = context?.path.includes("/sso");
+							if (isSSORequest) {
+								return;
+							}
+							const isAdminPresent = await db.query.member.findFirst({
+								where: eq(schema.member.role, "owner"),
 							});
+							if (isAdminPresent) {
+								throw new APIError("BAD_REQUEST", {
+									message: "Admin is already created",
+								});
+							}
 						}
-					},
+					}
 				},
-			},
-			session: {
-				create: {
-					before: async (session) => {
-						// Find the default organization for this user
-						// Priority: 1) isDefault=true, 2) most recently created
-						const member = await db.query.member.findFirst({
-							where: eq(schema.member.userId, session.userId),
-							orderBy: [
-								desc(schema.member.isDefault),
-								desc(schema.member.createdAt),
-							],
-							with: {
-								organization: true,
-							},
+				after: async (user, context) => {
+					const isSSORequest = context?.path.includes("/sso");
+					const isSCIMRequest = context?.path.includes("/scim");
+					const isAdminPresent = await db.query.member.findFirst({
+						where: eq(schema.member.role, "owner"),
+					});
+
+					if (!IS_CLOUD && !isAdminPresent) {
+						await updateWebServerSettings({
+							serverIp: await getPublicIpWithFallback(),
+						});
+					}
+
+					if (IS_CLOUD) {
+						try {
+							const hutk = getHubSpotUTK(
+								context?.request?.headers?.get("cookie") || undefined,
+							);
+							// Cast to include additional fields
+							const userWithFields = user as typeof user & {
+								lastName?: string;
+							};
+							const hubspotSuccess = await submitToHubSpot(
+								{
+									email: user.email,
+									firstName: user.name || "", // name is mapped to firstName column
+									lastName: userWithFields.lastName || "",
+								},
+								hutk,
+							);
+							if (!hubspotSuccess) {
+								console.error("Failed to submit to HubSpot");
+							}
+						} catch (error) {
+							console.error("Error submitting to HubSpot", error);
+						}
+					}
+
+					if (isSCIMRequest) {
+						const membership = await db.query.member.findFirst({
+							where: eq(schema.member.userId, user.id),
+						});
+						if (membership) {
+							const defaultRole = await resolveOrganizationDefaultRole(
+								membership.organizationId,
+							);
+							if (defaultRole !== membership.role) {
+								await db
+									.update(schema.member)
+									.set({ role: defaultRole })
+									.where(eq(schema.member.id, membership.id));
+							}
+						}
+						return;
+					}
+
+					if (IS_CLOUD || !isAdminPresent) {
+						await db.transaction(async (tx) => {
+							const organization = await tx
+								.insert(schema.organization)
+								.values({
+									name: "My Organization",
+									ownerId: user.id,
+									createdAt: new Date(),
+								})
+								.returning()
+								.then((res) => res[0]);
+
+							await tx.insert(schema.member).values({
+								userId: user.id,
+								organizationId: organization?.id || "",
+								role: "owner",
+								createdAt: new Date(),
+								isDefault: true, // Mark first organization as default
+							});
+						});
+					} else if (isSSORequest) {
+						const providerId = context?.params?.providerId;
+						if (!providerId) {
+							throw new APIError("BAD_REQUEST", {
+								message: "Provider ID is required",
+							});
+						}
+						const provider = await db.query.ssoProvider.findFirst({
+							where: eq(schema.ssoProvider.providerId, providerId),
 						});
 
 						if (!provider) {
@@ -407,53 +369,73 @@ const { handler, api } = betterAuth({
 						}
 						if (!canProvisionSsoMembershipForEmail(user.email, provider)) {
 							throw new APIError("UNAUTHORIZED", {
-								message: "SSO email domain is not allowed for this provider",
-							});
+							message: "SSO email domain is not allowed for this provider",
+						});
 						}
+						const defaultRole = provider.organizationId
+							? await resolveOrganizationDefaultRole(provider.organizationId)
+							: "member";
 						await db.insert(schema.member).values({
 							userId: user.id,
-							organizationId: provider.organizationId,
-							role: "member",
+							organizationId: provider?.organizationId || "",
+							role: defaultRole,
 							createdAt: new Date(),
 							isDefault: true,
 						});
-						if (!memberRecord) return;
-						await createAuditLog({
-							organizationId: orgId,
-							userId: session.userId,
-							userEmail: memberRecord.user.email,
-							userRole: memberRecord.role,
-							action: "login",
-							resourceType: "session",
-						});
-					},
-				},
-				delete: {
-					after: async (session) => {
-						const orgId = (
-							session as typeof session & { activeOrganizationId?: string }
-						).activeOrganizationId;
-						if (!orgId) return;
-						const memberRecord = await db.query.member.findFirst({
-							where: and(
-								eq(schema.member.userId, session.userId),
-								eq(schema.member.organizationId, orgId),
-							),
-							with: { user: true },
-						});
-						if (!memberRecord) return;
-						await createAuditLog({
-							organizationId: orgId,
-							userId: session.userId,
-							userEmail: memberRecord.user.email,
-							userRole: memberRecord.role,
-							action: "logout",
-							resourceType: "session",
-						});
-					},
+					}
 				},
 			},
 		},
+		session: {
+			create: {
+				before: async (session) => {
+					// Find the default organization for this user
+					// Priority: 1) isDefault=true, 2) most recently created
+					const member = await db.query.member.findFirst({
+						where: eq(schema.member.userId, session.userId),
+						orderBy: [
+							desc(schema.member.isDefault),
+							desc(schema.member.createdAt),
+						],
+						with: {
+							organization: true,
+						},
+					});
+
+					return {
+						data: {
+							...session,
+							activeOrganizationId: member?.organization.id,
+						},
+					};
+				},
+			},
+			delete: {
+				after: async (session) => {
+					const orgId = (
+						session as typeof session & { activeOrganizationId?: string }
+					).activeOrganizationId;
+					if (!orgId) return;
+					const memberRecord = await db.query.member.findFirst({
+						where: and(
+							eq(schema.member.userId, session.userId),
+							eq(schema.member.organizationId, orgId),
+						),
+						with: { user: true },
+					});
+					if (!memberRecord) return;
+					await createAuditLog({
+						organizationId: orgId,
+						userId: session.userId,
+						userEmail: memberRecord.user.email,
+						userRole: memberRecord.role,
+						action: "logout",
+						resourceType: "session",
+					});
+				},
+			},
+		},
+	},
 	session: {
 		expiresIn: 60 * 60 * 24 * 3,
 		updateAge: 60 * 60 * 24,

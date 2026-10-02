@@ -117,11 +117,14 @@ describe("Stripe billing owner boundary", () => {
 			() => createCaller("admin").updateInvoiceNotifications({ enabled: true }),
 		],
 		["getInvoices", () => createCaller("admin").getInvoices()],
-	])("denies org admins from %s before billing side effects", async (_, call) => {
-		await expect(call()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-		expect(mocks.findUserById).not.toHaveBeenCalled();
-		expect(mocks.stripeConstructor).not.toHaveBeenCalled();
-	});
+	])(
+		"denies org admins from %s before billing side effects",
+		async (_, call) => {
+			await expect(call()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+			expect(mocks.findUserById).not.toHaveBeenCalled();
+			expect(mocks.stripeConstructor).not.toHaveBeenCalled();
+		},
+	);
 
 	it("allows owners to read invoices for their billing owner account", async () => {
 		await expect(createCaller("owner").getInvoices()).resolves.toEqual([]);

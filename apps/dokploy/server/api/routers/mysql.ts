@@ -28,6 +28,7 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
+import { getServiceContainerCommand } from "@dokploy/server/utils/backups/utils";
 import {
 	preserveSecretPlaceholderFields,
 	redactDatabaseServiceSecrets,
@@ -476,6 +477,7 @@ export const mysqlRouter = createTRPCRouter({
 
 			const targetUser = type === "root" ? "root" : databaseUser;
 
+			const containerCmd = getServiceContainerCommand(appName);
 			const passwordChangeCommand = buildMysqlPasswordChangeCommand({
 				client: "mysql",
 				databaseRootPassword,

@@ -183,19 +183,24 @@ describe("application ENV authorized caller contract", () => {
 	it.each([
 		"prefix__DOKPLOY_REDACTED_SECRET__suffix",
 		"prefix[REDACTED]suffix",
-	])("sqa-env-03: rejects Application placeholder %s without side effects", async (value) => {
-		await expect(
-			createApplicationCaller().envUpsert({
-				applicationId: "app_1",
-				variables: { API_TOKEN: value },
-			}),
-		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+	])(
+		"sqa-env-03: rejects Application placeholder %s without side effects",
+		async (value) => {
+			await expect(
+				createApplicationCaller().envUpsert({
+					applicationId: "app_1",
+					variables: { API_TOKEN: value },
+				}),
+			).rejects.toMatchObject({ code: "BAD_REQUEST" });
 
-		expect(routerMocks.checkServicePermissionAndAccess).toHaveBeenCalledOnce();
-		expect(dbMocks.findFirst).not.toHaveBeenCalled();
-		expect(dbMocks.update).not.toHaveBeenCalled();
-		expect(routerMocks.audit).not.toHaveBeenCalled();
-		expect(routerMocks.myQueueAdd).not.toHaveBeenCalled();
-		expect(routerMocks.deploy).not.toHaveBeenCalled();
-	});
+			expect(
+				routerMocks.checkServicePermissionAndAccess,
+			).toHaveBeenCalledOnce();
+			expect(dbMocks.findFirst).not.toHaveBeenCalled();
+			expect(dbMocks.update).not.toHaveBeenCalled();
+			expect(routerMocks.audit).not.toHaveBeenCalled();
+			expect(routerMocks.myQueueAdd).not.toHaveBeenCalled();
+			expect(routerMocks.deploy).not.toHaveBeenCalled();
+		},
+	);
 });

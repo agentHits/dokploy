@@ -150,6 +150,19 @@ export const createVolumeBackupSchema = createInsertSchema(volumeBackups)
 		keepLatestCount: safeVolumeBackupRetentionCount,
 		serviceName: safeDockerServiceName.nullable().optional(),
 		volumeName: safeDockerVolumeName,
+		serviceType: z
+			.enum([
+				"application",
+				"compose",
+				"libsql",
+				"mariadb",
+				"mongo",
+				"mysql",
+				"postgres",
+				"redis",
+			])
+			.nullable()
+			.optional(),
 	});
 
 export const updateVolumeBackupSchema = createVolumeBackupSchema.extend({

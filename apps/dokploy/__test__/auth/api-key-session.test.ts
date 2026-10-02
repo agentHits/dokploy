@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 	memberFindFirst: vi.fn(),
 	memberInsertValues: vi.fn(),
 	apiKeyFindFirst: vi.fn(),
+	organizationFindFirst: vi.fn(),
 	authOptions: undefined as any,
 	checkPermission: vi.fn(),
 	createAuthMiddleware: vi.fn((middleware) => middleware),
@@ -86,6 +87,9 @@ vi.mock("@dokploy/server/db", () => ({
 			},
 			member: {
 				findFirst: mocks.memberFindFirst,
+			},
+			organization: {
+				findFirst: mocks.organizationFindFirst,
 			},
 			ssoProvider: {
 				findFirst: mocks.ssoProviderFindFirst,

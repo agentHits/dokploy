@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
 	findMySqlById: vi.fn(),
 	findPostgresById: vi.fn(),
 	findRedisById: vi.fn(),
+	getServiceContainer: vi.fn(async () => ({ Id: "container-1" })),
 	getServiceContainerCommand: vi.fn(
 		(appName: string) =>
 			`docker ps -q --filter "label=com.docker.swarm.service.name=${appName}" | head -n 1`,
@@ -65,6 +66,7 @@ vi.mock("@dokploy/server", () => ({
 	getContainerLogs: mocks.noop,
 	getMountPath: mocks.noop,
 	getServiceContainerCommand: mocks.getServiceContainerCommand,
+	getServiceContainer: mocks.getServiceContainer,
 	getWebServerSettings: mocks.noop,
 	quoteShellArg: mocks.quoteShellArg,
 	rebuildDatabase: mocks.noop,

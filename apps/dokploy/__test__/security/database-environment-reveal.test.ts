@@ -198,26 +198,27 @@ describe("database environment reveal boundary", () => {
 		}
 	});
 
-	it.each(
-		cases,
-	)("keeps $id normal reads redacted while reveal returns raw env", async (testCase) => {
-		const caller = testCase.router.createCaller(createContext());
-		const input = { [testCase.idField]: testCase.id };
-		const expectedEnv = `${testCase.id.toUpperCase().replace(/-/g, "_")}_SECRET=secret`;
+	it.each(cases)(
+		"keeps $id normal reads redacted while reveal returns raw env",
+		async (testCase) => {
+			const caller = testCase.router.createCaller(createContext());
+			const input = { [testCase.idField]: testCase.id };
+			const expectedEnv = `${testCase.id.toUpperCase().replace(/-/g, "_")}_SECRET=secret`;
 
-		const normalRead = await caller.one(input as never);
-		expect(normalRead.env).toBe(REDACTED_SECRET_VALUE);
+			const normalRead = await caller.one(input as never);
+			expect(normalRead.env).toBe(REDACTED_SECRET_VALUE);
 
-		mocks.checkServicePermissionAndAccess.mockClear();
+			mocks.checkServicePermissionAndAccess.mockClear();
 
-		const revealed = await caller.revealEnvironment(input as never);
-		expect(revealed).toEqual({ env: expectedEnv });
-		expect(mocks.checkServicePermissionAndAccess).toHaveBeenCalledWith(
-			expect.anything(),
-			testCase.id,
-			{
-				envVars: ["read"],
-			},
-		);
-	});
+			const revealed = await caller.revealEnvironment(input as never);
+			expect(revealed).toEqual({ env: expectedEnv });
+			expect(mocks.checkServicePermissionAndAccess).toHaveBeenCalledWith(
+				expect.anything(),
+				testCase.id,
+				{
+					envVars: ["read"],
+				},
+			);
+		},
+	);
 });
