@@ -369,7 +369,12 @@ export async function getServerSideProps(
 					activeTab: (activeTab || "general") as TabState,
 				},
 			};
-		} catch {
+		} catch (error) {
+			console.error(
+				"[getServerSideProps] failed to load postgres",
+				params?.postgresId,
+				error,
+			);
 			return {
 				redirect: {
 					permanent: false,

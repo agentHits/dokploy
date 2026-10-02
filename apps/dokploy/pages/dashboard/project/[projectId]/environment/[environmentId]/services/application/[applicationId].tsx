@@ -493,7 +493,12 @@ export async function getServerSideProps(
 					environmentId: params?.environmentId,
 				},
 			};
-		} catch {
+		} catch (error) {
+			console.error(
+				"[getServerSideProps] failed to load application",
+				params?.applicationId,
+				error,
+			);
 			return {
 				redirect: {
 					permanent: false,
