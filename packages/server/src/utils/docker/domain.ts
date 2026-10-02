@@ -6,7 +6,6 @@ import { network, patch } from "@dokploy/server/db/schema";
 import type { Compose } from "@dokploy/server/services/compose";
 import type { Domain } from "@dokploy/server/services/domain";
 import { eq, inArray } from "drizzle-orm";
-import { quote } from "shell-quote";
 import { parse, stringify } from "yaml";
 import {
 	normalizeRelativeFilePath,

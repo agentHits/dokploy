@@ -1105,7 +1105,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 																	if (value === "") {
 																		field.onChange(undefined);
 																	} else {
-																		const port = Number.parseInt(value);
+																		const port = Number.parseInt(value, 10);
 																		if (port > 0 && port < 65536) {
 																			field.onChange(port);
 																		}
@@ -1365,7 +1365,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 															onChange={(e) => {
 																const value = e.target.value;
 																if (value) {
-																	const port = Number.parseInt(value);
+																	const port = Number.parseInt(value, 10);
 																	if (port > 0 && port < 10) {
 																		field.onChange(port);
 																	}
@@ -1467,7 +1467,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 															onChange={(e) => {
 																const value = e.target.value;
 																if (value) {
-																	const port = Number.parseInt(value);
+																	const port = Number.parseInt(value, 10);
 																	if (port > 0 && port <= 5) {
 																		field.onChange(port);
 																	}
@@ -1718,7 +1718,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 																if (value === "" || value === "-") {
 																	field.onChange(0);
 																} else {
-																	const priority = Number.parseInt(value);
+																	const priority = Number.parseInt(value, 10);
 																	if (
 																		!Number.isNaN(priority) &&
 																		priority >= -2 &&
@@ -1758,7 +1758,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 																		if (value === "") {
 																			field.onChange(undefined);
 																		} else {
-																			const retry = Number.parseInt(value);
+																			const retry = Number.parseInt(value, 10);
 																			if (!Number.isNaN(retry)) {
 																				field.onChange(retry);
 																			}
@@ -1792,7 +1792,7 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 																		if (value === "") {
 																			field.onChange(undefined);
 																		} else {
-																			const expire = Number.parseInt(value);
+																			const expire = Number.parseInt(value, 10);
 																			if (!Number.isNaN(expire)) {
 																				field.onChange(expire);
 																			}

@@ -61,11 +61,10 @@ afterAll(() => {
 	if (existsSync(MARK)) rmSync(MARK);
 });
 
-
 // Payloads that try to break out of every quoting style used in the builders.
 const p = (mark: string) => [
 	`$(touch ${mark})`,
-	"`touch " + mark + "`",
+	`\`touch ${mark}\``,
 	`x'; touch ${mark}; '`,
 	`x"; touch ${mark}; echo "`,
 	`x; touch ${mark}`,
@@ -109,6 +108,6 @@ describe("database backup/restore command injection", () => {
 		// Values are inlined shell-quoted, never interpreted by the shell.
 		expect(cmd).toContain("-U app_user");
 		expect(cmd).toContain("--no-password my-db_prod");
-		expect(cmd).toContain('pg_dump -Fc --no-acl --no-owner');
+		expect(cmd).toContain("pg_dump -Fc --no-acl --no-owner");
 	});
 });

@@ -10,7 +10,6 @@ import { removeDirectoryIfExistsContent } from "@dokploy/server/utils/filesystem
 import { quoteShellArg } from "@dokploy/server/utils/filesystem/safe-path";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
-import { quote } from "shell-quote";
 import { stringify } from "yaml";
 import type { z } from "zod";
 import { encodeBase64 } from "../utils/docker/utils";

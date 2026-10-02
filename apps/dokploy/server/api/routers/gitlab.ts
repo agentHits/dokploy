@@ -1,7 +1,6 @@
 import {
 	assertGitProviderAccess,
 	assertGitProviderManagementAccess,
-	canViewGitProviderSecrets,
 	createGitlab,
 	findGitlabById,
 	findGitlabGitProviderId,

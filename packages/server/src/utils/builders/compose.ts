@@ -28,14 +28,17 @@ export const getBuildComposeCommand = async (rawCompose: ComposeNested) => {
 	const { COMPOSE_PATH } = paths(!!compose.serverId);
 	const { sourceType, appName, mounts, composeType, domains } = compose;
 	const projectPath = join(COMPOSE_PATH, compose.appName, "code");
-	normalizeRelativeFilePath(sourceType === "raw" ? "docker-compose.yml" : compose.composePath);
+	normalizeRelativeFilePath(
+		sourceType === "raw" ? "docker-compose.yml" : compose.composePath,
+	);
 	const quotedProjectPath = quoteShellArgument(projectPath);
 	const quotedAppName = quoteShellArgument(compose.appName);
 	const command = createCommand(
 		compose,
 		mounts.length > 0 ? projectPath : undefined,
 	);
-	const envCommand = compose.createEnvFile === false ? "" : getCreateEnvFileCommand(compose);
+	const envCommand =
+		compose.createEnvFile === false ? "" : getCreateEnvFileCommand(compose);
 	const exportEnvCommand = getExportEnvCommand(compose);
 
 	const newCompose = await writeDomainsToCompose(compose, domains);
@@ -94,7 +97,8 @@ const throwInvalidCustomDockerCommand = (): never => {
 
 const throwInvalidCustomDockerCharacters = (reason?: string): never => {
 	throw new Error(
-		"Invalid docker compose command: Invalid characters in compose command" + (reason ? ` (${reason})` : ""),
+		"Invalid docker compose command: Invalid characters in compose command" +
+			(reason ? ` (${reason})` : ""),
 	);
 };
 
@@ -108,7 +112,13 @@ const getLongOptionValue = (argument: string, option: string) => {
 	return undefined;
 };
 
-const composeValueOptions = new Set(["-f", "--file", "--project-directory", "--env-file", "--profile"]);
+const composeValueOptions = new Set([
+	"-f",
+	"--file",
+	"--project-directory",
+	"--env-file",
+	"--profile",
+]);
 
 const assertComposeProjectNameBound = (args: string[], appName: string) => {
 	let hasProjectName = false;
@@ -162,7 +172,12 @@ const assertStackNameBound = (args: string[], appName: string) => {
 		throwInvalidCustomDockerCommand();
 	}
 
-	const valueOptions = new Set(["-c", "-f", "--compose-file", "--resolve-image",]);
+	const valueOptions = new Set([
+		"-c",
+		"-f",
+		"--compose-file",
+		"--resolve-image",
+	]);
 	const operands: string[] = [];
 	for (let index = 2; index < args.length; index += 1) {
 		const current = args[index];
@@ -203,7 +218,11 @@ const splitComposeChainSegments = (command: string): string[][] => {
 			segments[segments.length - 1]!.push(part);
 			continue;
 		}
-		if (part && typeof part === "object" && (part as { op?: string }).op === "&&") {
+		if (
+			part &&
+			typeof part === "object" &&
+			(part as { op?: string }).op === "&&"
+		) {
 			segments.push([]);
 			continue;
 		}
@@ -222,7 +241,9 @@ const createCustomDockerCommand = (command: string, appName: string) => {
 		/(?<!&)&(?!&)/.test(sanitizedCommand) ||
 		sanitizedCommand.includes("&&&")
 	) {
-		throwInvalidCustomDockerCharacters("Single '&' is not allowed; use '&&' for chaining");
+		throwInvalidCustomDockerCharacters(
+			"Single '&' is not allowed; use '&&' for chaining",
+		);
 	}
 	const segments = splitComposeChainSegments(sanitizedCommand);
 	const rendered = segments.map((args, index) => {
@@ -239,7 +260,9 @@ const createCustomDockerCommand = (command: string, appName: string) => {
 				throwInvalidCustomDockerCommand();
 			}
 		} else {
-		const isDockerCompose = (head === "docker" && args[1] === "compose") || head === "docker-compose";
+			const isDockerCompose =
+				(head === "docker" && args[1] === "compose") ||
+				head === "docker-compose";
 			if (!isDockerCompose) {
 				throw new Error(
 					"Invalid docker compose command: chained commands must strictly start with 'docker compose '",
@@ -257,7 +280,8 @@ export const createCommand = (compose: ComposeNested, projectPath?: string) => {
 		return createCustomDockerCommand(compose.command, appName);
 	}
 
-	const path = sourceType === "raw" ? "docker-compose.yml" : compose.composePath;
+	const path =
+		sourceType === "raw" ? "docker-compose.yml" : compose.composePath;
 
 	if (composeType === "docker-compose") {
 		return quoteShellArgs([

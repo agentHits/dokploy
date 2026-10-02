@@ -100,7 +100,7 @@ export const ShowVaultProviders = () => {
 																				provider.providerType}
 																		</Badge>
 																		<span className="text-xs text-muted-foreground">
-																			{"${{vault." + provider.name + ".…}}"}
+																			{`\${{vault.${provider.name}.…}}`}
 																		</span>
 																	</div>
 																</div>

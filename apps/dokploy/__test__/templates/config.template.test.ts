@@ -133,7 +133,7 @@ describe("processTemplate", () => {
 			expect(result.domains).toHaveLength(1);
 			const domain = result.domains[0];
 			expect(domain).toBeDefined();
-			if (!domain || !domain.host) return;
+			if (!domain?.host) return;
 			expect(domain.host).toBeDefined();
 			expect(domain.host).toContain(mockSchema.projectName);
 		});
@@ -158,7 +158,7 @@ describe("processTemplate", () => {
 			expect(result.domains).toHaveLength(1);
 			const domain = result.domains[0];
 			expect(domain).toBeDefined();
-			if (!domain || !domain.host) return;
+			if (!domain?.host) return;
 			expect(domain.host).toBeDefined();
 			expect(domain.host).toContain(mockSchema.projectName);
 		});

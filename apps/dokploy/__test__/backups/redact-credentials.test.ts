@@ -68,7 +68,9 @@ describe("rclone credential redaction in log output (#5519)", () => {
 			provider: "Other",
 			bucket: "bucket",
 		} as Destination;
-		return buildRcloneS3Command("rcat", destination, [getRcloneS3Destination(destination, "file.gz")]);
+		return buildRcloneS3Command("rcat", destination, [
+			getRcloneS3Destination(destination, "file.gz"),
+		]);
 	};
 
 	it.each([
@@ -86,7 +88,9 @@ describe("rclone credential redaction in log output (#5519)", () => {
 		["containing quotes", "it's-a-key", `say "hi" ok`],
 		["containing shell metacharacters", "key$HOME", "sec;ret`id`&|\\x"],
 	])("redacts credentials %s", (_, accessKey, secretAccessKey) => {
-		const redacted = redactSensitiveText(buildCommand(accessKey, secretAccessKey));
+		const redacted = redactSensitiveText(
+			buildCommand(accessKey, secretAccessKey),
+		);
 		expect(redacted).toContain(REDACTED_SECRET_VALUE);
 		expect(redacted).not.toContain(accessKey);
 		expect(redacted).not.toContain(secretAccessKey);
