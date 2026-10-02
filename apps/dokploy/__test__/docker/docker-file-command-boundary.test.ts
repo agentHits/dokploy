@@ -35,7 +35,7 @@ describe("getDockerCommand command boundary", () => {
 
 		expect(command).toMatch(/cd '[^']*apps\/api dir'/);
 		expect(command).toMatch(
-			/docker build -t 'my app; touch \/tmp\/pwn' -f '[^']*Docker file' \. --target 'prod stage; touch \/tmp\/pwn'/,
+			/docker build -t 'my app; touch \/tmp\/pwn' -f '[^']*Docker file' '[^']*apps\/api dir' --target 'prod stage; touch \/tmp\/pwn'/,
 		);
 		expect(command).toContain("--build-arg 'SAFE=va lue; touch /tmp/pwn'");
 		expect(command).not.toMatch(/\ncd [^']/);

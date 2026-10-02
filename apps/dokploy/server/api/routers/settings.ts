@@ -3,7 +3,6 @@ import {
 	checkGPUStatus,
 	checkPortInUse,
 	checkPostgresHealth,
-	checkRedisHealth,
 	checkTraefikHealth,
 	cleanupAll,
 	cleanupAllBackground,
@@ -13,11 +12,12 @@ import {
 	cleanupSystem,
 	cleanupVolumes,
 	DEFAULT_UPDATE_DATA,
-	execAsync,
 	findServerById,
 	getAccessibleServerIds,
+	getAgentHitsUpdateCommand,
 	getDockerDiskUsage,
 	getDokployImageTag,
+	getDokployVersionData,
 	getLogCleanupStatus,
 	getUpdateData,
 	getWebServerSettings,
@@ -74,7 +74,6 @@ import {
 	projects,
 	server,
 } from "@/server/db/schema";
-import { assertBuildsConcurrencyAllowed } from "@/server/queues/concurrency";
 import { cleanAllDeploymentQueue } from "@/server/queues/queueSetup";
 import { removeJob, schedule } from "@/server/utils/backup";
 import packageInfo from "../../../package.json";
@@ -126,41 +125,6 @@ export const settingsRouter = createTRPCRouter({
 			action: "reload",
 			resourceType: "settings",
 			resourceName: "dokploy",
-		});
-		return true;
-	}),
-	cleanRedis: adminProcedure.mutation(async ({ ctx }) => {
-		if (IS_CLOUD) {
-			return true;
-		}
-
-		const { stdout: containerId } = await execAsync(
-			`docker ps --filter "name=dokploy-redis" --filter "status=running" -q | head -n 1`,
-		);
-
-		if (!containerId) {
-			throw new Error("Redis container not found");
-		}
-
-		const redisContainerId = containerId.trim();
-
-		await execAsync(`docker exec -i ${redisContainerId} redis-cli flushall`);
-		await audit(ctx, {
-			action: "update",
-			resourceType: "settings",
-			resourceName: "clean-redis",
-		});
-		return true;
-	}),
-	reloadRedis: adminProcedure.mutation(async ({ ctx }) => {
-		if (IS_CLOUD) {
-			return true;
-		}
-		await reloadDockerResource("dokploy-redis");
-		await audit(ctx, {
-			action: "reload",
-			resourceType: "settings",
-			resourceName: "dokploy-redis",
 		});
 		return true;
 	}),
@@ -535,11 +499,6 @@ export const settingsRouter = createTRPCRouter({
 				});
 			}
 
-			await assertBuildsConcurrencyAllowed(
-				input.buildsConcurrency,
-				ctx.session.activeOrganizationId,
-			);
-
 			await updateWebServerSettings({
 				buildsConcurrency: input.buildsConcurrency,
 			});
@@ -655,14 +614,25 @@ export const settingsRouter = createTRPCRouter({
 
 		const data = await getUpdateData(packageInfo.version);
 		if (data.updateAvailable) {
-			void spawnAsync("docker", [
-				"service",
-				"update",
-				"--force",
-				"--image",
-				`dokploy/dokploy:${data.latestVersion}`,
-				"dokploy",
-			]);
+			if (data.updateSource === "agenthits") {
+				void spawnAsync("sh", [
+					"-c",
+					getAgentHitsUpdateCommand(
+						packageInfo.version,
+						data.latestVersion,
+						data.latestOfficialVersion,
+					),
+				]);
+			} else {
+				void spawnAsync("docker", [
+					"service",
+					"update",
+					"--force",
+					"--image",
+					`dokploy/dokploy:${data.latestVersion}`,
+					"dokploy",
+				]);
+			}
 			await audit(ctx, {
 				action: "update",
 				resourceType: "settings",
@@ -675,6 +645,9 @@ export const settingsRouter = createTRPCRouter({
 
 	getDokployVersion: protectedProcedure.query(() => {
 		return packageInfo.version;
+	}),
+	getDokployVersionData: protectedProcedure.query(() => {
+		return getDokployVersionData(packageInfo.version);
 	}),
 	getReleaseTag: protectedProcedure.query(() => {
 		return getDokployImageTag();
@@ -1019,18 +992,16 @@ export const settingsRouter = createTRPCRouter({
 		if (IS_CLOUD) {
 			return {
 				postgres: { status: "healthy" as const },
-				redis: { status: "healthy" as const },
 				traefik: { status: "healthy" as const },
 			};
 		}
 
-		const [postgres, redis, traefik] = await Promise.all([
+		const [postgres, traefik] = await Promise.all([
 			checkPostgresHealth(),
-			checkRedisHealth(),
 			checkTraefikHealth(),
 		]);
 
-		return { postgres, redis, traefik };
+		return { postgres, traefik };
 	}),
 	setupGPU: adminProcedure
 		.input(

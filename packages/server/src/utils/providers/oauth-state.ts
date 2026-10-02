@@ -20,6 +20,7 @@ export const getGithubIdFromAppSetupStateProviderId = (providerId: string) =>
 type GitProviderOAuthStateInput = {
 	providerType: GitProviderOAuthProviderType;
 	providerId: string;
+	githubUrl?: string;
 	redirectUri: string;
 	sessionId: string;
 	userId: string;
@@ -42,6 +43,10 @@ export type GitProviderOAuthStatePayload = {
 	v: typeof OAUTH_STATE_VERSION;
 	providerType: GitProviderOAuthProviderType;
 	providerId: string;
+	// Optional pinned GitHub Enterprise base URL (init flow only). Part of
+	// the signed payload so the setup callback never trusts a linkable query
+	// parameter for the host.
+	githubUrl?: string;
 	redirectUri: string;
 	sessionId: string;
 	userId: string;
@@ -87,6 +92,7 @@ const constantTimeEqual = (left: string, right: string) => {
 export const signGitProviderOAuthState = ({
 	providerType,
 	providerId,
+	githubUrl,
 	redirectUri,
 	sessionId,
 	userId,
@@ -98,6 +104,7 @@ export const signGitProviderOAuthState = ({
 		v: OAUTH_STATE_VERSION,
 		providerType,
 		providerId,
+		...(githubUrl === undefined ? {} : { githubUrl }),
 		redirectUri,
 		sessionId,
 		userId,

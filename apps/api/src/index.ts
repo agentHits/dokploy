@@ -5,7 +5,7 @@ import {
 	assertSignedDeploymentCancelJob,
 	assertSignedDeploymentJobsReadRequest,
 	assertSignedDeploymentQueueJob,
-} from "@dokploy/server/utils/deployments/signed-job";
+} from "@dokploy/server";
 import { zValidator } from "@hono/zod-validator";
 import { Inngest } from "inngest";
 import { serve as serveInngest } from "inngest/hono";
@@ -17,10 +17,13 @@ import {
 	signedDeployJobSchema,
 	signedDeploymentJobsReadSchema,
 } from "./schema.js";
-import { fetchDeploymentJobs } from "./service.js";
+import {
+	DeploymentQueueUnavailableError,
+	fetchDeploymentJobs,
+} from "./service.js";
 import { deploy } from "./utils.js";
 
-const app = new Hono();
+export const app = new Hono();
 
 const usedDeploymentSignatures = new Map<string, number>();
 
@@ -62,8 +65,8 @@ export const deploymentFunction = inngest.createFunction(
 				timeout: "1h", // Allow cancellation for up to 1 hour
 			},
 		],
+		triggers: [{ event: "deployment/requested" }],
 	},
-	{ event: "deployment/requested" },
 
 	async ({ event, step }) => {
 		const jobData = event.data as DeployJob;
@@ -130,7 +133,12 @@ app.post("/deploy", zValidator("json", signedDeployJobSchema), async (c) => {
 	try {
 		// Send event to Inngest instead of adding to Redis queue
 		await inngest.send({
-			id: `deployment:${signedData.signature}`,
+			id:
+				data.applicationType === "compose" &&
+				"operationId" in data &&
+				data.operationId
+					? `deployment:${data.operationId}`
+					: `deployment:${signedData.signature}`,
 			name: "deployment/requested",
 			data,
 		});
@@ -168,7 +176,6 @@ app.post(
 		const signedData = c.req.valid("json");
 		const data = await assertSignedDeploymentCancelJob(signedData, {
 			operation: "cancel",
-			requireActiveServer: false,
 		});
 		consumeDeploymentSignature(
 			signedData.signature,
@@ -234,15 +241,12 @@ app.post(
 			const rows = await fetchDeploymentJobs(serverId);
 			return c.json(rows);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			if (message.includes("INNGEST_BASE_URL")) {
-				return c.json(
-					{ message: "INNGEST_BASE_URL is required to list deployment jobs" },
-					503,
-				);
+			if (error instanceof DeploymentQueueUnavailableError) {
+				const status = error.reason === "not-configured" ? 503 : 502;
+				return c.json({ message: "Deployment queue is unavailable" }, status);
 			}
 			logger.error({ serverId, error }, "Failed to fetch jobs from Inngest");
-			return c.json([], 200);
+			return c.json({ message: "Deployment queue is unavailable" }, 502);
 		}
 	},
 );
@@ -258,5 +262,7 @@ app.on(
 );
 
 const port = Number.parseInt(process.env.PORT || "3000", 10);
-logger.info({ port }, "Starting Deployments Server with Inngest ✅");
-serve({ fetch: app.fetch, port });
+if (!process.env.VITEST) {
+	logger.info({ port }, "Starting Deployments Server with Inngest ✅");
+	serve({ fetch: app.fetch, port });
+}

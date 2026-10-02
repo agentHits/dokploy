@@ -39,7 +39,7 @@ const assertSwarmServerAccess = async (
 };
 
 export const swarmRouter = createTRPCRouter({
-	getNodes: withPermission("server", "read")
+	getNodes: withPermission("docker", "read")
 		.input(
 			z.object({
 				serverId: z.string().optional(),
@@ -50,14 +50,14 @@ export const swarmRouter = createTRPCRouter({
 
 			return await getSwarmNodes(input.serverId);
 		}),
-	getNodeInfo: withPermission("server", "read")
+	getNodeInfo: withPermission("docker", "read")
 		.input(z.object({ nodeId: z.string(), serverId: z.string().optional() }))
 		.query(async ({ input, ctx }) => {
 			await assertSwarmServerAccess(ctx, input.serverId);
 
 			return await getNodeInfo(input.nodeId, input.serverId);
 		}),
-	getNodeApps: withPermission("server", "read")
+	getNodeApps: withPermission("docker", "read")
 		.input(
 			z.object({
 				serverId: z.string().optional(),
@@ -68,7 +68,7 @@ export const swarmRouter = createTRPCRouter({
 
 			return getNodeApplications(input.serverId);
 		}),
-	getAppInfos: withPermission("server", "read")
+	getAppInfos: withPermission("docker", "read")
 		.meta({
 			openapi: {
 				path: "/drop-deployment",
@@ -92,7 +92,7 @@ export const swarmRouter = createTRPCRouter({
 
 			return await getApplicationInfo(input.appName, input.serverId);
 		}),
-	getContainerStats: withPermission("server", "read")
+	getContainerStats: withPermission("docker", "read")
 		.input(
 			z.object({
 				serverId: z.string().optional(),

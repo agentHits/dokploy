@@ -75,7 +75,10 @@ const createCaller = () =>
 	} as never);
 
 const dangerousPassword = "pa'$(touch /tmp/registry-pwn); echo";
+// Usernames keep their case (ECR requires exactly "AWS"); the boundary
+// under test is shell-escaping, not case normalization.
 const dangerousUsername = "User;$(id)";
+const normalizedDangerousUsername = dangerousUsername;
 
 describe("registry router remote test login boundary", () => {
 	beforeEach(() => {
@@ -213,7 +216,7 @@ describe("registry router remote test login boundary", () => {
 
 		const expectedCommand = mocks.safeDockerLoginCommand(
 			"registry.example.com",
-			dangerousUsername,
+			normalizedDangerousUsername,
 			dangerousPassword,
 		);
 
@@ -269,7 +272,7 @@ describe("registry router remote test login boundary", () => {
 				"login",
 				"registry.example.com",
 				"--username",
-				dangerousUsername,
+				normalizedDangerousUsername,
 				"--password-stdin",
 			],
 			{

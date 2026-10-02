@@ -9,8 +9,8 @@ import { checkServicePermissionAndAccess } from "@dokploy/server/services/permis
 import { TRPCError } from "@trpc/server";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { ZodError } from "zod";
-import { buildApplicationEnvUpsertDeploymentJob } from "@/server/api/utils/application-env-upsert";
 import { audit } from "@/server/api/utils/audit";
+import type { DeploymentJob } from "@/server/queues/queue-types";
 import { myQueue } from "@/server/queues/queueSetup";
 import { deploy } from "@/server/utils/deploy";
 
@@ -59,25 +59,25 @@ export const handleApplicationEnvUpsert = async (
 		return;
 	}
 
+	const { session, user } = await validateRequest(req);
+
+	if (!user || !session) {
+		res.status(401).json({ message: "Unauthorized" });
+		return;
+	}
+
+	const ctx = {
+		session: {
+			...session,
+			activeOrganizationId: session.activeOrganizationId || "",
+		},
+		user: {
+			...user,
+			role: user.role as "owner" | "member" | "admin",
+		},
+	};
+
 	try {
-		const { session, user } = await validateRequest(req);
-
-		if (!user || !session) {
-			res.status(401).json({ message: "Unauthorized" });
-			return;
-		}
-
-		const ctx = {
-			session: {
-				...session,
-				activeOrganizationId: session.activeOrganizationId || "",
-			},
-			user: {
-				...user,
-				role: user.role as "owner" | "member" | "admin",
-			},
-		};
-
 		const input = apiUpsertApplicationEnv.parse(req.body);
 
 		await checkServicePermissionAndAccess(
@@ -107,9 +107,17 @@ export const handleApplicationEnvUpsert = async (
 			});
 
 			if (input.redeploy) {
-				const jobData = buildApplicationEnvUpsertDeploymentJob(application);
+				const jobData: DeploymentJob = {
+					applicationId: input.applicationId,
+					titleLog: "Rebuild deployment",
+					descriptionLog: "Environment variables updated",
+					type: "redeploy",
+					applicationType: "application",
+					server: !!application.serverId,
+				};
 
 				if (IS_CLOUD && application.serverId) {
+					jobData.serverId = application.serverId;
 					deploy(jobData).catch((error) => {
 						console.error("Background deployment failed:", error);
 					});

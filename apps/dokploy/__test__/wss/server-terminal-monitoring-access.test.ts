@@ -52,14 +52,17 @@ vi.mock("ssh2", () => ({
 	})),
 }));
 
-vi.mock("../../server/wss/utils", () => ({
+vi.mock("../../server/wss/utils", async (importOriginal) => ({
+	...((await importOriginal<
+		typeof import("../../server/wss/utils")
+	>()) as object),
 	setupLocalServerSSHKey: mocks.setupLocalServerSSHKey,
 }));
 
 const { setupDockerStatsMonitoringSocketServer } = await import(
 	"../../server/wss/docker-stats"
 );
-const { getLocalServerIp, setupTerminalWebSocketServer } = await import(
+const { setupTerminalWebSocketServer } = await import(
 	"../../server/wss/terminal"
 );
 
@@ -182,26 +185,6 @@ describe("terminal WebSocket server permission gate", () => {
 			activeOrganizationId: "org-1",
 		});
 		expect(mocks.findServerById).not.toHaveBeenCalled();
-	});
-
-	it("uses literal dots when probing RFC1918 local IP addresses", async () => {
-		mocks.execAsync.mockResolvedValue({ stdout: "192.168.1.10\n" });
-
-		await expect(getLocalServerIp()).resolves.toBe("192.168.1.10");
-
-		const command = mocks.execAsync.mock.calls[0]?.[0] as string;
-		const pattern = command.match(/grep -E "([^"]+)"/)?.[1];
-		expect(command).toContain("192\\.168\\.");
-		expect(command).toContain("10\\.");
-		expect(command).toContain("172\\.1[6-9]\\.");
-		expect(pattern).toBeDefined();
-
-		const privateIpRegex = new RegExp(pattern ?? "");
-		expect(privateIpRegex.test("inet 192.168.1.10")).toBe(true);
-		expect(privateIpRegex.test("inet 10.0.0.1")).toBe(true);
-		expect(privateIpRegex.test("inet 172.31.0.1")).toBe(true);
-		expect(privateIpRegex.test("inet 100.64.0.1")).toBe(false);
-		expect(privateIpRegex.test("inet 172x31x0x1")).toBe(false);
 	});
 });
 

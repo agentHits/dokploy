@@ -53,7 +53,6 @@ export const buildKnownHostsCommand = ({
 	knownHostsPath: string;
 	port: number;
 }) =>
-	// ssh-keyscan is best-effort; the clone still owns the host-key decision.
 	`${quoteShellArgs(["ssh-keyscan", "-p", String(port), domain])} >> ${quoteShellArgument(knownHostsPath)} || true;`;
 
 export const buildPrivateKeyWriteCommand = (

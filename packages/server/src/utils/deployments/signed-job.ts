@@ -1,8 +1,11 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { findApplicationById } from "@dokploy/server/services/application";
-import { findComposeById } from "@dokploy/server/services/compose";
-import { findPreviewDeploymentById } from "@dokploy/server/services/preview-deployment";
-import { findServerById } from "@dokploy/server/services/server";
+import {
+	findApplicationById,
+	findComposeById,
+	findPreviewDeploymentById,
+	findServerById,
+} from "@dokploy/server";
+import { readSecret } from "@dokploy/server/db/constants";
 
 export type DeploymentQueueJob =
 	| {
@@ -24,6 +27,17 @@ export type DeploymentQueueJob =
 			serverId: string;
 	  }
 	| {
+			composeId: string;
+			titleLog?: string;
+			descriptionLog?: string;
+			server?: boolean;
+			type: "deploy";
+			applicationType: "compose";
+			serverId: string;
+			operationId: string;
+			expectedRevision: string;
+	  }
+	| {
 			applicationId: string;
 			previewDeploymentId: string;
 			titleLog?: string;
@@ -41,7 +55,7 @@ export type DeploymentCancelJob =
 export type DeploymentJobOperation = "deploy" | "cancel";
 export type DeploymentJobsReadOperation = "read-jobs";
 
-export type DeploymentJobScope = {
+type DeploymentJobScopeV1 = {
 	version: 1;
 	operation: DeploymentJobOperation;
 	applicationType: DeploymentQueueJob["applicationType"];
@@ -53,6 +67,14 @@ export type DeploymentJobScope = {
 	expiresAt: number;
 	nonce: string;
 };
+
+type DeploymentJobScopeV2 = Omit<DeploymentJobScopeV1, "version"> & {
+	version: 2;
+	operationId: string;
+	sourceRevision: string;
+};
+
+export type DeploymentJobScope = DeploymentJobScopeV1 | DeploymentJobScopeV2;
 
 export type SignedDeploymentQueueJob = DeploymentQueueJob & {
 	scope: DeploymentJobScope;
@@ -90,43 +112,50 @@ type SigningOptions = ScopeOptions & {
 };
 
 const DEFAULT_SCOPE_TTL_MS = 5 * 60_000;
-const LEGACY_API_KEY_DERIVATION_CONTEXT = "dokploy:deployments-signing-key:v1";
-
-const deriveLegacySigningKey = (apiKey: string) =>
-	createHmac("sha256", apiKey)
-		.update(LEGACY_API_KEY_DERIVATION_CONTEXT)
-		.digest("base64url");
 
 const getSigningKey = () => {
-	const key = process.env.DEPLOYMENTS_SIGNING_KEY?.trim();
-	if (!key) {
-		const legacyApiKey = process.env.API_KEY?.trim();
-		if (legacyApiKey) {
-			return deriveLegacySigningKey(legacyApiKey);
-		}
-		throw new Error(
-			"Deployment job signing key is not configured. Set DEPLOYMENTS_SIGNING_KEY or API_KEY before managing deployment jobs.",
-		);
+	const key = process.env.DEPLOYMENTS_SIGNING_KEY_FILE
+		? readSecret(process.env.DEPLOYMENTS_SIGNING_KEY_FILE)
+		: process.env.DEPLOYMENTS_SIGNING_KEY;
+	if (!key || key.trim().length === 0) {
+		throw new Error("Deployment job signing key is not configured");
 	}
-	if (process.env.API_KEY?.trim() && key === process.env.API_KEY.trim()) {
+	if (process.env.API_KEY && key === process.env.API_KEY) {
 		throw new Error("Deployment job signing key must differ from the API key");
 	}
 	return key;
 };
 
 const canonicalScope = (scope: DeploymentJobScope) =>
-	JSON.stringify({
-		version: scope.version,
-		operation: scope.operation,
-		applicationType: scope.applicationType,
-		objectId: scope.objectId,
-		applicationId: scope.applicationId,
-		deploymentType: scope.deploymentType,
-		serverId: scope.serverId,
-		organizationId: scope.organizationId,
-		expiresAt: scope.expiresAt,
-		nonce: scope.nonce,
-	});
+	JSON.stringify(
+		scope.version === 1
+			? {
+					version: scope.version,
+					operation: scope.operation,
+					applicationType: scope.applicationType,
+					objectId: scope.objectId,
+					applicationId: scope.applicationId,
+					deploymentType: scope.deploymentType,
+					serverId: scope.serverId,
+					organizationId: scope.organizationId,
+					expiresAt: scope.expiresAt,
+					nonce: scope.nonce,
+				}
+			: {
+					version: scope.version,
+					operation: scope.operation,
+					applicationType: scope.applicationType,
+					objectId: scope.objectId,
+					applicationId: scope.applicationId,
+					deploymentType: scope.deploymentType,
+					serverId: scope.serverId,
+					organizationId: scope.organizationId,
+					operationId: scope.operationId,
+					sourceRevision: scope.sourceRevision,
+					expiresAt: scope.expiresAt,
+					nonce: scope.nonce,
+				},
+	);
 
 const signScope = (scope: DeploymentJobScope) =>
 	createHmac("sha256", getSigningKey())
@@ -243,8 +272,7 @@ const buildScope = async (
 		assertEqual("server scope", scope.serverId, job.serverId);
 	}
 
-	return {
-		version: 1,
+	const common = {
 		operation: options.operation,
 		applicationType: job.applicationType,
 		objectId: scope.objectId,
@@ -255,6 +283,20 @@ const buildScope = async (
 		expiresAt,
 		nonce: randomUUID(),
 	};
+	if (
+		"operationId" in job &&
+		typeof job.operationId === "string" &&
+		"expectedRevision" in job &&
+		typeof job.expectedRevision === "string"
+	) {
+		return {
+			version: 2,
+			...common,
+			operationId: job.operationId,
+			sourceRevision: job.expectedRevision,
+		};
+	}
+	return { version: 1, ...common };
 };
 
 const buildReadScope = async (
@@ -298,6 +340,24 @@ const assertScopeMatchesJob = (
 	);
 	if ("serverId" in job) {
 		assertEqual("server scope", scope.serverId, job.serverId);
+	}
+	if (
+		"operationId" in job &&
+		typeof job.operationId === "string" &&
+		"expectedRevision" in job &&
+		typeof job.expectedRevision === "string"
+	) {
+		assertEqual("scope version", scope.version, 2);
+		if (scope.version === 2) {
+			assertEqual("operation id", scope.operationId, job.operationId);
+			assertEqual(
+				"source revision",
+				scope.sourceRevision,
+				job.expectedRevision,
+			);
+		}
+	} else {
+		assertEqual("scope version", scope.version, 1);
 	}
 };
 

@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -12,22 +14,6 @@ vi.mock("@dokploy/server", () => ({
 	findApplicationById: mocks.findApplicationById,
 	findComposeById: mocks.findComposeById,
 	findPreviewDeploymentById: mocks.findPreviewDeploymentById,
-	findServerById: mocks.findServerById,
-}));
-
-vi.mock("@dokploy/server/services/application", () => ({
-	findApplicationById: mocks.findApplicationById,
-}));
-
-vi.mock("@dokploy/server/services/compose", () => ({
-	findComposeById: mocks.findComposeById,
-}));
-
-vi.mock("@dokploy/server/services/preview-deployment", () => ({
-	findPreviewDeploymentById: mocks.findPreviewDeploymentById,
-}));
-
-vi.mock("@dokploy/server/services/server", () => ({
 	findServerById: mocks.findServerById,
 }));
 
@@ -45,6 +31,7 @@ describe("signed deployment job scope", () => {
 		vi.clearAllMocks();
 		vi.stubEnv("API_KEY", "global-api-key");
 		vi.stubEnv("DEPLOYMENTS_SIGNING_KEY", "deployment-signing-key");
+		vi.stubEnv("DEPLOYMENTS_SIGNING_KEY_FILE", "");
 		mocks.findApplicationById.mockResolvedValue({
 			applicationId: "app-1",
 			serverId: "server-1",
@@ -75,26 +62,6 @@ describe("signed deployment job scope", () => {
 			organizationId: "org-1",
 			serverStatus: "active",
 		});
-	});
-
-	it("exports the deployment signer subpath from the server package", () => {
-		const packageJson = JSON.parse(
-			readFileSync(
-				new URL("../../../../packages/server/package.json", import.meta.url),
-				"utf8",
-			),
-		);
-
-		const signedJobExport =
-			packageJson.exports["./utils/deployments/signed-job"];
-
-		expect([
-			"./src/utils/deployments/signed-job.ts",
-			"./dist/utils/deployments/signed-job.js",
-		]).toContain(signedJobExport.import);
-		expect(signedJobExport.require).toBe(
-			"./dist/utils/deployments/signed-job.js",
-		);
 	});
 
 	it("signs and verifies scoped application deployment jobs", async () => {
@@ -251,37 +218,48 @@ describe("signed deployment job scope", () => {
 		).rejects.toThrow(/organization scope/i);
 	});
 
-	it("falls back to a derived API key signing key for legacy installs", async () => {
-		vi.stubEnv("DEPLOYMENTS_SIGNING_KEY", "");
-
-		const signed = await signDeploymentQueueJob(
-			{
-				applicationId: "app-1",
-				applicationType: "application",
-				descriptionLog: "",
-				server: true,
-				serverId: "server-1",
-				titleLog: "Manual deployment",
-				type: "deploy",
-			},
-			{ operation: "deploy", now: 1000 },
-		);
-
+	it("binds exact compose operation and full revision in signed v2 scope", async () => {
+		const revision = "0123456789abcdef0123456789abcdef01234567";
+		const job = {
+			composeId: "compose-1",
+			applicationType: "compose" as const,
+			descriptionLog: "",
+			server: true,
+			serverId: "server-1",
+			titleLog: "Exact deployment",
+			type: "deploy" as const,
+			operationId: "operation-1",
+			expectedRevision: revision,
+		};
+		const signed = await signDeploymentQueueJob(job, {
+			operation: "deploy",
+			now: 1000,
+		});
+		expect(signed.scope).toMatchObject({
+			version: 2,
+			operationId: "operation-1",
+			sourceRevision: revision,
+		});
 		await expect(
 			assertSignedDeploymentQueueJob(signed, {
 				operation: "deploy",
 				now: 2000,
 			}),
-		).resolves.toMatchObject({
-			applicationId: "app-1",
-			applicationType: "application",
-			type: "deploy",
-		});
+		).resolves.toEqual(job);
+
+		await expect(
+			assertSignedDeploymentQueueJob(
+				{
+					...signed,
+					expectedRevision: "f".repeat(40),
+				} as Parameters<typeof assertSignedDeploymentQueueJob>[0],
+				{ operation: "deploy", now: 2000 },
+			),
+		).rejects.toThrow(/source revision/i);
 	});
 
-	it("fails closed without a deployment signing key or API key fallback", async () => {
+	it("fails closed without a distinct deployment signing key", async () => {
 		vi.stubEnv("DEPLOYMENTS_SIGNING_KEY", "");
-		vi.stubEnv("API_KEY", "");
 
 		await expect(
 			signDeploymentQueueJob(
@@ -299,7 +277,6 @@ describe("signed deployment job scope", () => {
 		).rejects.toThrow(/signing key is not configured/i);
 
 		vi.stubEnv("DEPLOYMENTS_SIGNING_KEY", "global-api-key");
-		vi.stubEnv("API_KEY", "global-api-key");
 		await expect(
 			signDeploymentCancelJob(
 				{
@@ -309,6 +286,41 @@ describe("signed deployment job scope", () => {
 				{ operation: "cancel", requireActiveServer: false },
 			),
 		).rejects.toThrow(/must differ from the API key/i);
+	});
+
+	it("can read the deployment signing key from a secret file", async () => {
+		const secretDir = mkdtempSync(join(tmpdir(), "dokploy-deployment-key-"));
+		const secretPath = join(secretDir, "deployment-key");
+		writeFileSync(secretPath, "deployment-signing-key-from-file", "utf8");
+		vi.stubEnv("DEPLOYMENTS_SIGNING_KEY", "");
+		vi.stubEnv("DEPLOYMENTS_SIGNING_KEY_FILE", secretPath);
+
+		try {
+			const signed = await signDeploymentQueueJob(
+				{
+					applicationId: "app-1",
+					applicationType: "application",
+					descriptionLog: "",
+					server: true,
+					serverId: "server-1",
+					titleLog: "Manual deployment",
+					type: "deploy",
+				},
+				{ operation: "deploy", now: 1000 },
+			);
+
+			await expect(
+				assertSignedDeploymentQueueJob(signed, {
+					operation: "deploy",
+					now: 2000,
+				}),
+			).resolves.toMatchObject({
+				applicationId: "app-1",
+				applicationType: "application",
+			});
+		} finally {
+			rmSync(secretDir, { recursive: true, force: true });
+		}
 	});
 
 	it("signs and verifies cancel jobs with object scope", async () => {
@@ -336,37 +348,6 @@ describe("signed deployment job scope", () => {
 			assertSignedDeploymentCancelJob(signed, {
 				operation: "cancel",
 				now: 2000,
-			}),
-		).resolves.toEqual(job);
-	});
-
-	it("allows cancel job verification when the assigned server is inactive", async () => {
-		const job = {
-			applicationId: "app-1",
-			applicationType: "application" as const,
-		};
-		const signed = await signDeploymentCancelJob(job, {
-			operation: "cancel",
-			now: 1000,
-			requireActiveServer: false,
-		});
-		mocks.findServerById.mockResolvedValue({
-			serverId: "server-1",
-			organizationId: "org-1",
-			serverStatus: "inactive",
-		});
-
-		await expect(
-			assertSignedDeploymentCancelJob(signed, {
-				operation: "cancel",
-				now: 2000,
-			}),
-		).rejects.toThrow(/server is inactive/i);
-		await expect(
-			assertSignedDeploymentCancelJob(signed, {
-				operation: "cancel",
-				now: 2000,
-				requireActiveServer: false,
 			}),
 		).resolves.toEqual(job);
 	});

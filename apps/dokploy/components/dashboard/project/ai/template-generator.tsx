@@ -309,7 +309,7 @@ export const TemplateGenerator = ({ environmentId }: Props) => {
 										}));
 										return;
 									}
-									stepper.prev();
+									void stepper.prev();
 								}}
 								disabled={stepper.isFirst}
 								variant="secondary"
@@ -331,7 +331,7 @@ export const TemplateGenerator = ({ environmentId }: Props) => {
 										await onSubmit();
 										return;
 									}
-									stepper.next();
+									await stepper.next();
 									// if (stepper.isLast) {
 									// 	// setIsOpen(false);
 									// 	// push("/dashboard/projects");

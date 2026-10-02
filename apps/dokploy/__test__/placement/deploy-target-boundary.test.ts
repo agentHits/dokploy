@@ -185,6 +185,7 @@ vi.mock("@dokploy/server/services/project", () => ({
 
 vi.mock("@dokploy/server/templates/github", () => ({
 	fetchTemplateFiles: templateMocks.fetchTemplateFiles,
+	fetchTemplateLogo: vi.fn(async () => null),
 	fetchTemplatesList: templateMocks.fetchTemplatesList,
 }));
 

@@ -1,5 +1,4 @@
 import { timingSafeEqual } from "node:crypto";
-import { buffer } from "node:stream/consumers";
 import {
 	type Bitbucket,
 	getBitbucketHeaders,
@@ -14,12 +13,6 @@ import { applications } from "@/server/db/schema";
 import type { DeploymentJob } from "@/server/queues/queue-types";
 import { myQueue } from "@/server/queues/queueSetup";
 import { deploy } from "@/server/utils/deploy";
-
-export const config = {
-	api: {
-		bodyParser: false,
-	},
-};
 
 /**
  * Log a webhook handler error server-side without leaking its shape to the HTTP
@@ -60,54 +53,14 @@ const constantTimeEquals = (actual: string | undefined, expected: string) => {
 
 type DeployWebhookProviderCredentials = {
 	github?: { githubWebhookSecret?: string | null } | null;
-	gitlab?: {
-		secret?: string | null;
-		webhookSecret?: string | null;
-	} | null;
+	gitlab?: { secret?: string | null } | null;
 	bitbucket?: object | null;
 	gitea?: object | null;
-};
-
-type DeployWebhookRequest = NextApiRequest & {
-	rawBody?: string | Buffer;
-};
-
-const getExistingRequestBodyText = (req: DeployWebhookRequest) => {
-	if (typeof req.rawBody === "string") {
-		return req.rawBody;
-	}
-	if (Buffer.isBuffer(req.rawBody)) {
-		return req.rawBody.toString("utf8");
-	}
-	if (typeof req.body === "string") {
-		return req.body;
-	}
-	if (typeof req.body !== "undefined") {
-		return JSON.stringify(req.body);
-	}
-	return null;
-};
-
-export const readDeployWebhookBody = async (req: DeployWebhookRequest) => {
-	const existingBody = getExistingRequestBodyText(req);
-	const rawBody = existingBody ?? (await buffer(req)).toString("utf8");
-	req.rawBody = rawBody;
-
-	if (typeof req.body === "undefined" && rawBody.trim().length > 0) {
-		req.body = JSON.parse(rawBody);
-	}
-
-	if (typeof req.body === "undefined") {
-		req.body = {};
-	}
-
-	return rawBody;
 };
 
 export const isProviderDeployWebhookAuthenticated = async (
 	req: NextApiRequest,
 	providers: DeployWebhookProviderCredentials,
-	rawBody?: string,
 ) => {
 	const provider = getProviderByHeader(req.headers);
 	if (!provider) {
@@ -122,36 +75,30 @@ export const isProviderDeployWebhookAuthenticated = async (
 		}
 
 		const webhooks = new Webhooks({ secret });
-		return webhooks.verify(rawBody ?? JSON.stringify(req.body), signature);
+		return webhooks.verify(JSON.stringify(req.body), signature);
 	}
 
 	if (provider === "gitlab") {
-		// GitLab's `secret` is the OAuth client secret; webhook auth must use
-		// a separate X-Gitlab-Token value when the provider stores one.
-		const webhookSecret = providers.gitlab?.webhookSecret?.trim();
-		if (!webhookSecret) {
-			return true;
+		const secret = providers.gitlab?.secret;
+		if (!secret) {
+			return false;
 		}
 
 		return constantTimeEquals(
 			getHeaderValue(req.headers["x-gitlab-token"]),
-			webhookSecret,
+			secret,
 		);
 	}
 
-	// Bitbucket, Gitea and Soft Serve refresh-token webhooks do not have a
-	// stored signature secret in Dokploy. Keep their previous refresh-token
-	// behavior and let the source-specific branch/watch-path checks run below.
-	return true;
+	return false;
 };
 
 export const rejectUnauthenticatedProviderDeployWebhook = async (
 	req: NextApiRequest,
 	res: NextApiResponse,
 	providers: DeployWebhookProviderCredentials,
-	rawBody?: string,
 ) => {
-	if (await isProviderDeployWebhookAuthenticated(req, providers, rawBody)) {
+	if (await isProviderDeployWebhookAuthenticated(req, providers)) {
 		return false;
 	}
 
@@ -170,6 +117,14 @@ const getPackageVersion = (headers: any, body: any) => {
 	return null;
 };
 
+export const config = {
+	api: {
+		bodyParser: {
+			sizeLimit: "25mb",
+		},
+	},
+};
+
 export default async function handler(
 	req: NextApiRequest,
 	res: NextApiResponse,
@@ -182,14 +137,6 @@ export default async function handler(
 
 		if (req.headers["x-github-event"] === "ping") {
 			res.status(200).json({ message: "Ping received, webhook is active" });
-			return;
-		}
-		let rawBody = "";
-		try {
-			rawBody = await readDeployWebhookBody(req);
-		} catch (error) {
-			logWebhookError("Invalid application deploy webhook body:", error);
-			res.status(400).json({ message: "Invalid request body" });
 			return;
 		}
 		const application = await db.query.applications.findFirst({
@@ -219,17 +166,12 @@ export default async function handler(
 		}
 
 		if (
-			await rejectUnauthenticatedProviderDeployWebhook(
-				req,
-				res,
-				{
-					github: application.github,
-					gitlab: application.gitlab,
-					bitbucket: application.bitbucket,
-					gitea: application.gitea,
-				},
-				rawBody,
-			)
+			await rejectUnauthenticatedProviderDeployWebhook(req, res, {
+				github: application.github,
+				gitlab: application.gitlab,
+				bitbucket: application.bitbucket,
+				gitea: application.gitea,
+			})
 		) {
 			return;
 		}
@@ -288,9 +230,11 @@ export default async function handler(
 			}
 			// If webhook doesn't provide image info, we'll use the configured image (old behavior)
 		} else if (sourceType === "github") {
-			const normalizedCommits = req.body?.commits?.flatMap(
-				(commit: any) => commit.modified,
-			);
+			const normalizedCommits = req.body?.commits?.flatMap((commit: any) => [
+				...(commit.added || []),
+				...(commit.modified || []),
+				...(commit.removed || []),
+			]);
 
 			const shouldDeployPaths = shouldDeploy(
 				application.watchPaths,
@@ -319,21 +263,29 @@ export default async function handler(
 			let normalizedCommits: string[] = [];
 
 			if (provider === "github") {
-				normalizedCommits = req.body?.commits?.flatMap(
-					(commit: any) => commit.modified,
-				);
+				normalizedCommits = req.body?.commits?.flatMap((commit: any) => [
+					...(commit.added || []),
+					...(commit.modified || []),
+					...(commit.removed || []),
+				]);
 			} else if (provider === "gitlab") {
-				normalizedCommits = req.body?.commits?.flatMap(
-					(commit: any) => commit.modified,
-				);
+				normalizedCommits = req.body?.commits?.flatMap((commit: any) => [
+					...(commit.added || []),
+					...(commit.modified || []),
+					...(commit.removed || []),
+				]);
 			} else if (provider === "gitea") {
-				normalizedCommits = req.body?.commits?.flatMap(
-					(commit: any) => commit.modified,
-				);
+				normalizedCommits = req.body?.commits?.flatMap((commit: any) => [
+					...(commit.added || []),
+					...(commit.modified || []),
+					...(commit.removed || []),
+				]);
 			} else if (provider === "soft-serve") {
-				normalizedCommits = req.body?.commits?.flatMap(
-					(commit: any) => commit.modified,
-				);
+				normalizedCommits = req.body?.commits?.flatMap((commit: any) => [
+					...(commit.added || []),
+					...(commit.modified || []),
+					...(commit.removed || []),
+				]);
 			}
 
 			const shouldDeployPaths = shouldDeploy(
@@ -348,9 +300,11 @@ export default async function handler(
 		} else if (sourceType === "gitlab") {
 			const branchName = extractBranchName(req.headers, req.body);
 
-			const normalizedCommits = req.body?.commits?.flatMap(
-				(commit: any) => commit.modified,
-			);
+			const normalizedCommits = req.body?.commits?.flatMap((commit: any) => [
+				...(commit.added || []),
+				...(commit.modified || []),
+				...(commit.removed || []),
+			]);
 
 			const shouldDeployPaths = shouldDeploy(
 				application.watchPaths,
@@ -394,9 +348,11 @@ export default async function handler(
 		} else if (sourceType === "gitea") {
 			const branchName = extractBranchName(req.headers, req.body);
 
-			const normalizedCommits = req.body?.commits?.flatMap(
-				(commit: any) => commit.modified,
-			);
+			const normalizedCommits = req.body?.commits?.flatMap((commit: any) => [
+				...(commit.added || []),
+				...(commit.modified || []),
+				...(commit.removed || []),
+			]);
 
 			const shouldDeployPaths = shouldDeploy(
 				application.watchPaths,
@@ -422,10 +378,10 @@ export default async function handler(
 				type: "deploy",
 				applicationType: "application",
 				server: !!application.serverId,
-				serverId: application.serverId ?? undefined,
 			};
 
 			if (IS_CLOUD && application.serverId) {
+				jobData.serverId = application.serverId;
 				deploy(jobData).catch((error) => {
 					console.error("Background deployment failed:", error);
 				});

@@ -199,7 +199,7 @@ export const sendDatabaseBackupNotifications = async (input: {
 					`🛠Project: ${projectName}\n` +
 						`⚙️Application: ${applicationName}\n` +
 						`❔Type: ${databaseType}\n` +
-						`📂Database Name: ${databaseName}` +
+						`📂Database Name: ${databaseName}\n` +
 						`🕒Date: ${date.toLocaleString()}\n` +
 						`${type === "error" && errorMessage ? `❌Error:\n${errorMessage}` : ""}`,
 				);

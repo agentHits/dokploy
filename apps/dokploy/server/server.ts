@@ -19,10 +19,6 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import next from "next";
 import packageInfo from "../package.json";
 import { handleApplicationEnvUpsert } from "../pages/api/application.env.upsert";
-import {
-	ApplicationEnvUpsertBodyTooLargeError,
-	readApplicationEnvUpsertJsonBody,
-} from "./api/utils/application-env-upsert-body";
 import { setupDockerContainerLogsWebSocketServer } from "./wss/docker-container-logs";
 import { setupDockerContainerTerminalWebSocketServer } from "./wss/docker-container-terminal";
 import { setupDockerStatsMonitoringSocketServer } from "./wss/docker-stats";
@@ -52,90 +48,78 @@ type NodeNextApiResponse = ServerResponse & {
 	json: (body: unknown) => NodeNextApiResponse;
 };
 
-const normalizeRequestPath = (value: string) => {
-	try {
-		return new URL(value, "http://localhost").pathname.replace(/\/+$/, "");
-	} catch {
-		return "";
-	}
-};
-
-const isApplicationEnvUpsertPath = (value: string) => {
-	const pathname = normalizeRequestPath(value);
+const isApplicationEnvUpsertRequest = (req: IncomingMessage) => {
+	const pathname = new URL(
+		req.url ?? "/",
+		`http://${req.headers.host ?? "localhost"}`,
+	).pathname.replace(/\/+$/, "");
+	const rawUrl = req.url ?? "";
+	const forwardedUri = req.headers["x-forwarded-uri"];
+	const forwardedPath =
+		typeof forwardedUri === "string"
+			? forwardedUri
+			: Array.isArray(forwardedUri)
+				? forwardedUri.join(" ")
+				: "";
+	const routeMarkers = [pathname, rawUrl, forwardedPath].join(" ");
 
 	return (
 		pathname === "/api/application/env/upsert" ||
-		pathname === "/api/application.env.upsert"
+		pathname === "/api/application.env.upsert" ||
+		routeMarkers.includes("/api/application/env/upsert") ||
+		routeMarkers.includes("/api/application.env.upsert")
 	);
 };
 
-const getForwardedUriValues = (req: IncomingMessage) => {
-	const forwardedUri = req.headers["x-forwarded-uri"];
+const readJsonBody = async (req: IncomingMessage) =>
+	new Promise((resolve, reject) => {
+		let body = "";
+		req.on("data", (chunk) => {
+			body += chunk;
+		});
+		req.on("end", () => {
+			if (!body) {
+				resolve({});
+				return;
+			}
 
-	if (Array.isArray(forwardedUri)) {
-		return forwardedUri;
-	}
-
-	return typeof forwardedUri === "string" ? [forwardedUri] : [];
-};
-
-const isApplicationEnvUpsertRequest = (req: IncomingMessage) =>
-	[req.url ?? "/", ...getForwardedUriValues(req)].some((path) =>
-		isApplicationEnvUpsertPath(path),
-	);
+			try {
+				resolve(JSON.parse(body));
+			} catch (error) {
+				reject(error);
+			}
+		});
+		req.on("error", reject);
+	});
 
 const handleApplicationEnvUpsertRequest = async (
 	req: IncomingMessage,
 	res: ServerResponse,
 ) => {
 	try {
-		(req as IncomingMessage & { body: unknown }).body =
-			await readApplicationEnvUpsertJsonBody(req);
-	} catch (error) {
-		const isBodyTooLarge =
-			error instanceof ApplicationEnvUpsertBodyTooLargeError;
-		res.statusCode = isBodyTooLarge ? 413 : 400;
-		res.setHeader("Content-Type", "application/json");
-		res.end(
-			JSON.stringify({
-				message: isBodyTooLarge
-					? "Request body too large"
-					: "Invalid request body",
-			}),
-			() => {
-				if (isBodyTooLarge) {
-					req.destroy();
-				}
-			},
-		);
-		return;
-	}
+		(req as IncomingMessage & { body: unknown }).body = await readJsonBody(req);
+		const nextResponse = res as NodeNextApiResponse;
 
-	const nextResponse = res as NodeNextApiResponse;
+		nextResponse.status = (code: number) => {
+			res.statusCode = code;
+			return nextResponse;
+		};
+		nextResponse.json = (body: unknown) => {
+			if (!res.headersSent) {
+				res.setHeader("Content-Type", "application/json");
+			}
+			res.end(JSON.stringify(body));
+			return nextResponse;
+		};
 
-	nextResponse.status = (code: number) => {
-		res.statusCode = code;
-		return nextResponse;
-	};
-	nextResponse.json = (body: unknown) => {
-		if (!res.headersSent) {
-			res.setHeader("Content-Type", "application/json");
-		}
-		res.end(JSON.stringify(body));
-		return nextResponse;
-	};
-
-	try {
 		await handleApplicationEnvUpsert(
 			req as NextApiRequest,
 			nextResponse as unknown as NextApiResponse,
 		);
 	} catch {
-		if (!res.headersSent) {
-			res.statusCode = 500;
-			res.setHeader("Content-Type", "application/json");
-		}
-		res.end(JSON.stringify({ message: "Internal server error" }));
+		res.statusCode = 400;
+		res.setHeader("Content-Type", "application/json");
+		res.end(JSON.stringify({ message: "Invalid request body" }));
 	}
 };
 

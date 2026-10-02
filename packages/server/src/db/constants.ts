@@ -29,16 +29,9 @@ export function readDatabaseUrlPassword(databaseUrl: string): string | null {
 	}
 }
 
-const isNextProductionBuild = () =>
-	process.env.NEXT_PHASE === "phase-production-build";
-
 export function resolvePostgresPassword(options?: {
 	allowDatabaseUrl?: boolean;
 }): string {
-	if (isNextProductionBuild()) {
-		return POSTGRES_USER;
-	}
-
 	if (POSTGRES_PASSWORD_FILE) {
 		return readSecret(POSTGRES_PASSWORD_FILE);
 	}

@@ -24,10 +24,11 @@ export default async function handler(
 		}
 
 		const { session, user } = await validateRequest(req);
+		const sessionId = session && "id" in session ? session.id : undefined;
 		if (
-			!session?.id ||
-			!session.userId ||
-			!session.activeOrganizationId ||
+			!sessionId ||
+			!session?.userId ||
+			!session?.activeOrganizationId ||
 			!user
 		) {
 			return res.status(401).json({ error: "Authentication required" });
@@ -49,14 +50,14 @@ export default async function handler(
 			"redirect_uri",
 			gitea.redirectUri as string,
 		);
-		authorizationUrl.searchParams.append("scope", GITEA_OAUTH_SCOPE);
+		authorizationUrl.searchParams.append("scope", "read:user repo");
 		authorizationUrl.searchParams.append(
 			"state",
 			signGitProviderOAuthState({
 				providerType: "gitea",
 				providerId: giteaId as string,
 				redirectUri: gitea.redirectUri as string,
-				sessionId: session.id,
+				sessionId,
 				userId: session.userId,
 				organizationId: session.activeOrganizationId,
 			}),

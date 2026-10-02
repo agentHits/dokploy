@@ -10,7 +10,7 @@ import {
 	getAccessibleServerIds,
 	getContainerLogs,
 	getMountPath,
-	getServiceContainerCommand,
+	getServiceContainer,
 	getWebServerSettings,
 	IS_CLOUD,
 	rebuildDatabase,
@@ -29,6 +29,7 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
+import { getServiceContainerCommand } from "@dokploy/server/utils/backups/utils";
 import {
 	preserveSecretPlaceholderFields,
 	redactDatabaseServiceSecrets,
@@ -432,9 +433,14 @@ export const postgresRouter = createTRPCRouter({
 				service: ["create"],
 			});
 
-			const service = await updatePostgresById(postgresId, {
-				...rest,
-			});
+			const currentPostgres = await findPostgresById(postgresId);
+			const service = await updatePostgresById(
+				postgresId,
+				preserveSecretPlaceholderFields(rest, currentPostgres, [
+					"env",
+					"databasePassword",
+				]),
+			);
 
 			if (!service) {
 				throw new TRPCError({

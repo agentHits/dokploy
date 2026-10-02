@@ -57,22 +57,6 @@ describe("postgres credential configuration boundary", () => {
 		);
 	});
 
-	it("allows Next production build imports without a runtime Postgres password", async () => {
-		const { dbUrl } = await loadDbConstants({
-			NODE_ENV: "production",
-			NEXT_PHASE: "phase-production-build",
-			DATABASE_URL: undefined,
-			POSTGRES_PASSWORD: undefined,
-			POSTGRES_PASSWORD_FILE: undefined,
-			POSTGRES_HOST: "dokploy-postgres",
-			POSTGRES_PORT: "5432",
-		});
-
-		expect(dbUrl).toBe(
-			"postgres://dokploy:dokploy@dokploy-postgres:5432/dokploy",
-		);
-	});
-
 	it("can reuse an explicit DATABASE_URL password for bundled Postgres setup", async () => {
 		const { resolvePostgresPassword } = await loadDbConstants({
 			NODE_ENV: "production",

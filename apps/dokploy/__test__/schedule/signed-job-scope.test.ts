@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SignedScheduledQueueJob } from "@dokploy/server/utils/schedules/signed-job";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -42,6 +45,7 @@ describe("signed scheduled job scope", () => {
 		vi.clearAllMocks();
 		vi.stubEnv("API_KEY", "global-api-key");
 		vi.stubEnv("SCHEDULES_SIGNING_KEY", "schedule-signing-key");
+		vi.stubEnv("SCHEDULES_SIGNING_KEY_FILE", "");
 		mocks.findServerById.mockResolvedValue({
 			serverId: "server-1",
 			organizationId: "org-1",
@@ -142,30 +146,8 @@ describe("signed scheduled job scope", () => {
 		).rejects.toThrow(/timezone/i);
 	});
 
-	it("derives a legacy schedule signing key from API_KEY when the explicit key is missing", async () => {
+	it("fails closed without a distinct schedule signing key", async () => {
 		vi.stubEnv("SCHEDULES_SIGNING_KEY", "");
-
-		const job = {
-			type: "server" as const,
-			serverId: "server-1",
-			cronSchedule: "0 0 * * *",
-		};
-		const signed = await signScheduledQueueJob(job, {
-			operation: "create",
-			now: 1000,
-		});
-
-		await expect(
-			assertSignedScheduledQueueJob(signed, {
-				operation: "create",
-				now: 2000,
-			}),
-		).resolves.toEqual(job);
-	});
-
-	it("fails closed without explicit or legacy schedule signing material", async () => {
-		vi.stubEnv("SCHEDULES_SIGNING_KEY", "");
-		vi.stubEnv("API_KEY", "");
 
 		await expect(
 			signScheduledQueueJob(
@@ -176,10 +158,8 @@ describe("signed scheduled job scope", () => {
 				},
 				{ operation: "create" },
 			),
-		).rejects.toThrow(/set SCHEDULES_SIGNING_KEY or API_KEY/i);
-	});
+		).rejects.toThrow(/signing key is not configured/i);
 
-	it("rejects an explicit schedule signing key that matches API_KEY", async () => {
 		vi.stubEnv("SCHEDULES_SIGNING_KEY", "global-api-key");
 		await expect(
 			signScheduledQueueJob(
@@ -191,6 +171,37 @@ describe("signed scheduled job scope", () => {
 				{ operation: "create" },
 			),
 		).rejects.toThrow(/must differ from the API key/i);
+	});
+
+	it("can read the schedule signing key from a secret file", async () => {
+		const secretDir = mkdtempSync(join(tmpdir(), "dokploy-schedule-key-"));
+		const secretPath = join(secretDir, "schedule-key");
+		writeFileSync(secretPath, "schedule-signing-key-from-file", "utf8");
+		vi.stubEnv("SCHEDULES_SIGNING_KEY", "");
+		vi.stubEnv("SCHEDULES_SIGNING_KEY_FILE", secretPath);
+
+		try {
+			const signed = await signScheduledQueueJob(
+				{
+					type: "server",
+					serverId: "server-1",
+					cronSchedule: "0 0 * * *",
+				},
+				{ operation: "create", now: 1000 },
+			);
+
+			await expect(
+				assertSignedScheduledQueueJob(signed, {
+					operation: "create",
+					now: 2000,
+				}),
+			).resolves.toMatchObject({
+				type: "server",
+				serverId: "server-1",
+			});
+		} finally {
+			rmSync(secretDir, { recursive: true, force: true });
+		}
 	});
 
 	it("rejects expired scoped claims", async () => {

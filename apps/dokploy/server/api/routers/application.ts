@@ -1,9 +1,14 @@
 import {
 	clearOldDeployments,
 	createApplication,
+	createDomain,
 	deleteAllMiddlewares,
 	findApplicationById,
+	findEnvironmentById,
+	findPreviewDeploymentsByApplicationId,
+	findProjectById,
 	findRegistryById,
+	generateTraefikMeDomain,
 	getAccessibleServerIds,
 	getApplicationStats,
 	getContainerLogs,
@@ -15,6 +20,7 @@ import {
 	removeDeployments,
 	removeDirectoryCode,
 	removeMonitoringDirectory,
+	removePreviewDeployment,
 	removeService,
 	removeTraefikConfig,
 	startService,
@@ -43,7 +49,7 @@ import {
 } from "@dokploy/server/services/permission";
 import { assertCustomGitUrlAllowed } from "@dokploy/server/utils/providers/git";
 import {
-	isSecretPlaceholderValue,
+	preserveSecretPlaceholderFields,
 	redactDeployableServiceSecrets,
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
@@ -136,54 +142,10 @@ const applicationSourceUpdateFields = [
 	"watchPaths",
 ] as const;
 
-const applicationSecretUpdateFields = [
-	"env",
-	"previewEnv",
-	"buildArgs",
-	"buildSecrets",
-	"previewBuildArgs",
-	"previewBuildSecrets",
-	"password",
-] as const;
-
 type ApplicationRegistryUpdateInput = Pick<
 	z.infer<typeof apiUpdateApplication>,
 	(typeof applicationRegistryFields)[number]
 >;
-type ApplicationSecretUpdateField =
-	(typeof applicationSecretUpdateFields)[number];
-type ApplicationSecretUpdates = Partial<
-	Record<ApplicationSecretUpdateField, unknown>
->;
-
-const preserveApplicationSecretPlaceholders = <
-	T extends ApplicationSecretUpdates,
->(
-	updates: T,
-	application: ApplicationSecretUpdates,
-) => {
-	const preserved = { ...updates };
-
-	for (const field of applicationSecretUpdateFields) {
-		if (!Object.hasOwn(preserved, field)) {
-			continue;
-		}
-
-		if (!isSecretPlaceholderValue(preserved[field])) {
-			continue;
-		}
-
-		const existingValue = application[field];
-		if (typeof existingValue === "undefined") {
-			delete preserved[field];
-			continue;
-		}
-
-		preserved[field] = existingValue as T[typeof field];
-	}
-
-	return preserved;
-};
 
 const assertApplicationRegistryAccess = async (
 	input: ApplicationRegistryUpdateInput,
@@ -325,6 +287,118 @@ export const applicationRouter = createTRPCRouter({
 				});
 			}
 		}),
+
+	deployNginxQuickstart: protectedProcedure
+		.input(
+			z.object({
+				environmentId: z.string().min(1),
+				serverId: z.string().min(1).optional(),
+			}),
+		)
+		.mutation(async ({ input, ctx }) => {
+			const environment = await findEnvironmentById(input.environmentId);
+			const project = await findProjectById(environment.projectId);
+
+			await checkServiceAccess(ctx, project.projectId, "create");
+
+			if (project.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this project",
+				});
+			}
+
+			if (IS_CLOUD && !input.serverId) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "You need to use a server to create an application",
+				});
+			}
+
+			if (input.serverId) {
+				const accessibleIds = await getAccessibleServerIds(ctx.session);
+				if (!accessibleIds.has(input.serverId)) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You are not authorized to access this server",
+					});
+				}
+			}
+
+			const suffix = nanoid(6).toLowerCase();
+			const newApplication = await createApplication({
+				name: "Hello World",
+				appName: `hello-world-${suffix}`,
+				description: "Nginx demo app created by the onboarding wizard",
+				environmentId: input.environmentId,
+				serverId: input.serverId,
+				sourceType: "docker",
+			});
+
+			await addNewService(ctx, newApplication.applicationId);
+
+			await updateApplication(newApplication.applicationId, {
+				dockerImage: "nginxdemos/hello",
+				sourceType: "docker",
+				applicationStatus: "idle",
+			});
+
+			const host = await generateTraefikMeDomain(
+				newApplication.appName,
+				ctx.user.ownerId,
+				input.serverId,
+			);
+
+			const domain = await createDomain({
+				host,
+				port: 80,
+				https: false,
+				applicationId: newApplication.applicationId,
+				domainType: "application",
+			});
+
+			await audit(ctx, {
+				action: "create",
+				resourceType: "service",
+				resourceId: newApplication.applicationId,
+				resourceName: newApplication.appName,
+			});
+
+			const jobData: DeploymentJob = {
+				applicationId: newApplication.applicationId,
+				titleLog: "Onboarding quickstart deployment",
+				descriptionLog: "",
+				type: "deploy",
+				applicationType: "application",
+				server: !!input.serverId,
+				serverId: input.serverId,
+			};
+
+			if (IS_CLOUD && input.serverId) {
+				deploy(jobData).catch((error) => {
+					console.error("Background deployment failed:", error);
+				});
+			} else {
+				await myQueue.add(
+					"deployments",
+					{ ...jobData },
+					{ removeOnComplete: true, removeOnFail: true },
+				);
+			}
+
+			await audit(ctx, {
+				action: "deploy",
+				resourceType: "application",
+				resourceId: newApplication.applicationId,
+				resourceName: newApplication.appName,
+			});
+
+			return {
+				applicationId: newApplication.applicationId,
+				domainUrl: `http://${domain.host}`,
+			};
+		}),
+
 	one: protectedProcedure
 		.input(apiFindOneApplication)
 		.query(async ({ input, ctx }) => {
@@ -440,6 +514,15 @@ export const applicationRouter = createTRPCRouter({
 					code: "UNAUTHORIZED",
 					message: "You are not authorized to delete this application",
 				});
+			}
+
+			const previewDeploymentsList =
+				await findPreviewDeploymentsByApplicationId(input.applicationId);
+
+			for (const previewDeployment of previewDeploymentsList) {
+				try {
+					await removePreviewDeployment(previewDeployment.previewDeploymentId);
+				} catch (_) {}
 			}
 
 			const result = await db
@@ -570,100 +653,108 @@ export const applicationRouter = createTRPCRouter({
 				resourceName: application.appName,
 			});
 		}),
-	env: createTRPCRouter({
-		upsert: protectedProcedure
-			.meta({
-				openapi: {
-					path: "/application/env/upsert",
-					method: "POST",
-				},
-			})
-			.input(apiUpsertApplicationEnv)
-			.output(apiUpsertApplicationEnvResponse)
-			.mutation(async ({ input, ctx }) => {
-				await checkServicePermissionAndAccess(
-					ctx,
-					input.applicationId,
-					input.redeploy
-						? {
-								envVars: ["write"],
-								deployment: ["create"],
-							}
-						: {
-								envVars: ["write"],
+	envUpsert: protectedProcedure
+		.meta({
+			openapi: {
+				path: "/application/env/upsert",
+				method: "POST",
+			},
+		})
+		.input(apiUpsertApplicationEnv)
+		.output(apiUpsertApplicationEnvResponse)
+		.mutation(async ({ input, ctx }) => {
+			await checkServicePermissionAndAccess(
+				ctx,
+				input.applicationId,
+				input.redeploy
+					? {
+							envVars: ["write"],
+							deployment: ["create"],
+						}
+					: {
+							envVars: ["write"],
+						},
+			);
+
+			const result = await upsertApplicationEnvironment(input);
+			let redeployed = false;
+
+			if (!result.dryRun && result.changed) {
+				const application = await findApplicationById(input.applicationId);
+
+				await audit(ctx, {
+					action: "update",
+					resourceType: "application",
+					resourceId: application.applicationId,
+					resourceName: application.appName,
+				});
+
+				if (input.redeploy) {
+					const jobData: DeploymentJob = {
+						applicationId: input.applicationId,
+						titleLog: "Rebuild deployment",
+						descriptionLog: "Environment variables updated",
+						type: "redeploy",
+						applicationType: "application",
+						server: !!application.serverId,
+					};
+
+					if (IS_CLOUD && application.serverId) {
+						jobData.serverId = application.serverId;
+						deploy(jobData).catch((error) => {
+							console.error("Background deployment failed:", error);
+						});
+					} else {
+						await myQueue.add(
+							"deployments",
+							{ ...jobData },
+							{
+								removeOnComplete: true,
+								removeOnFail: true,
 							},
-				);
-
-				const result = await upsertApplicationEnvironment(input);
-				let redeployed = false;
-
-				if (!result.dryRun && result.changed) {
-					const application = await findApplicationById(input.applicationId);
+						);
+					}
 
 					await audit(ctx, {
-						action: "update",
+						action: "rebuild",
 						resourceType: "application",
 						resourceId: application.applicationId,
 						resourceName: application.appName,
 					});
-
-					if (input.redeploy) {
-						const jobData = buildApplicationEnvUpsertDeploymentJob(application);
-
-						if (IS_CLOUD && application.serverId) {
-							deploy(jobData).catch((error) => {
-								console.error("Background deployment failed:", error);
-							});
-						} else {
-							await myQueue.add(
-								"deployments",
-								{ ...jobData },
-								{
-									removeOnComplete: true,
-									removeOnFail: true,
-								},
-							);
-						}
-
-						await audit(ctx, {
-							action: "rebuild",
-							resourceType: "application",
-							resourceId: application.applicationId,
-							resourceName: application.appName,
-						});
-						redeployed = true;
-					}
+					redeployed = true;
 				}
+			}
 
-				return {
-					...result,
-					redeployed,
-				};
-			}),
-	}),
+			return {
+				...result,
+				redeployed,
+			};
+		}),
 	saveEnvironment: protectedProcedure
 		.input(apiSaveEnvironmentVariables)
 		.mutation(async ({ input, ctx }) => {
 			await checkServicePermissionAndAccess(ctx, input.applicationId, {
 				envVars: ["write"],
 			});
-			const application = await findApplicationById(input.applicationId);
-			await updateApplication(input.applicationId, {
-				...preserveApplicationSecretPlaceholders(
+			const currentApplication = await findApplicationById(input.applicationId);
+			await updateApplication(
+				input.applicationId,
+				preserveSecretPlaceholderFields(
 					{
 						env: input.env,
 						buildArgs: input.buildArgs,
 						buildSecrets: input.buildSecrets,
+						createEnvFile: input.createEnvFile,
 					},
-					application,
+					currentApplication,
+					["env", "buildArgs", "buildSecrets"],
 				),
-				createEnvFile: input.createEnvFile,
-			});
+			);
 			await audit(ctx, {
 				action: "update",
 				resourceType: "application",
-				resourceId: application.applicationId,
-				resourceName: application.appName,
+				resourceId: currentApplication.applicationId,
+				resourceName: currentApplication.appName,
 			});
 			return true;
 		}),
@@ -710,7 +801,6 @@ export const applicationRouter = createTRPCRouter({
 				sourceType: "github",
 				owner: input.owner,
 				buildPath: input.buildPath,
-				applicationStatus: "idle",
 				githubId: input.githubId,
 				watchPaths: input.watchPaths,
 				triggerType: input.triggerType,
@@ -748,7 +838,6 @@ export const applicationRouter = createTRPCRouter({
 				gitlabBranch: input.gitlabBranch,
 				gitlabBuildPath: input.gitlabBuildPath,
 				sourceType: "gitlab",
-				applicationStatus: "idle",
 				gitlabId: input.gitlabId,
 				gitlabProjectId: input.gitlabProjectId,
 				gitlabPathNamespace: input.gitlabPathNamespace,
@@ -786,7 +875,6 @@ export const applicationRouter = createTRPCRouter({
 				bitbucketBranch: input.bitbucketBranch,
 				bitbucketBuildPath: input.bitbucketBuildPath,
 				sourceType: "bitbucket",
-				applicationStatus: "idle",
 				bitbucketId: input.bitbucketId,
 				watchPaths: input.watchPaths,
 				enableSubmodules: input.enableSubmodules,
@@ -822,7 +910,6 @@ export const applicationRouter = createTRPCRouter({
 				giteaBranch: input.giteaBranch,
 				giteaBuildPath: input.giteaBuildPath,
 				sourceType: "gitea",
-				applicationStatus: "idle",
 				giteaId: input.giteaId,
 				watchPaths: input.watchPaths,
 				enableSubmodules: input.enableSubmodules,
@@ -846,24 +933,26 @@ export const applicationRouter = createTRPCRouter({
 				{ ...input, sourceType: null },
 				ctx.session,
 			);
-			const application = await findApplicationById(input.applicationId);
-			const { password } = preserveApplicationSecretPlaceholders(
-				{ password: input.password },
-				application,
+			const currentApplication = await findApplicationById(input.applicationId);
+			await updateApplication(
+				input.applicationId,
+				preserveSecretPlaceholderFields(
+					{
+						dockerImage: input.dockerImage,
+						username: input.username,
+						password: input.password,
+						sourceType: "docker" as const,
+						registryUrl: input.registryUrl,
+					},
+					currentApplication,
+					["password"],
+				),
 			);
-			await updateApplication(input.applicationId, {
-				dockerImage: input.dockerImage,
-				username: input.username,
-				password,
-				sourceType: "docker",
-				applicationStatus: "idle",
-				registryUrl: input.registryUrl,
-			});
 			await audit(ctx, {
 				action: "update",
 				resourceType: "application",
-				resourceId: application.applicationId,
-				resourceName: application.appName,
+				resourceId: currentApplication.applicationId,
+				resourceName: currentApplication.appName,
 			});
 			return true;
 		}),
@@ -879,25 +968,29 @@ export const applicationRouter = createTRPCRouter({
 				ctx.session,
 				{ permissionCtx: ctx, requireSshKeyRead: true },
 			);
-			if (input.customGitUrl) {
-				await assertCustomGitUrlAllowed(input.customGitUrl);
+			const currentApplication = await findApplicationById(input.applicationId);
+			const updateData = preserveSecretPlaceholderFields(
+				{
+					customGitBranch: input.customGitBranch,
+					customGitBuildPath: input.customGitBuildPath,
+					customGitUrl: input.customGitUrl,
+					customGitSSHKeyId: input.customGitSSHKeyId,
+					sourceType: "git" as const,
+					watchPaths: input.watchPaths,
+					enableSubmodules: input.enableSubmodules,
+				},
+				currentApplication,
+				["customGitUrl"],
+			);
+			if (updateData.customGitUrl) {
+				await assertCustomGitUrlAllowed(updateData.customGitUrl);
 			}
-			await updateApplication(input.applicationId, {
-				customGitBranch: input.customGitBranch,
-				customGitBuildPath: input.customGitBuildPath,
-				customGitUrl: input.customGitUrl,
-				customGitSSHKeyId: input.customGitSSHKeyId,
-				sourceType: "git",
-				applicationStatus: "idle",
-				watchPaths: input.watchPaths,
-				enableSubmodules: input.enableSubmodules,
-			});
-			const application = await findApplicationById(input.applicationId);
+			await updateApplication(input.applicationId, updateData);
 			await audit(ctx, {
 				action: "update",
 				resourceType: "application",
-				resourceId: application.applicationId,
-				resourceName: application.appName,
+				resourceId: currentApplication.applicationId,
+				resourceName: currentApplication.appName,
 			});
 			return true;
 		}),
@@ -945,7 +1038,6 @@ export const applicationRouter = createTRPCRouter({
 				customGitSSHKeyId: null,
 
 				sourceType: "github", // Reset to default
-				applicationStatus: "idle",
 				watchPaths: null,
 				enableSubmodules: false,
 			});
@@ -998,10 +1090,19 @@ export const applicationRouter = createTRPCRouter({
 			await assertApplicationRegistryAccess(input, ctx);
 
 			const { applicationId, ...rest } = input;
-			const application = await findApplicationById(applicationId);
+			const currentApplication = await findApplicationById(applicationId);
 			const updateApp = await updateApplication(
 				applicationId,
-				preserveApplicationSecretPlaceholders(rest, application),
+				preserveSecretPlaceholderFields(rest, currentApplication, [
+					"env",
+					"previewEnv",
+					"buildArgs",
+					"buildSecrets",
+					"previewBuildArgs",
+					"previewBuildSecrets",
+					"password",
+					"customGitUrl",
+				]),
 			);
 
 			if (!updateApp) {

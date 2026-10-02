@@ -135,7 +135,7 @@ export const libsqlRouter = createTRPCRouter({
 				ctx,
 				input.libsqlId,
 				() => findLibsqlById(input.libsqlId),
-				"libSQL",
+				"Libsql",
 			);
 
 			return {
@@ -432,9 +432,14 @@ export const libsqlRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, libsqlId, {
 				service: ["create"],
 			});
-			const libsql = await updateLibsqlById(libsqlId, {
-				...rest,
-			});
+			const currentLibsql = await findLibsqlById(libsqlId);
+			const libsql = await updateLibsqlById(
+				libsqlId,
+				preserveSecretPlaceholderFields(rest, currentLibsql, [
+					"env",
+					"databasePassword",
+				]),
+			);
 
 			if (!libsql) {
 				throw new TRPCError({

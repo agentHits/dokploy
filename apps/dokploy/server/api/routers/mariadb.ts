@@ -9,7 +9,7 @@ import {
 	findMariadbById,
 	getAccessibleServerIds,
 	getContainerLogs,
-	getServiceContainerCommand,
+	getServiceContainer,
 	getWebServerSettings,
 	IS_CLOUD,
 	rebuildDatabase,
@@ -28,6 +28,7 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
+import { getServiceContainerCommand } from "@dokploy/server/utils/backups/utils";
 import {
 	preserveSecretPlaceholderFields,
 	redactDatabaseServiceSecrets,
@@ -404,9 +405,15 @@ export const mariadbRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, mariadbId, {
 				service: ["create"],
 			});
-			const service = await updateMariadbById(mariadbId, {
-				...rest,
-			});
+			const currentMariadb = await findMariadbById(mariadbId);
+			const service = await updateMariadbById(
+				mariadbId,
+				preserveSecretPlaceholderFields(rest, currentMariadb, [
+					"env",
+					"databasePassword",
+					"databaseRootPassword",
+				]),
+			);
 
 			if (!service) {
 				throw new TRPCError({
@@ -442,9 +449,17 @@ export const mariadbRouter = createTRPCRouter({
 			const maria = await findMariadbById(mariadbId);
 			const { appName, serverId, databaseUser, databaseRootPassword } = maria;
 
-			const containerCmd = getServiceContainerCommand(appName);
+			const container = await getServiceContainer(appName, serverId);
+			if (!container) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: `No running container found for ${appName}`,
+				});
+			}
+
 			const targetUser = type === "root" ? "root" : databaseUser;
 
+			const containerCmd = getServiceContainerCommand(appName);
 			const passwordChangeCommand = buildMysqlPasswordChangeCommand({
 				client: "mariadb",
 				databaseRootPassword,

@@ -4,8 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
 	audit: vi.fn(),
 	assertLocalDockerContainerAccess: vi.fn(),
-	assertLocalDockerServiceAccess: vi.fn(),
-	assertLocalDockerServiceReadAccess: vi.fn(),
 	checkPermission: vi.fn(),
 	containerKill: vi.fn(),
 	containerRemove: vi.fn(),
@@ -52,8 +50,6 @@ vi.mock("@/server/api/utils/audit", () => ({
 
 vi.mock("@/server/api/utils/local-docker-access", () => ({
 	assertLocalDockerContainerAccess: mocks.assertLocalDockerContainerAccess,
-	assertLocalDockerServiceAccess: mocks.assertLocalDockerServiceAccess,
-	assertLocalDockerServiceReadAccess: mocks.assertLocalDockerServiceReadAccess,
 }));
 
 const { dockerRouter } = await import("../../server/api/routers/docker");
@@ -90,16 +86,8 @@ describe("docker router assigned-server boundary", () => {
 				},
 			},
 		});
-		mocks.assertLocalDockerServiceAccess.mockResolvedValue(undefined);
-		mocks.assertLocalDockerServiceReadAccess.mockResolvedValue(undefined);
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
 		mocks.getContainers.mockResolvedValue([{ Id: "container-1" }]);
-		mocks.getContainersByAppNameMatch.mockResolvedValue([
-			{ Id: "container-1" },
-		]);
-		mocks.getServiceContainersByAppName.mockResolvedValue([
-			{ ID: "container-1" },
-		]);
 		mocks.containerRestart.mockResolvedValue(undefined);
 	});
 
@@ -185,7 +173,6 @@ describe("docker router assigned-server boundary", () => {
 	});
 
 	it("requires docker.execute for container lifecycle actions", async () => {
-		mocks.findMemberByUserId.mockResolvedValue({ role: "member" });
 		const caller = createCaller();
 
 		await caller.restartContainer({ containerId: "container-1" });
@@ -202,24 +189,17 @@ describe("docker router assigned-server boundary", () => {
 					JSON.stringify(permissions) === JSON.stringify({ docker: ["read"] }),
 			),
 		).toHaveLength(0);
-		expect(mocks.findMemberByUserId).not.toHaveBeenCalled();
-		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
 	});
 
 	it("requires docker.delete for container removal", async () => {
-		mocks.findMemberByUserId.mockResolvedValue({ role: "member" });
-
 		await createCaller().removeContainer({ containerId: "container-1" });
 
 		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
 			docker: ["delete"],
 		});
-		expect(mocks.findMemberByUserId).not.toHaveBeenCalled();
-		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
 	});
 
 	it("requires docker.inspect for container config inspection", async () => {
-		mocks.findMemberByUserId.mockResolvedValue({ role: "member" });
 		mocks.getConfig.mockResolvedValue({ Config: { Env: ["SECRET=value"] } });
 
 		await createCaller().getConfig({ containerId: "container-1" });
@@ -233,12 +213,9 @@ describe("docker router assigned-server boundary", () => {
 			"inspect",
 		);
 		expect(mocks.getConfig).not.toHaveBeenCalled();
-		expect(mocks.findMemberByUserId).not.toHaveBeenCalled();
-		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
 	});
 
 	it("requires docker.write for container file uploads", async () => {
-		mocks.findMemberByUserId.mockResolvedValue({ role: "member" });
 		const file = new File(["content"], "config.txt", { type: "text/plain" });
 
 		await createCaller().uploadFileToContainer({
@@ -262,62 +239,5 @@ describe("docker router assigned-server boundary", () => {
 			"/tmp/config.txt",
 			null,
 		);
-		expect(mocks.findMemberByUserId).not.toHaveBeenCalled();
-		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
-	});
-
-	it("allows service-scoped local app-name container listings without Docker host access", async () => {
-		mocks.findMemberByUserId.mockResolvedValue({ role: "member" });
-
-		await expect(
-			createCaller().getContainersByAppNameMatch({ appName: "app-1" }),
-		).resolves.toEqual([{ Id: "container-1" }]);
-
-		expect(mocks.findMemberByUserId).not.toHaveBeenCalled();
-		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
-		expect(mocks.assertLocalDockerServiceReadAccess).toHaveBeenCalledWith(
-			expect.anything(),
-			"app-1",
-		);
-		expect(mocks.getContainersByAppNameMatch).toHaveBeenCalledWith(
-			"app-1",
-			undefined,
-			undefined,
-		);
-	});
-
-	it("uses docker.read service binding for local app-name Docker routes", async () => {
-		mocks.findMemberByUserId.mockResolvedValue({ role: "member" });
-
-		await expect(
-			createCaller().getServiceContainersByAppName({ appName: "app-1" }),
-		).resolves.toEqual([{ ID: "container-1" }]);
-
-		expect(mocks.findMemberByUserId).not.toHaveBeenCalled();
-		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
-		expect(mocks.assertLocalDockerServiceAccess).toHaveBeenCalledWith(
-			expect.anything(),
-			"app-1",
-			"read",
-		);
-		expect(mocks.getServiceContainersByAppName).toHaveBeenCalledWith(
-			"app-1",
-			undefined,
-		);
-	});
-
-	it("keeps remote app-name container routes behind Docker server access", async () => {
-		mocks.findMemberByUserId.mockResolvedValue({ role: "member" });
-
-		await expect(
-			createCaller().getContainersByAppNameMatch({
-				appName: "app-1",
-				serverId: "server-1",
-			}),
-		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-
-		expect(mocks.assertLocalDockerServiceReadAccess).not.toHaveBeenCalled();
-		expect(mocks.getAccessibleServerIds).not.toHaveBeenCalled();
-		expect(mocks.getContainersByAppNameMatch).not.toHaveBeenCalled();
 	});
 });

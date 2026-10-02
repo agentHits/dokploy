@@ -259,6 +259,24 @@ describe("InMemoryQueue concurrency", () => {
 });
 
 describe("InMemoryQueue job management", () => {
+	it("coalesces an exact operation id while it is waiting or active", async () => {
+		const block = deferred();
+		const queue = new InMemoryQueue({ resolveConcurrency: () => 1 });
+		queue.process(async () => block.promise);
+		const job = {
+			...composeJob("compose-1"),
+			operationId: "operation-1",
+			expectedRevision: "a".repeat(40),
+		};
+		const first = await queue.add(job, "operation-1");
+		await flush();
+		const duplicate = await queue.add(job, "operation-1");
+		expect(first.id).toBe("operation-1");
+		expect(duplicate.id).toBe("operation-1");
+		expect(await queue.getJobs(["active"])).toHaveLength(1);
+		block.release();
+	});
+
 	it("lists waiting jobs and removes them by predicate", async () => {
 		const block = deferred();
 		const queue = new InMemoryQueue({ resolveConcurrency: () => 1 });

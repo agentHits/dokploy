@@ -9,7 +9,7 @@ import {
 	findMongoById,
 	getAccessibleServerIds,
 	getContainerLogs,
-	getServiceContainerCommand,
+	getServiceContainer,
 	getWebServerSettings,
 	IS_CLOUD,
 	rebuildDatabase,
@@ -28,6 +28,7 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
+import { getServiceContainerCommand } from "@dokploy/server/utils/backups/utils";
 import {
 	preserveSecretPlaceholderFields,
 	redactDatabaseServiceSecrets,
@@ -426,9 +427,14 @@ export const mongoRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, mongoId, {
 				service: ["create"],
 			});
-			const service = await updateMongoById(mongoId, {
-				...rest,
-			});
+			const currentMongo = await findMongoById(mongoId);
+			const service = await updateMongoById(
+				mongoId,
+				preserveSecretPlaceholderFields(rest, currentMongo, [
+					"env",
+					"databasePassword",
+				]),
+			);
 
 			if (!service) {
 				throw new TRPCError({

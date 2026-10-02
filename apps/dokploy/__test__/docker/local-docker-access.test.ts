@@ -30,11 +30,8 @@ vi.mock("@dokploy/server/services/permission", () => ({
 	checkServicePermissionAndAccess: mocks.checkServicePermissionAndAccess,
 }));
 
-const {
-	assertLocalDockerContainerAccess,
-	assertLocalDockerServiceAccess,
-	assertLocalDockerServiceReadAccess,
-} = await import("../../server/api/utils/local-docker-access");
+const { assertLocalDockerContainerAccess, assertLocalDockerServiceAccess } =
+	await import("../../server/api/utils/local-docker-access");
 
 const ctx = {
 	user: { id: "user-1" },
@@ -118,21 +115,6 @@ describe("local Docker service access", () => {
 			ctx,
 			"application-1",
 			{ docker: ["execute"] },
-		);
-	});
-
-	it("checks service.read for local app-name read access", async () => {
-		mocks.db.query.compose.findFirst.mockResolvedValue({
-			composeId: "compose-1",
-			serverId: null,
-		});
-
-		await assertLocalDockerServiceReadAccess(ctx, "compose-app");
-
-		expect(mocks.checkServicePermissionAndAccess).toHaveBeenCalledWith(
-			ctx,
-			"compose-1",
-			{ service: ["read"] },
 		);
 	});
 

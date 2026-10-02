@@ -72,7 +72,6 @@ export const buildForwardAuthEnv = (
 		`OAUTH2_PROXY_COOKIE_DOMAINS=${baseDomain}`,
 		`OAUTH2_PROXY_WHITELIST_DOMAINS=${baseDomain}`,
 		`OAUTH2_PROXY_COOKIE_SECURE=${authDomainHttps ? "true" : "false"}`,
-		"OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL=true",
 		`OAUTH2_PROXY_EMAIL_DOMAINS=${emailDomains.join(",")}`,
 	];
 

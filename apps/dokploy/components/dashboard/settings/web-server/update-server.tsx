@@ -7,6 +7,7 @@ import {
 	Server,
 	Sparkles,
 	Stars,
+	X,
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -14,6 +15,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogClose,
 	DialogContent,
 	DialogTitle,
 	DialogTrigger,
@@ -47,24 +49,34 @@ export const UpdateServer = ({
 	);
 	const { mutateAsync: getUpdateData, isPending } =
 		api.settings.getUpdateData.useMutation();
-	const { data: dokployVersion } = api.settings.getDokployVersion.useQuery();
-	const { data: releaseTag } = api.settings.getReleaseTag.useQuery();
+	const { data: dokployVersionData } =
+		api.settings.getDokployVersionData.useQuery();
 	const [latestVersion, setLatestVersion] = useState(
 		updateData?.latestVersion ?? "",
 	);
+	const [updateSource, setUpdateSource] = useState(
+		updateData?.updateSource ?? "official",
+	);
 	const [isOpenInternal, setIsOpenInternal] = useState(false);
+	const isAgentHitsUpdate =
+		updateSource === "agenthits" || dokployVersionData?.isFork;
 
 	const handleCheckUpdates = async () => {
 		try {
 			const updateData = await getUpdateData();
 			const versionToUpdate = updateData.latestVersion || "";
+			const nextUpdateSource = updateData.updateSource ?? "official";
 			setHasCheckedUpdate(true);
 			setIsUpdateAvailable(updateData.updateAvailable);
 			setLatestVersion(versionToUpdate);
+			setUpdateSource(nextUpdateSource);
 
 			if (updateData.updateAvailable) {
 				toast.success(versionToUpdate, {
-					description: "New version available!",
+					description:
+						nextUpdateSource === "agenthits"
+							? "New AgentHits build available!"
+							: "New version available!",
 				});
 			} else {
 				toast.info("No updates available");
@@ -126,32 +138,50 @@ export const UpdateServer = ({
 					</TooltipProvider>
 				)}
 			</DialogTrigger>
-			<DialogContent className="max-w-lg">
-				<div className="flex items-center justify-between mb-8">
-					<DialogTitle className="text-2xl font-semibold">
+			<DialogContent className="max-w-lg" showCloseButton={false}>
+				<div className="flex items-center gap-2 mb-8">
+					<DialogTitle className="text-2xl font-semibold mr-auto">
 						Web Server Update
 					</DialogTitle>
-					{dokployVersion && (
-						<div className="flex items-center gap-1.5 rounded-full px-3 py-1 mr-2 bg-muted">
-							<Server className="h-4 w-4 text-muted-foreground" />
-							<span className="text-sm text-muted-foreground">
-								{dokployVersion}{" "}
-								{(releaseTag === "canary" || releaseTag === "feature") &&
-									`(${releaseTag})`}
-							</span>
+					{dokployVersionData && (
+						<div className="mr-2 flex max-w-[16rem] items-start gap-2 rounded-md bg-muted px-3 py-2">
+							<Server className="mt-0.5 h-4 w-4 flex-shrink-0 text-muted-foreground" />
+							<div className="min-w-0 text-xs leading-5 text-muted-foreground">
+								<div className="flex min-w-0 items-center gap-1.5">
+									<span>Official</span>
+									<span className="truncate font-medium">
+										{dokployVersionData.officialVersion}
+									</span>
+								</div>
+								<div className="flex min-w-0 items-center gap-1.5">
+									<span>Fork</span>
+									<span className="truncate font-medium">
+										{dokployVersionData.forkVersion}
+									</span>
+								</div>
+							</div>
 						</div>
 					)}
+					<DialogClose asChild>
+						<Button variant="ghost" size="icon-sm" className="shrink-0">
+							<X />
+							<span className="sr-only">Close</span>
+						</Button>
+					</DialogClose>
 				</div>
 
 				{/* Initial state */}
 				{!hasCheckedUpdate && (
 					<div className="mb-8">
 						<p className="text text-muted-foreground">
-							Check for new releases and update Dokploy.
+							{isAgentHitsUpdate
+								? "Check for new AgentHits builds and update Dokploy from the AgentHits fork."
+								: "Check for new releases and update Dokploy."}
 							<br />
 							<br />
-							We recommend checking for updates regularly to ensure you have the
-							latest features and security improvements.
+							{isAgentHitsUpdate
+								? "The update check compares your current service image with the latest GHCR image from AgentHits-Dev."
+								: "We recommend checking for updates regularly to ensure you have the latest features and security improvements."}
 						</p>
 					</div>
 				)}
@@ -163,7 +193,9 @@ export const UpdateServer = ({
 							<div className="flex items-center gap-1.5">
 								<Download className="h-4 w-4 text-emerald-400" />
 								<span className="text font-medium text-emerald-400 ">
-									New version available:
+									{isAgentHitsUpdate
+										? "New AgentHits build available:"
+										: "New version available:"}
 								</span>
 							</div>
 							<span className="text font-semibold text-emerald-300">
@@ -180,7 +212,9 @@ export const UpdateServer = ({
 								<li className="flex items-start gap-2">
 									<Stars className="h-5 w-5 mt-0.5 text-[#5B9DFF]" />
 									<span className="text">
-										Want to access the latest features and improvements
+										{isAgentHitsUpdate
+											? "Want to update to the latest AgentHits build"
+											: "Want to access the latest features and improvements"}
 									</span>
 								</li>
 								<li className="flex items-start gap-2">
@@ -207,8 +241,9 @@ export const UpdateServer = ({
 									You are using the latest version
 								</h3>
 								<p className="text text-muted-foreground">
-									Your server is up to date with all the latest features and
-									security improvements.
+									{isAgentHitsUpdate
+										? "Your server is using the latest AgentHits build."
+										: "Your server is up to date with all the latest features and security improvements."}
 								</p>
 							</div>
 						</div>
@@ -224,8 +259,9 @@ export const UpdateServer = ({
 							<div className="text-center space-y-2">
 								<h3 className="text-lg font-medium">Checking for updates...</h3>
 								<p className="text text-muted-foreground">
-									Please wait while we pull the latest version information from
-									Docker Hub.
+									{isAgentHitsUpdate
+										? "Please wait while we pull the latest AgentHits image information from GHCR."
+										: "Please wait while we pull the latest version information from Docker Hub."}
 								</p>
 							</div>
 						</div>
@@ -239,13 +275,17 @@ export const UpdateServer = ({
 							<div className="text-[#5B9DFF]">
 								We recommend reviewing the{" "}
 								<Link
-									href="https://github.com/Dokploy/dokploy/releases"
+									href={
+										isAgentHitsUpdate
+											? "https://github.com/agentHits/dokploy/commits/AgentHits-Dev"
+											: "https://github.com/Dokploy/dokploy/releases"
+									}
 									target="_blank"
 									className="text-white underline hover:text-zinc-200"
 								>
-									release notes
+									{isAgentHitsUpdate ? "AgentHits commits" : "release notes"}
 								</Link>{" "}
-								for any breaking changes before updating.
+								for changes before updating.
 							</div>
 						</div>
 					</div>

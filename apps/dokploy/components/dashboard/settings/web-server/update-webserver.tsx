@@ -30,7 +30,6 @@ type ServiceStatus = {
 
 type HealthResult = {
 	postgres: ServiceStatus;
-	redis: ServiceStatus;
 	traefik: ServiceStatus;
 };
 
@@ -89,7 +88,6 @@ export const UpdateWebServer = ({
 	const allHealthy =
 		healthResult &&
 		healthResult.postgres.status === "healthy" &&
-		healthResult.redis.status === "healthy" &&
 		healthResult.traefik.status === "healthy";
 
 	const checkIsUpdateFinished = async () => {
@@ -166,9 +164,11 @@ export const UpdateWebServer = ({
 						<div>
 							{modalState === "idle" && (
 								<span>
-									This will update the web server to the new version. You will
-									not be able to use the panel during the update process. The
-									page will be reloaded once the update is finished.
+									This will update the web server to the selected latest build.
+									AgentHits fork installs update from the AgentHits GHCR image.
+									You will not be able to use the panel during the update
+									process. The page will be reloaded once the update is
+									finished.
 									<br />
 									<br />
 									We recommend verifying that all services are running before
@@ -179,7 +179,7 @@ export const UpdateWebServer = ({
 							{modalState === "checking" && (
 								<span className="flex items-center gap-2">
 									<Loader2 className="animate-spin h-4 w-4" />
-									Checking PostgreSQL, Redis and Traefik...
+									Checking PostgreSQL and Traefik...
 								</span>
 							)}
 
@@ -189,10 +189,6 @@ export const UpdateWebServer = ({
 										<ServiceStatusItem
 											name="PostgreSQL"
 											service={healthResult.postgres}
-										/>
-										<ServiceStatusItem
-											name="Redis"
-											service={healthResult.redis}
 										/>
 										<ServiceStatusItem
 											name="Traefik"

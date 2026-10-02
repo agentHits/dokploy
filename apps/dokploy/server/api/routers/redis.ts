@@ -8,7 +8,7 @@ import {
 	findRedisById,
 	getAccessibleServerIds,
 	getContainerLogs,
-	getServiceContainerCommand,
+	getServiceContainer,
 	getWebServerSettings,
 	IS_CLOUD,
 	rebuildDatabase,
@@ -27,6 +27,7 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
+import { getServiceContainerCommand } from "@dokploy/server/utils/backups/utils";
 import {
 	preserveSecretPlaceholderFields,
 	redactDatabaseServiceSecrets,
@@ -413,9 +414,14 @@ export const redisRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, redisId, {
 				service: ["create"],
 			});
-			const redis = await updateRedisById(redisId, {
-				...rest,
-			});
+			const currentRedis = await findRedisById(redisId);
+			const redis = await updateRedisById(
+				redisId,
+				preserveSecretPlaceholderFields(rest, currentRedis, [
+					"env",
+					"databasePassword",
+				]),
+			);
 
 			if (!redis) {
 				throw new TRPCError({

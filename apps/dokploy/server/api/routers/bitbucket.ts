@@ -1,6 +1,7 @@
 import {
 	assertGitProviderAccess,
 	assertGitProviderManagementAccess,
+	canViewGitProviderSecrets,
 	createBitbucket,
 	findBitbucketById,
 	findBitbucketGitProviderId,
@@ -113,6 +114,8 @@ export const bitbucketRouter = createTRPCRouter({
 			await assertGitProviderManagementAccess(gitProviderId, ctx.session);
 
 			try {
+				const bitbucket = await findBitbucketById(input.bitbucketId);
+				await assertGitProviderAccess(ctx.session, bitbucket.gitProvider);
 				const result = await testBitbucketConnection(input);
 
 				return `Found ${result} repositories`;

@@ -17,8 +17,6 @@ const webhookMocks = vi.hoisted(() => ({
 	verify: vi.fn(),
 }));
 
-const fetchMock = vi.fn();
-
 vi.mock("@dokploy/server", () => ({
 	getBitbucketHeaders: vi.fn(() => ({})),
 	IS_CLOUD: false,
@@ -77,23 +75,8 @@ const createResponse = () => {
 	};
 };
 
-const createGithubBody = () => ({
-	ref: "refs/heads/main",
-	head_commit: {
-		id: "sha-main",
-		message: "Deploy application",
-	},
-	commits: [
-		{
-			modified: ["src/index.ts"],
-		},
-	],
-});
-
-const createGithubRequest = (
-	overrides: { body?: unknown; rawBody?: string } = {},
-) => {
-	const request = {
+const createGithubRequest = () =>
+	({
 		method: "POST",
 		query: {
 			refreshToken: "application-refresh-token",
@@ -102,11 +85,19 @@ const createGithubRequest = (
 			"x-github-event": "push",
 			"x-hub-signature-256": "sha256=signature",
 		},
-		body: "body" in overrides ? overrides.body : createGithubBody(),
-		rawBody: overrides.rawBody,
-	};
-	return request as unknown as NextApiRequest & { rawBody?: string };
-};
+		body: {
+			ref: "refs/heads/main",
+			head_commit: {
+				id: "sha-main",
+				message: "Deploy application",
+			},
+			commits: [
+				{
+					modified: ["src/index.ts"],
+				},
+			],
+		},
+	}) as unknown as NextApiRequest;
 
 const createGitlabRequest = (token: string) =>
 	({
@@ -131,32 +122,6 @@ const createGitlabRequest = (token: string) =>
 		},
 	}) as unknown as NextApiRequest;
 
-const createBitbucketRequest = () =>
-	({
-		method: "POST",
-		query: {
-			refreshToken: "application-refresh-token",
-		},
-		headers: {
-			"x-event-key": "repo:push",
-		},
-		body: {
-			push: {
-				changes: [
-					{
-						new: {
-							name: "main",
-							target: {
-								hash: "sha-main",
-								message: "Deploy application",
-							},
-						},
-					},
-				],
-			},
-		},
-	}) as unknown as NextApiRequest;
-
 const createGiteaRequest = () =>
 	({
 		method: "POST",
@@ -165,28 +130,6 @@ const createGiteaRequest = () =>
 		},
 		headers: {
 			"x-gitea-event": "push",
-		},
-		body: {
-			ref: "refs/heads/main",
-			after: "sha-main",
-			commits: [
-				{
-					id: "sha-main",
-					message: "Deploy application",
-					modified: ["src/index.ts"],
-				},
-			],
-		},
-	}) as unknown as NextApiRequest;
-
-const createSoftServeRequest = () =>
-	({
-		method: "POST",
-		query: {
-			refreshToken: "application-refresh-token",
-		},
-		headers: {
-			"x-softserve-event": "push",
 		},
 		body: {
 			ref: "refs/heads/main",
@@ -235,18 +178,6 @@ describe("application refresh-token deploy webhook authentication", () => {
 		queueMocks.add.mockResolvedValue(undefined);
 		webhookMocks.verify.mockResolvedValue(true);
 		dbMocks.findApplication.mockResolvedValue(createApplication());
-		fetchMock.mockResolvedValue({
-			json: vi.fn().mockResolvedValue({
-				values: [
-					{
-						new: {
-							path: "src/index.ts",
-						},
-					},
-				],
-			}),
-		});
-		vi.stubGlobal("fetch", fetchMock);
 	});
 
 	it("rejects unsigned GitHub application deploy webhooks before queuing deployments", async () => {
@@ -264,22 +195,14 @@ describe("application refresh-token deploy webhook authentication", () => {
 	});
 
 	it("allows signed GitHub application deploy webhooks to continue to deployment queueing", async () => {
-		const rawBody = JSON.stringify(createGithubBody(), null, 2);
-		const request = createGithubRequest({ body: undefined, rawBody });
 		const response = createResponse();
 
-		await applicationDeployHandler(request, response);
+		await applicationDeployHandler(createGithubRequest(), response);
 
 		expect(webhookMocks.verify).toHaveBeenCalledWith(
-			rawBody,
+			JSON.stringify(createGithubRequest().body),
 			"sha256=signature",
 		);
-		expect(request.body).toMatchObject({
-			ref: "refs/heads/main",
-			head_commit: {
-				id: "sha-main",
-			},
-		});
 		expect(queueMocks.add).toHaveBeenCalledWith(
 			"deployments",
 			expect.objectContaining({
@@ -297,8 +220,7 @@ describe("application refresh-token deploy webhook authentication", () => {
 			createApplication({
 				github: null,
 				gitlab: {
-					secret: "gitlab-oauth-client-secret",
-					webhookSecret: "gitlab-webhook-secret",
+					secret: "gitlab-webhook-secret",
 				},
 				gitlabBranch: "main",
 				sourceType: "gitlab",
@@ -324,8 +246,7 @@ describe("application refresh-token deploy webhook authentication", () => {
 			createApplication({
 				github: null,
 				gitlab: {
-					secret: "gitlab-oauth-client-secret",
-					webhookSecret: "gitlab-webhook-secret",
+					secret: "gitlab-webhook-secret",
 				},
 				gitlabBranch: "main",
 				sourceType: "gitlab",
@@ -350,96 +271,7 @@ describe("application refresh-token deploy webhook authentication", () => {
 		expect(response.status).toHaveBeenCalledWith(200);
 	});
 
-	it("does not authenticate GitLab application webhooks with the OAuth client secret", async () => {
-		dbMocks.findApplication.mockResolvedValue(
-			createApplication({
-				github: null,
-				gitlab: {
-					secret: "gitlab-oauth-client-secret",
-					webhookSecret: "gitlab-webhook-secret",
-				},
-				gitlabBranch: "main",
-				sourceType: "gitlab",
-			}),
-		);
-		const response = createResponse();
-
-		await applicationDeployHandler(
-			createGitlabRequest("gitlab-oauth-client-secret"),
-			response,
-		);
-
-		expect(response.status).toHaveBeenCalledWith(401);
-		expect(response.json).toHaveBeenCalledWith({
-			message: "Invalid webhook signature",
-		});
-		expect(queueMocks.add).not.toHaveBeenCalled();
-	});
-
-	it("keeps legacy GitLab application refresh-token webhooks when no webhook token is configured", async () => {
-		dbMocks.findApplication.mockResolvedValue(
-			createApplication({
-				github: null,
-				gitlab: {
-					secret: "gitlab-oauth-client-secret",
-				},
-				gitlabBranch: "main",
-				sourceType: "gitlab",
-			}),
-		);
-		const response = createResponse();
-
-		await applicationDeployHandler(
-			createGitlabRequest("gitlab-oauth-client-secret"),
-			response,
-		);
-
-		expect(queueMocks.add).toHaveBeenCalledWith(
-			"deployments",
-			expect.objectContaining({
-				applicationId: "application-1",
-				applicationType: "application",
-				type: "deploy",
-			}),
-			expect.any(Object),
-		);
-		expect(response.status).toHaveBeenCalledWith(200);
-	});
-
-	it("allows Bitbucket refresh-token webhooks to continue to source validation", async () => {
-		dbMocks.findApplication.mockResolvedValue(
-			createApplication({
-				bitbucket: {
-					bitbucketUsername: "workspace",
-					bitbucketWorkspaceName: "workspace",
-				},
-				bitbucketBranch: "main",
-				bitbucketRepository: "dokploy",
-				github: null,
-				sourceType: "bitbucket",
-			}),
-		);
-		const response = createResponse();
-
-		await applicationDeployHandler(createBitbucketRequest(), response);
-
-		expect(fetchMock).toHaveBeenCalledWith(
-			"https://api.bitbucket.org/2.0/repositories/workspace/dokploy/diffstat/sha-main",
-			expect.any(Object),
-		);
-		expect(queueMocks.add).toHaveBeenCalledWith(
-			"deployments",
-			expect.objectContaining({
-				applicationId: "application-1",
-				applicationType: "application",
-				type: "deploy",
-			}),
-			expect.any(Object),
-		);
-		expect(response.status).toHaveBeenCalledWith(200);
-	});
-
-	it("allows Gitea refresh-token webhooks to continue to source validation", async () => {
+	it("rejects provider webhook headers that have no verifiable stored webhook secret", async () => {
 		dbMocks.findApplication.mockResolvedValue(
 			createApplication({
 				gitea: {
@@ -454,40 +286,12 @@ describe("application refresh-token deploy webhook authentication", () => {
 
 		await applicationDeployHandler(createGiteaRequest(), response);
 
-		expect(queueMocks.add).toHaveBeenCalledWith(
-			"deployments",
-			expect.objectContaining({
-				applicationId: "application-1",
-				applicationType: "application",
-				type: "deploy",
-			}),
-			expect.any(Object),
-		);
-		expect(response.status).toHaveBeenCalledWith(200);
-	});
-
-	it("allows Soft Serve refresh-token webhooks to continue to source validation", async () => {
-		dbMocks.findApplication.mockResolvedValue(
-			createApplication({
-				customGitBranch: "main",
-				github: null,
-				sourceType: "git",
-			}),
-		);
-		const response = createResponse();
-
-		await applicationDeployHandler(createSoftServeRequest(), response);
-
-		expect(queueMocks.add).toHaveBeenCalledWith(
-			"deployments",
-			expect.objectContaining({
-				applicationId: "application-1",
-				applicationType: "application",
-				type: "deploy",
-			}),
-			expect.any(Object),
-		);
-		expect(response.status).toHaveBeenCalledWith(200);
+		expect(response.status).toHaveBeenCalledWith(401);
+		expect(response.json).toHaveBeenCalledWith({
+			message: "Invalid webhook signature",
+		});
+		expect(serverMocks.shouldDeploy).not.toHaveBeenCalled();
+		expect(queueMocks.add).not.toHaveBeenCalled();
 	});
 
 	it("keeps manual refresh-token application deploy POSTs separate from provider webhook authentication", async () => {

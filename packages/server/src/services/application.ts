@@ -33,6 +33,7 @@ import { eq } from "drizzle-orm";
 import type { z } from "zod";
 import { encodeBase64 } from "../utils/docker/utils";
 import {
+	assertNoRedactedSecretPlaceholders,
 	getApplicationEnvRevision,
 	upsertEnvVariables,
 } from "../utils/env-upsert";
@@ -107,10 +108,24 @@ export const findApplicationById = async (applicationId: string) => {
 			redirects: true,
 			security: true,
 			ports: true,
-			gitlab: true,
-			github: true,
-			bitbucket: true,
-			gitea: true,
+			gitlab: {
+				columns: { secret: false, accessToken: false, refreshToken: false },
+			},
+			github: {
+				columns: {
+					githubClientSecret: false,
+					githubPrivateKey: false,
+					githubWebhookSecret: false,
+				},
+			},
+			bitbucket: { columns: { appPassword: false, apiToken: false } },
+			gitea: {
+				columns: {
+					clientSecret: false,
+					accessToken: false,
+					refreshToken: false,
+				},
+			},
 			server: true,
 			previewDeployments: true,
 			registry: { columns: { password: false } },
@@ -154,6 +169,17 @@ export const updateApplication = async (
 export const upsertApplicationEnvironment = async (
 	input: z.infer<typeof apiUpsertApplicationEnv>,
 ) => {
+	try {
+		assertNoRedactedSecretPlaceholders(input.variables);
+	} catch (error) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message:
+				error instanceof Error
+					? error.message
+					: "Invalid environment variables",
+		});
+	}
 	const application = await findApplicationById(input.applicationId);
 	const currentEnv = application.env ?? "";
 	const currentRevision = getApplicationEnvRevision(

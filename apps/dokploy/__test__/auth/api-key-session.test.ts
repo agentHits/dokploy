@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 	memberFindFirst: vi.fn(),
 	memberInsertValues: vi.fn(),
 	apiKeyFindFirst: vi.fn(),
+	organizationFindFirst: vi.fn(),
 	authOptions: undefined as any,
 	checkPermission: vi.fn(),
 	createAuthMiddleware: vi.fn((middleware) => middleware),
@@ -78,13 +78,6 @@ vi.mock("@dokploy/server/db", () => ({
 	db: {
 		insert: mocks.insert,
 		select: mocks.select,
-		update: vi.fn(() => ({
-			set: () => ({
-				where: () => ({
-					returning: async () => [{}],
-				}),
-			}),
-		})),
 		query: {
 			apikey: {
 				findFirst: mocks.apiKeyFindFirst,
@@ -95,33 +88,8 @@ vi.mock("@dokploy/server/db", () => ({
 			member: {
 				findFirst: mocks.memberFindFirst,
 			},
-			ssoProvider: {
-				findFirst: mocks.ssoProviderFindFirst,
-			},
-		},
-	},
-}));
-
-vi.mock("../../../../packages/server/src/db", () => ({
-	db: {
-		insert: mocks.insert,
-		select: mocks.select,
-		update: vi.fn(() => ({
-			set: () => ({
-				where: () => ({
-					returning: async () => [{}],
-				}),
-			}),
-		})),
-		query: {
-			apikey: {
-				findFirst: mocks.apiKeyFindFirst,
-			},
-			webServerSettings: {
-				findFirst: mocks.webServerSettingsFindFirst,
-			},
-			member: {
-				findFirst: mocks.memberFindFirst,
+			organization: {
+				findFirst: mocks.organizationFindFirst,
 			},
 			ssoProvider: {
 				findFirst: mocks.ssoProviderFindFirst,
@@ -132,35 +100,6 @@ vi.mock("../../../../packages/server/src/db", () => ({
 
 vi.mock("@dokploy/server/services/permission", () => ({
 	checkPermission: mocks.checkPermission,
-}));
-
-vi.mock("../../../../packages/server/src/services/permission", () => ({
-	checkPermission: mocks.checkPermission,
-}));
-
-vi.mock("../../../../packages/server/src/services/admin", () => ({
-	getTrustedOrigins: vi.fn(async () =>
-		(await mocks.trustedOriginsWhere()).flatMap(
-			(row: { trustedOrigins?: string[] | null }) => row.trustedOrigins ?? [],
-		),
-	),
-	getUserByToken: vi.fn(),
-}));
-
-vi.mock("../../../../packages/server/src/services/web-server-settings", () => ({
-	getWebServerSettings: mocks.webServerSettingsFindFirst,
-	updateWebServerSettings: vi.fn(),
-}));
-
-vi.mock("../../../../packages/server/src/lib/access-control", () => ({
-	ac: {
-		newRole: vi.fn((role) => role),
-	},
-	adminRole: {},
-	enterpriseOnlyResources: new Set<string>(),
-	memberRole: {},
-	ownerRole: {},
-	statements: {},
 }));
 
 const { validateRequest } = await import(
@@ -175,58 +114,12 @@ const { resolveTrustedOriginsForAuthRequest } = await import(
 const { canProvisionSsoMembershipForEmail } = await import(
 	"../../../../packages/server/src/lib/auth"
 );
-const { provisionSsoMembershipForCreatedUser } = await import(
-	"../../../../packages/server/src/lib/auth"
-);
-const { resolveSsoOrganizationProvisioningRole } = await import(
-	"../../../../packages/server/src/lib/auth"
-);
 
 const apiKeyRequest = {
 	headers: {
 		"x-api-key": "dokploy-test-key",
 	},
 } as unknown as IncomingMessage;
-
-const hashedApiKey = createHash("sha256")
-	.update("dokploy-test-key")
-	.digest("base64url");
-
-const apiKeyAdapterRecord = {
-	id: "api-key-1",
-	name: "test key",
-	start: "dokploy",
-	prefix: null,
-	key: hashedApiKey,
-	configId: "default",
-	referenceId: "user-1",
-	refillInterval: null,
-	refillAmount: null,
-	lastRefillAt: null,
-	enabled: true,
-	rateLimitEnabled: false,
-	rateLimitTimeWindow: null,
-	rateLimitMax: null,
-	requestCount: 0,
-	remaining: null,
-	lastRequest: null,
-	expiresAt: null,
-	createdAt: new Date("2026-01-01T00:00:00.000Z"),
-	updatedAt: new Date("2026-01-02T00:00:00.000Z"),
-	permissions: null,
-	metadata: JSON.stringify({ organizationId: "org-1" }),
-};
-
-const mockAuthSelect = () => {
-	mocks.select.mockReturnValue({
-		from: () => ({
-			innerJoin: () => ({
-				where: mocks.trustedOriginsWhere,
-			}),
-			where: vi.fn(async () => [apiKeyAdapterRecord]),
-		}),
-	});
-};
 
 const userRecord = {
 	id: "user-1",
@@ -260,7 +153,13 @@ describe("validateRequest API key sessions", () => {
 		mocks.trustedOriginsWhere.mockResolvedValue([
 			{ trustedOrigins: ["https://8.8.8.8"] },
 		]);
-		mockAuthSelect();
+		mocks.select.mockReturnValue({
+			from: () => ({
+				innerJoin: () => ({
+					where: mocks.trustedOriginsWhere,
+				}),
+			}),
+		});
 		mocks.insert.mockReturnValue({
 			values: mocks.memberInsertValues,
 		});
@@ -330,7 +229,13 @@ describe("Better Auth trusted origins", () => {
 		mocks.trustedOriginsWhere.mockResolvedValue([
 			{ trustedOrigins: ["https://8.8.8.8"] },
 		]);
-		mockAuthSelect();
+		mocks.select.mockReturnValue({
+			from: () => ({
+				innerJoin: () => ({
+					where: mocks.trustedOriginsWhere,
+				}),
+			}),
+		});
 	});
 
 	it("does not apply tenant trusted origins to ordinary Better Auth requests", async () => {
@@ -406,6 +311,11 @@ describe("Better Auth SSO enforcement", () => {
 		await expect(
 			shouldBlockEmailPasswordSignIn("/sign-in/email"),
 		).resolves.toBe(true);
+		await expect(
+			mocks.authOptions.hooks.before({ path: "/sign-in/email" }),
+		).rejects.toThrow(
+			"Email and password sign-in is disabled while SSO is enforced",
+		);
 	});
 
 	it("does not block SSO endpoints or password sign-in when enforceSSO is off", async () => {
@@ -434,12 +344,9 @@ describe("Better Auth account linking policy", () => {
 
 describe("Better Auth SSO domain verification", () => {
 	it("enables Better Auth domain verification for SSO providers", () => {
-		const authSource = readFileSync(
-			new URL("../../../../packages/server/src/lib/auth.ts", import.meta.url),
-			"utf8",
-		);
-
-		expect(authSource).toMatch(/domainVerification:\s*{\s*enabled:\s*true/s);
+		expect(mocks.ssoPluginOptions.domainVerification).toEqual({
+			enabled: true,
+		});
 	});
 });
 
@@ -486,7 +393,7 @@ describe("Better Auth SSO membership provisioning", () => {
 
 	it("fails closed before Better Auth organization provisioning when explicit providerId email domain mismatches", async () => {
 		await expect(
-			resolveSsoOrganizationProvisioningRole({
+			mocks.ssoPluginOptions.organizationProvisioning.getRole({
 				user: {
 					id: "user-sso",
 					email: "attacker@evil.com",
@@ -504,7 +411,7 @@ describe("Better Auth SSO membership provisioning", () => {
 
 	it("fails closed before Better Auth organization provisioning when provider domain is unverified", async () => {
 		await expect(
-			resolveSsoOrganizationProvisioningRole({
+			mocks.ssoPluginOptions.organizationProvisioning.getRole({
 				user: {
 					id: "user-sso",
 					email: "ada@acme.com",
@@ -522,7 +429,7 @@ describe("Better Auth SSO membership provisioning", () => {
 
 	it("allows Better Auth organization provisioning only after explicit providerId email domain eligibility passes", async () => {
 		await expect(
-			resolveSsoOrganizationProvisioningRole({
+			mocks.ssoPluginOptions.organizationProvisioning.getRole({
 				user: {
 					id: "user-sso",
 					email: "ada@engineering.acme.com",
@@ -540,12 +447,17 @@ describe("Better Auth SSO membership provisioning", () => {
 
 	it("fails closed before inserting SSO membership when email domain mismatches provider domains", async () => {
 		await expect(
-			provisionSsoMembershipForCreatedUser(
+			mocks.authOptions.databaseHooks.user.create.after(
 				{
 					id: "user-sso",
 					email: "attacker@evil.com",
 				},
-				"acme-sso",
+				{
+					path: "/sso/callback/acme-sso",
+					params: {
+						providerId: "acme-sso",
+					},
+				},
 			),
 		).rejects.toThrow("SSO email domain is not allowed for this provider");
 
@@ -555,12 +467,17 @@ describe("Better Auth SSO membership provisioning", () => {
 
 	it("provisions SSO membership only after the local email domain check passes", async () => {
 		await expect(
-			provisionSsoMembershipForCreatedUser(
+			mocks.authOptions.databaseHooks.user.create.after(
 				{
 					id: "user-sso",
 					email: "ada@engineering.acme.com",
 				},
-				"acme-sso",
+				{
+					path: "/sso/callback/acme-sso",
+					params: {
+						providerId: "acme-sso",
+					},
+				},
 			),
 		).resolves.toBeUndefined();
 

@@ -13,14 +13,15 @@ import {
 	extractHash,
 	getProviderByHeader,
 	logWebhookError,
-	readDeployWebhookBody,
 	rejectNonPostDeployWebhook,
 	rejectUnauthenticatedProviderDeployWebhook,
 } from "../[refreshToken]";
 
 export const config = {
 	api: {
-		bodyParser: false,
+		bodyParser: {
+			sizeLimit: "25mb",
+		},
 	},
 };
 
@@ -36,14 +37,6 @@ export default async function handler(
 
 		if (req.headers["x-github-event"] === "ping") {
 			res.status(200).json({ message: "Ping received, webhook is active" });
-			return;
-		}
-		let rawBody = "";
-		try {
-			rawBody = await readDeployWebhookBody(req);
-		} catch (error) {
-			logWebhookError("Invalid compose deploy webhook body:", error);
-			res.status(400).json({ message: "Invalid request body" });
 			return;
 		}
 		const composeResult = await db.query.compose.findFirst({
@@ -73,17 +66,12 @@ export default async function handler(
 		}
 
 		if (
-			await rejectUnauthenticatedProviderDeployWebhook(
-				req,
-				res,
-				{
-					github: composeResult.github,
-					gitlab: composeResult.gitlab,
-					bitbucket: composeResult.bitbucket,
-					gitea: composeResult.gitea,
-				},
-				rawBody,
-			)
+			await rejectUnauthenticatedProviderDeployWebhook(req, res, {
+				github: composeResult.github,
+				gitlab: composeResult.gitlab,
+				bitbucket: composeResult.bitbucket,
+				gitea: composeResult.gitea,
+			})
 		) {
 			return;
 		}
@@ -94,9 +82,11 @@ export default async function handler(
 
 		if (sourceType === "github") {
 			const branchName = extractBranchName(req.headers, req.body);
-			const normalizedCommits = req.body?.commits?.flatMap(
-				(commit: any) => commit.modified,
-			);
+			const normalizedCommits = req.body?.commits?.flatMap((commit: any) => [
+				...(commit.added || []),
+				...(commit.modified || []),
+				...(commit.removed || []),
+			]);
 
 			const shouldDeployPaths = shouldDeploy(
 				composeResult.watchPaths,
@@ -114,9 +104,11 @@ export default async function handler(
 			}
 		} else if (sourceType === "gitlab") {
 			const branchName = extractBranchName(req.headers, req.body);
-			const normalizedCommits = req.body?.commits?.flatMap(
-				(commit: any) => commit.modified,
-			);
+			const normalizedCommits = req.body?.commits?.flatMap((commit: any) => [
+				...(commit.added || []),
+				...(commit.modified || []),
+				...(commit.removed || []),
+			]);
 
 			const shouldDeployPaths = shouldDeploy(
 				composeResult.watchPaths,
@@ -165,17 +157,23 @@ export default async function handler(
 			let normalizedCommits: string[] = [];
 
 			if (provider === "github") {
-				normalizedCommits = req.body?.commits?.flatMap(
-					(commit: any) => commit.modified,
-				);
+				normalizedCommits = req.body?.commits?.flatMap((commit: any) => [
+					...(commit.added || []),
+					...(commit.modified || []),
+					...(commit.removed || []),
+				]);
 			} else if (provider === "gitlab") {
-				normalizedCommits = req.body?.commits?.flatMap(
-					(commit: any) => commit.modified,
-				);
+				normalizedCommits = req.body?.commits?.flatMap((commit: any) => [
+					...(commit.added || []),
+					...(commit.modified || []),
+					...(commit.removed || []),
+				]);
 			} else if (provider === "gitea") {
-				normalizedCommits = req.body?.commits?.flatMap(
-					(commit: any) => commit.modified,
-				);
+				normalizedCommits = req.body?.commits?.flatMap((commit: any) => [
+					...(commit.added || []),
+					...(commit.modified || []),
+					...(commit.removed || []),
+				]);
 			}
 
 			const shouldDeployPaths = shouldDeploy(
@@ -190,9 +188,11 @@ export default async function handler(
 		} else if (sourceType === "gitea") {
 			const branchName = extractBranchName(req.headers, req.body);
 
-			const normalizedCommits = req.body?.commits?.flatMap(
-				(commit: any) => commit.modified,
-			);
+			const normalizedCommits = req.body?.commits?.flatMap((commit: any) => [
+				...(commit.added || []),
+				...(commit.modified || []),
+				...(commit.removed || []),
+			]);
 
 			const shouldDeployPaths = shouldDeploy(
 				composeResult.watchPaths,
@@ -218,10 +218,10 @@ export default async function handler(
 				applicationType: "compose",
 				descriptionLog: `Hash: ${deploymentHash}`,
 				server: !!composeResult.serverId,
-				serverId: composeResult.serverId ?? undefined,
 			};
 
 			if (IS_CLOUD && composeResult.serverId) {
+				jobData.serverId = composeResult.serverId;
 				deploy(jobData).catch((error) => {
 					console.error("Background deployment failed:", error);
 				});

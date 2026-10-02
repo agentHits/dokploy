@@ -10,8 +10,13 @@ import { publicIpv4, publicIpv6 } from "public-ip";
 import { Client, type ConnectConfig } from "ssh2";
 import { WebSocketServer } from "ws";
 import { getDockerHost } from "../utils/docker";
+import { canAccessTerminalOverWss } from "./authorize";
 import { canAccessServerTerminalWebSocket } from "./server-permission";
-import { setupLocalServerSSHKey } from "./utils";
+import {
+	parseResizeMessage,
+	parseTerminalSize,
+	setupLocalServerSSHKey,
+} from "./utils";
 
 const COMMAND_TO_ALLOW_LOCAL_ACCESS = `
 # ----------------------------------------
@@ -52,7 +57,7 @@ export const getPublicIpWithFallback = async () => {
 
 export const getLocalServerIp = async () => {
 	try {
-		const command = `ip addr show | grep -E "inet (192\\.168\\.|10\\.|172\\.1[6-9]\\.|172\\.2[0-9]\\.|172\\.3[0-1]\\.)" | head -n1 | awk '{print $2}' | cut -d/ -f1`;
+		const command = `ip addr show | grep -E "inet (192.168.|10.|172.1[6-9].|172.2[0-9].|172.3[0-1].)" | head -n1 | awk '{print $2}' | cut -d/ -f1`;
 		const { stdout } = await execAsync(command);
 		const ip = stdout.trim();
 		return (
@@ -88,8 +93,12 @@ export const setupTerminalWebSocketServer = (
 	wssTerm.on("connection", async (ws, req) => {
 		const url = new URL(req.url || "", `http://${req.headers.host}`);
 		const serverId = url.searchParams.get("serverId");
+		const { cols, rows } = parseTerminalSize(
+			url.searchParams.get("cols"),
+			url.searchParams.get("rows"),
+		);
 		const { user, session } = await validateRequest(req);
-		if (!user || !session || !serverId) {
+		if (!user || !session || !session.activeOrganizationId || !serverId) {
 			ws.close();
 			return;
 		}
@@ -98,6 +107,11 @@ export const setupTerminalWebSocketServer = (
 			!(await canAccessServerTerminalWebSocket({ user, session, serverId }))
 		) {
 			ws.close();
+			return;
+		}
+
+		if (!(await canAccessTerminalOverWss(user, session, serverId))) {
+			ws.close(4003, "Not authorized");
 			return;
 		}
 
@@ -193,7 +207,7 @@ export const setupTerminalWebSocketServer = (
 				// Clear terminal content once connected
 				ws.send("\x1bc");
 
-				conn.shell({}, (err, stream) => {
+				conn.shell({ cols, rows }, (err, stream) => {
 					if (err) throw err;
 
 					stream
@@ -219,7 +233,13 @@ export const setupTerminalWebSocketServer = (
 							} else {
 								command = message;
 							}
-							stream.write(command.toString());
+							const text = command.toString();
+							const resize = parseResizeMessage(text);
+							if (resize) {
+								stream.setWindow(resize.rows, resize.cols, 0, 0);
+								return;
+							}
+							stream.write(text);
 						} catch (error) {
 							// @ts-expect-error
 							const errorMessage = error?.message as unknown as string;

@@ -9,7 +9,10 @@ import {
 import { generatePassword } from "@dokploy/server/templates";
 import { buildMongo } from "@dokploy/server/utils/databases/mongo";
 import { buildDockerPullCommand } from "@dokploy/server/utils/docker/commands";
-import { pullImage } from "@dokploy/server/utils/docker/utils";
+import {
+	pullImage,
+	waitForSwarmServiceConvergence,
+} from "@dokploy/server/utils/docker/utils";
 import { execAsyncRemote } from "@dokploy/server/utils/process/execAsync";
 import { TRPCError } from "@trpc/server";
 import { eq, getTableColumns } from "drizzle-orm";
@@ -169,6 +172,7 @@ export const deployMongo = async (
 		}
 
 		await buildMongo(mongo);
+		await waitForSwarmServiceConvergence(mongo.appName, mongo.serverId);
 		await updateMongoById(mongoId, {
 			applicationStatus: "done",
 		});

@@ -39,10 +39,6 @@ type LocalDockerService = {
 	serverId?: string | null;
 };
 
-type LocalDockerServicePermissions = Parameters<
-	typeof checkServicePermissionAndAccess
->[2];
-
 const dockerIdentifierRegex = /^[a-zA-Z0-9.\-_]+$/;
 
 const unauthorizedLocalDockerTarget = () =>
@@ -213,10 +209,10 @@ const findServiceByAppName = async (
 	return null;
 };
 
-const assertLocalDockerServicePermission = async (
+export const assertLocalDockerServiceAccess = async (
 	ctx: LocalDockerAccessCtx,
 	appName: string,
-	permissions: LocalDockerServicePermissions,
+	permission: LocalDockerPermission,
 ) => {
 	assertDockerIdentifier(appName);
 
@@ -225,25 +221,10 @@ const assertLocalDockerServicePermission = async (
 		throw unauthorizedLocalDockerTarget();
 	}
 
-	await checkServicePermissionAndAccess(ctx, service.id, permissions);
-};
-
-export const assertLocalDockerServiceAccess = async (
-	ctx: LocalDockerAccessCtx,
-	appName: string,
-	permission: LocalDockerPermission,
-) =>
-	assertLocalDockerServicePermission(ctx, appName, {
+	await checkServicePermissionAndAccess(ctx, service.id, {
 		docker: [permission],
 	});
-
-export const assertLocalDockerServiceReadAccess = async (
-	ctx: LocalDockerAccessCtx,
-	appName: string,
-) =>
-	assertLocalDockerServicePermission(ctx, appName, {
-		service: ["read"],
-	});
+};
 
 export const assertLocalDockerContainerAccess = async (
 	ctx: LocalDockerAccessCtx,

@@ -102,11 +102,12 @@ interface RcloneFile {
 type BackupAction = "create" | "read" | "update" | "delete" | "restore";
 type BackupScheduleWithRelations = Awaited<ReturnType<typeof findBackupById>>;
 type RestoreBackupInput = z.infer<typeof apiRestoreBackup>;
-type BackupMetadataInput = z.infer<typeof apiUpdateBackup>["metadata"];
 type BackupAccessCtx = {
 	session: { userId: string; activeOrganizationId: string };
 	user: { id: string; role: string };
 };
+
+type BackupMetadataInput = z.infer<typeof apiUpdateBackup>["metadata"];
 
 const preserveBackupSecretValue = (value: string, existingValue?: string) =>
 	isRedactedSecretValue(value) ? (existingValue ?? "") : value;
@@ -248,24 +249,6 @@ const assertBoundBackupService = (
 
 	return serviceId;
 };
-
-type BoundBackupServiceInput = Parameters<typeof assertBoundBackupService>[0];
-
-const toBoundBackupServiceInput = (
-	backup: BackupServiceIdShape & {
-		backupType?: unknown;
-		databaseType: BackupScheduleWithRelations["databaseType"];
-	},
-): BoundBackupServiceInput => ({
-	postgresId: backup.postgresId,
-	mysqlId: backup.mysqlId,
-	mariadbId: backup.mariadbId,
-	mongoId: backup.mongoId,
-	libsqlId: backup.libsqlId,
-	composeId: backup.composeId,
-	backupType: backup.backupType === "compose" ? "compose" : "database",
-	databaseType: backup.databaseType,
-});
 
 const assertOwnerOrAdmin = (
 	ctx: { user: { role: string } },
@@ -634,12 +617,10 @@ export const backupRouter = createTRPCRouter({
 		.input(apiCreateBackup)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				const serviceId = assertBoundBackupService(
-					toBoundBackupServiceInput({
-						...input,
-						backupType: input.backupType ?? "database",
-					}),
-				);
+				const serviceId = assertBoundBackupService({
+					...input,
+					backupType: input.backupType ?? "database",
+				});
 				if (serviceId) {
 					await checkServicePermissionAndAccess(ctx, serviceId, {
 						backup: ["create"],

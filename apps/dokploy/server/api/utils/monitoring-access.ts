@@ -20,7 +20,7 @@ type MonitoringAccessCtx = {
 	};
 	user: {
 		id: string;
-		role: string;
+		role?: string;
 	};
 };
 
@@ -385,6 +385,12 @@ export const assertContainerMetricsServiceAccess = async (
 	appName: string,
 	serverId?: string,
 ) => {
+	if (!ctx.session.activeOrganizationId) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not authorized to access this monitored service",
+		});
+	}
 	const service = await findMonitoringServiceByAppName(appName);
 	if (
 		!service ||

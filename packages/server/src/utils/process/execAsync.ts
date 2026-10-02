@@ -5,6 +5,20 @@ import { resolveServerDestinationHost } from "@dokploy/server/utils/servers/dest
 import { Client } from "ssh2";
 import { ExecError } from "./ExecError";
 
+export class WriteFileRemoteError extends Error {
+	constructor(
+		message: string,
+		public readonly context: {
+			remotePath: string;
+			serverId: string;
+			originalError: Error;
+		},
+	) {
+		super(message);
+		this.name = "WriteFileRemoteError";
+	}
+}
+
 // Re-export ExecError for easier imports
 export { ExecError } from "./ExecError";
 
@@ -28,7 +42,10 @@ export const execAsync = async (
 		};
 	} catch (error) {
 		if (error instanceof Error) {
-			const execError = error as ExecErrorLike;
+			const execError = error as NodeJS.ErrnoException & {
+				stdout?: unknown;
+				stderr?: unknown;
+			};
 			const exitCode =
 				typeof execError.code === "number" ? execError.code : undefined;
 			const stdout = execError.stdout?.toString() || "";
@@ -247,6 +264,65 @@ export const execAsyncRemote = async (
 			})
 			.connect({
 				host,
+				port: server.port,
+				username: server.username,
+				privateKey: server.sshKey?.privateKey,
+				timeout: 99999,
+			});
+	});
+};
+
+export const writeFileRemote = async (
+	serverId: string,
+	remotePath: string,
+	content: string,
+): Promise<void> => {
+	const server = await findServerById(serverId);
+	if (!server.sshKeyId) throw new Error("No SSH key available for this server");
+
+	return new Promise((resolve, reject) => {
+		const conn = new Client();
+		conn
+			.once("ready", () => {
+				conn.sftp((err, sftp) => {
+					if (err) {
+						conn.end();
+						reject(
+							new WriteFileRemoteError(`SFTP session failed: ${err.message}`, {
+								remotePath,
+								serverId,
+								originalError: err,
+							}),
+						);
+						return;
+					}
+					sftp.writeFile(remotePath, content, (writeErr) => {
+						conn.end();
+						if (writeErr) {
+							reject(
+								new WriteFileRemoteError(
+									`Failed to write remote file ${remotePath}: ${writeErr.message}`,
+									{ remotePath, serverId, originalError: writeErr },
+								),
+							);
+							return;
+						}
+						resolve();
+					});
+				});
+			})
+			.on("error", (err) => {
+				conn.end();
+				reject(
+					new WriteFileRemoteError(`SSH connection error: ${err.message}`, {
+						remotePath,
+						serverId,
+						originalError: err,
+					}),
+				);
+			})
+			.connect({
+				host: server.ipAddress,
 				port: server.port,
 				username: server.username,
 				privateKey: server.sshKey?.privateKey,

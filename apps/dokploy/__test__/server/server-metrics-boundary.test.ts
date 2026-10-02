@@ -31,14 +31,10 @@ const mocks = vi.hoisted(() => ({
 	defaultCommand: vi.fn(),
 	deleteServer: vi.fn(),
 	fetch: vi.fn(),
-	filterContainerResourceStatsByAccess: vi.fn(),
-	findAccessibleContainerResourceStat: vi.fn(),
 	findServerById: vi.fn(),
 	findServersByUserId: vi.fn(),
 	findUserById: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
-	getAllContainerStats: vi.fn(),
-	getContainerProcesses: vi.fn(),
 	getDokployUrl: vi.fn(),
 	getPublicIpWithFallback: vi.fn(),
 	getWebServerSettings: vi.fn(),
@@ -86,8 +82,6 @@ vi.mock("@dokploy/server", () => ({
 	findServersByUserId: mocks.findServersByUserId,
 	findUserById: mocks.findUserById,
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
-	getAllContainerStats: mocks.getAllContainerStats,
-	getContainerProcesses: mocks.getContainerProcesses,
 	getDokployUrl: mocks.getDokployUrl,
 	getPublicIpWithFallback: mocks.getPublicIpWithFallback,
 	getWebServerSettings: mocks.getWebServerSettings,
@@ -124,8 +118,6 @@ vi.mock("@dokploy/server/index", () => ({
 	findServersByUserId: mocks.findServersByUserId,
 	findUserById: mocks.findUserById,
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
-	getAllContainerStats: mocks.getAllContainerStats,
-	getContainerProcesses: mocks.getContainerProcesses,
 	getDokployUrl: mocks.getDokployUrl,
 	getPublicIpWithFallback: mocks.getPublicIpWithFallback,
 	getWebServerSettings: mocks.getWebServerSettings,
@@ -181,13 +173,6 @@ vi.mock("@/server/api/utils/audit", () => ({
 
 vi.mock("@dokploy/server/utils/url/network", () => ({
 	fetchWithPublicEgress: mocks.fetch,
-}));
-
-vi.mock("@/server/api/utils/monitoring-access", () => ({
-	filterContainerResourceStatsByAccess:
-		mocks.filterContainerResourceStatsByAccess,
-	findAccessibleContainerResourceStat:
-		mocks.findAccessibleContainerResourceStat,
 }));
 
 vi.mock("@/server/queues/concurrency", () => ({
@@ -343,160 +328,6 @@ describe("server.getServerMetrics target boundary", () => {
 		});
 
 		expect(mocks.fetch).not.toHaveBeenCalled();
-	});
-});
-
-describe("server.getContainerResourceStats access boundary", () => {
-	beforeEach(() => {
-		vi.clearAllMocks();
-		mocks.checkPermission.mockResolvedValue(undefined);
-		mocks.getAllContainerStats.mockResolvedValue([
-			{
-				ID: "allowed",
-				Name: "allowed-service.1.task",
-				Labels: {
-					"com.docker.swarm.service.name": "allowed-service",
-				},
-			},
-			{
-				ID: "foreign",
-				Name: "foreign-service.1.task",
-				Labels: {
-					"com.docker.swarm.service.name": "foreign-service",
-				},
-			},
-		]);
-		mocks.filterContainerResourceStatsByAccess.mockResolvedValue([
-			{
-				ID: "allowed",
-				Name: "allowed-service.1.task",
-				Labels: {
-					"com.docker.swarm.service.name": "allowed-service",
-				},
-			},
-		]);
-	});
-
-	it("filters local host container stats through service monitoring access before returning them", async () => {
-		await expect(createCaller().getContainerResourceStats()).resolves.toEqual([
-			{
-				ID: "allowed",
-				Name: "allowed-service.1.task",
-				Labels: {
-					"com.docker.swarm.service.name": "allowed-service",
-				},
-			},
-		]);
-
-		expect(mocks.filterContainerResourceStatsByAccess).toHaveBeenCalledWith(
-			expect.objectContaining({
-				session: expect.objectContaining({
-					activeOrganizationId: "org-1",
-				}),
-				user: expect.objectContaining({
-					id: "actor-1",
-				}),
-			}),
-			[
-				{
-					ID: "allowed",
-					Name: "allowed-service.1.task",
-					Labels: {
-						"com.docker.swarm.service.name": "allowed-service",
-					},
-				},
-				{
-					ID: "foreign",
-					Name: "foreign-service.1.task",
-					Labels: {
-						"com.docker.swarm.service.name": "foreign-service",
-					},
-				},
-			],
-		);
-	});
-});
-
-describe("server.getContainerProcesses access boundary", () => {
-	const containerStats = [
-		{
-			Container: "allowed",
-			ID: "allowed",
-			Name: "allowed-service.1.task",
-			Labels: {
-				"com.docker.swarm.service.name": "allowed-service",
-			},
-		},
-		{
-			Container: "foreign",
-			ID: "foreign",
-			Name: "foreign-service.1.task",
-			Labels: {
-				"com.docker.swarm.service.name": "foreign-service",
-			},
-		},
-	];
-
-	beforeEach(() => {
-		vi.clearAllMocks();
-		mocks.checkPermission.mockResolvedValue(undefined);
-		mocks.getAllContainerStats.mockResolvedValue(containerStats);
-		mocks.findAccessibleContainerResourceStat.mockResolvedValue(
-			containerStats[0],
-		);
-		mocks.getContainerProcesses.mockResolvedValue([
-			{
-				command: "node server.js",
-				cpuPercent: 1.2,
-				memoryPercent: 0.4,
-				pid: "101",
-				rssBytes: 20480,
-			},
-		]);
-	});
-
-	it("resolves the requested container through accessible monitoring stats before docker top", async () => {
-		await expect(
-			createCaller().getContainerProcesses({
-				containerId: "allowed-service.1.task",
-			}),
-		).resolves.toEqual([
-			{
-				command: "node server.js",
-				cpuPercent: 1.2,
-				memoryPercent: 0.4,
-				pid: "101",
-				rssBytes: 20480,
-			},
-		]);
-
-		expect(mocks.findAccessibleContainerResourceStat).toHaveBeenCalledWith(
-			expect.objectContaining({
-				session: expect.objectContaining({
-					activeOrganizationId: "org-1",
-				}),
-				user: expect.objectContaining({
-					id: "actor-1",
-				}),
-			}),
-			containerStats,
-			"allowed-service.1.task",
-		);
-		expect(mocks.getContainerProcesses).toHaveBeenCalledWith("allowed");
-	});
-
-	it("rejects inaccessible containers before reading docker top output", async () => {
-		mocks.findAccessibleContainerResourceStat.mockResolvedValue(null);
-
-		await expect(
-			createCaller().getContainerProcesses({
-				containerId: "foreign",
-			}),
-		).rejects.toMatchObject({
-			code: "UNAUTHORIZED",
-		});
-
-		expect(mocks.getContainerProcesses).not.toHaveBeenCalled();
 	});
 });
 

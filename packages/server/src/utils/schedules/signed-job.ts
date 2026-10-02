@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { CLEANUP_CRON_JOB } from "@dokploy/server/constants";
+import { readSecret } from "@dokploy/server/db/constants";
 import { findBackupById } from "@dokploy/server/services/backup";
 import { findScheduleById } from "@dokploy/server/services/schedule";
 import { findServerById } from "@dokploy/server/services/server";
@@ -60,25 +61,15 @@ type SigningOptions = ScopeOptions & {
 };
 
 const DEFAULT_SCOPE_TTL_MS = 5 * 60_000;
-const LEGACY_API_KEY_DERIVATION_CONTEXT = "dokploy:schedules-signing-key:v1";
-
-const deriveLegacySigningKey = (apiKey: string) =>
-	createHmac("sha256", apiKey)
-		.update(LEGACY_API_KEY_DERIVATION_CONTEXT)
-		.digest("base64url");
 
 const getSigningKey = () => {
-	const key = process.env.SCHEDULES_SIGNING_KEY?.trim();
+	const key = process.env.SCHEDULES_SIGNING_KEY_FILE
+		? readSecret(process.env.SCHEDULES_SIGNING_KEY_FILE)
+		: process.env.SCHEDULES_SIGNING_KEY;
 	if (!key || key.trim().length === 0) {
-		const legacyApiKey = process.env.API_KEY?.trim();
-		if (legacyApiKey) {
-			return deriveLegacySigningKey(legacyApiKey);
-		}
-		throw new Error(
-			"Schedule job signing key is not configured. Set SCHEDULES_SIGNING_KEY or API_KEY before managing scheduled jobs.",
-		);
+		throw new Error("Schedule job signing key is not configured");
 	}
-	if (process.env.API_KEY?.trim() && key === process.env.API_KEY.trim()) {
+	if (process.env.API_KEY && key === process.env.API_KEY) {
 		throw new Error("Schedule job signing key must differ from the API key");
 	}
 	return key;

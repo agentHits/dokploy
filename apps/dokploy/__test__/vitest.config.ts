@@ -24,6 +24,16 @@ export default defineConfig({
 		}),
 	],
 	resolve: {
+		// pnpm installs two physical copies of the better-auth family (app vs
+		// server peer closures). Force a single module identity so vi.mock()
+		// in tests intercepts the copy imported by packages/server sources.
+		dedupe: [
+			"better-auth",
+			"@better-auth/api-key",
+			"@better-auth/passkey",
+			"@better-auth/scim",
+			"@better-auth/sso",
+		],
 		alias: {
 			"@dokploy/server": path.resolve(
 				__dirname,

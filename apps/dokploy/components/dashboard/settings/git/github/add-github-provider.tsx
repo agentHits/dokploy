@@ -13,19 +13,27 @@ import {
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/utils/api";
+import { DEFAULT_GITHUB_URL, resolveGithubBaseUrl } from "@/utils/github-utils";
 
 export const AddGithubProvider = () => {
 	const [isOpen, setIsOpen] = useState(false);
 	const { data: activeOrganization } = api.organization.active.useQuery();
 
 	const { data: session } = api.user.session.useQuery();
-	const { data: githubAppSetupState } = api.github.appSetupState.useQuery(
-		{ action: "init" },
-		{ enabled: isOpen && !!activeOrganization?.id && !!session?.user?.id },
-	);
 	const [manifest, setManifest] = useState("");
 	const [isOrganization, setIsOrganization] = useState(false);
 	const [organizationName, setOrganization] = useState("");
+	const [githubUrl, setGithubUrl] = useState(DEFAULT_GITHUB_URL);
+	const { baseUrl, error: githubUrlError } = resolveGithubBaseUrl(githubUrl);
+	const { data: githubAppSetupState } = api.github.appSetupState.useQuery(
+		{
+			action: "init",
+			...(githubUrlError || !githubUrl.trim()
+				? {}
+				: { githubUrl: githubUrl.trim() }),
+		},
+		{ enabled: isOpen && !!activeOrganization?.id && !!session?.user?.id },
+	);
 
 	const randomString = () => Math.random().toString(36).slice(2, 8);
 
@@ -55,7 +63,7 @@ export const AddGithubProvider = () => {
 		);
 
 		setManifest(manifest);
-	}, [activeOrganization?.id, session?.user?.id]);
+	}, [activeOrganization?.id, session?.user?.id, baseUrl]);
 
 	return (
 		<Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -82,6 +90,25 @@ export const AddGithubProvider = () => {
 								below to get started.
 							</p>
 							<div className="mt-4 flex flex-col gap-4">
+								<div className="flex flex-col gap-2">
+									<span className="text-sm">GitHub URL</span>
+									<Input
+										placeholder={DEFAULT_GITHUB_URL}
+										value={githubUrl}
+										onChange={(e) => setGithubUrl(e.target.value)}
+									/>
+									<span className="text-muted-foreground text-xs">
+										Leave as is for github.com. For GitHub Enterprise, use your
+										instance URL (e.g. https://acme.ghe.com or
+										https://github.acme.com).
+									</span>
+									{githubUrlError && (
+										<span className="text-destructive text-xs">
+											{githubUrlError}
+										</span>
+									)}
+								</div>
+
 								<div className="flex flex-row gap-4">
 									<span>Organization?</span>
 									<Switch
@@ -101,8 +128,8 @@ export const AddGithubProvider = () => {
 							<form
 								action={
 									isOrganization
-										? `https://github.com/organizations/${organizationName}/settings/apps/new?state=${encodeURIComponent(githubAppSetupState?.state ?? "")}`
-										: `https://github.com/settings/apps/new?state=${encodeURIComponent(githubAppSetupState?.state ?? "")}`
+										? `${baseUrl}/organizations/${organizationName}/settings/apps/new?state=${encodeURIComponent(githubAppSetupState?.state ?? "")}`
+										: `${baseUrl}/settings/apps/new?state=${encodeURIComponent(githubAppSetupState?.state ?? "")}`
 								}
 								method="post"
 							>
@@ -119,15 +146,15 @@ export const AddGithubProvider = () => {
 									<a
 										href={
 											isOrganization && organizationName
-												? `https://github.com/organizations/${organizationName}/settings/installations`
-												: "https://github.com/settings/installations"
+												? `${baseUrl}/organizations/${organizationName}/settings/installations`
+												: `${baseUrl}/settings/installations`
 										}
 										className={`text-muted-foreground text-sm hover:underline duration-300
 											 ${
 													isOrganization && !organizationName
 														? "pointer-events-none opacity-50"
 														: ""
-												}`}
+}`}
 										target="_blank"
 										rel="noopener noreferrer"
 									>

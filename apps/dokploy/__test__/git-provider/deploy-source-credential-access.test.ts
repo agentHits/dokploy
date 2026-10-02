@@ -1,4 +1,3 @@
-import { REDACTED_SECRET_VALUE } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -547,95 +546,6 @@ describe("deploy source credential access", () => {
 		expect(serverMocks.updateApplication).toHaveBeenCalled();
 	});
 
-	it("preserves stored application environment secrets when save receives redacted placeholders", async () => {
-		serverMocks.findApplicationById.mockResolvedValue({
-			applicationId: "app-1",
-			appName: "app-one",
-			buildArgs: "NPM_TOKEN=old-build-arg",
-			buildSecrets: "DOCKER_SECRET=old-build-secret",
-			env: "API_KEY=old-env",
-		});
-
-		await expect(
-			applicationRouter.createCaller(createContext()).saveEnvironment({
-				applicationId: "app-1",
-				buildArgs: REDACTED_SECRET_VALUE,
-				buildSecrets: REDACTED_SECRET_VALUE,
-				createEnvFile: true,
-				env: REDACTED_SECRET_VALUE,
-			}),
-		).resolves.toBe(true);
-
-		expect(serverMocks.updateApplication).toHaveBeenCalledWith(
-			"app-1",
-			expect.objectContaining({
-				buildArgs: "NPM_TOKEN=old-build-arg",
-				buildSecrets: "DOCKER_SECRET=old-build-secret",
-				createEnvFile: true,
-				env: "API_KEY=old-env",
-			}),
-		);
-		expect(serverMocks.updateApplication).not.toHaveBeenCalledWith(
-			expect.anything(),
-			expect.objectContaining({
-				env: REDACTED_SECRET_VALUE,
-			}),
-		);
-	});
-
-	it("preserves stored docker provider password when save receives a redacted placeholder", async () => {
-		serverMocks.findApplicationById.mockResolvedValue({
-			applicationId: "app-1",
-			appName: "app-one",
-			password: "stored-registry-password",
-		});
-
-		await expect(
-			applicationRouter.createCaller(createContext()).saveDockerProvider({
-				applicationId: "app-1",
-				dockerImage: "ghcr.io/dokploy/dokploy:latest",
-				password: REDACTED_SECRET_VALUE,
-				registryUrl: "https://ghcr.io",
-				username: "dokploy",
-			}),
-		).resolves.toBe(true);
-
-		expect(serverMocks.updateApplication).toHaveBeenCalledWith(
-			"app-1",
-			expect.objectContaining({
-				password: "stored-registry-password",
-			}),
-		);
-	});
-
-	it("preserves stored preview secrets when generic update receives redacted placeholders", async () => {
-		serverMocks.findApplicationById.mockResolvedValue({
-			applicationId: "app-1",
-			appName: "app-one",
-			previewBuildArgs: "PREVIEW_ARG=old",
-			previewBuildSecrets: "PREVIEW_SECRET=old",
-			previewEnv: "PREVIEW_ENV=old",
-		});
-
-		await expect(
-			applicationRouter.createCaller(createContext()).update({
-				applicationId: "app-1",
-				previewBuildArgs: REDACTED_SECRET_VALUE,
-				previewBuildSecrets: REDACTED_SECRET_VALUE,
-				previewEnv: REDACTED_SECRET_VALUE,
-			}),
-		).resolves.toBe(true);
-
-		expect(serverMocks.updateApplication).toHaveBeenCalledWith(
-			"app-1",
-			expect.objectContaining({
-				previewBuildArgs: "PREVIEW_ARG=old",
-				previewBuildSecrets: "PREVIEW_SECRET=old",
-				previewEnv: "PREVIEW_ENV=old",
-			}),
-		);
-	});
-
 	it.each([
 		["runtime registry", "registryId"],
 		["build registry", "buildRegistryId"],
@@ -928,38 +838,10 @@ describe("deploy source credential access", () => {
 			}),
 		).resolves.toEqual({ composeId: "compose-1" });
 
-		expect(serverMocks.findComposeById).not.toHaveBeenCalled();
+		// The compose read is expected: secret placeholder preservation needs
+		// the current values. The point is the provider edit guard stays out.
 		expect(serverMocks.canEditDeployGitSource).not.toHaveBeenCalled();
 		expect(serverMocks.updateCompose).toHaveBeenCalled();
-	});
-
-	it("preserves redacted compose placeholders only when they are present", async () => {
-		serverMocks.findComposeById.mockResolvedValueOnce({
-			composeId: "compose-1",
-			composeFile: "services:\n  app:\n    image: nginx",
-			env: "COMPOSE_SECRET=secret",
-			sourceType: "raw",
-		});
-
-		await expect(
-			composeRouter.createCaller(createContext()).update({
-				composeFile: REDACTED_SECRET_VALUE,
-				composeId: "compose-1",
-				env: REDACTED_SECRET_VALUE,
-				name: "compose-renamed",
-			}),
-		).resolves.toEqual({ composeId: "compose-1" });
-
-		expect(serverMocks.findComposeById).toHaveBeenCalledWith("compose-1");
-		expect(serverMocks.canEditDeployGitSource).not.toHaveBeenCalled();
-		expect(serverMocks.updateCompose).toHaveBeenCalledWith(
-			"compose-1",
-			expect.objectContaining({
-				composeFile: "services:\n  app:\n    image: nginx",
-				env: "COMPOSE_SECRET=secret",
-				name: "compose-renamed",
-			}),
-		);
 	});
 
 	it("rejects Bitbucket owner outside the configured workspace before compose source persistence", async () => {

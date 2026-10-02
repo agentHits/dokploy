@@ -205,47 +205,18 @@ describe("high-severity schema security boundaries", () => {
 		).toBe(false);
 	});
 
-	it("keeps host-level schedule scope cleanup in a forward migration", () => {
-		const historicalMigration = readFileSync(
+	it("backfills host-level schedule organizations only for unambiguous owners", () => {
+		const migration = readFileSync(
 			new URL("../../drizzle/0169_parched_johnny_storm.sql", import.meta.url),
 			"utf8",
 		);
-		const cleanupMigration = readFileSync(
-			new URL(
-				"../../drizzle/0175_guard_host_schedule_scope.sql",
-				import.meta.url,
-			),
-			"utf8",
-		);
 
-		expect(historicalMigration).toContain('FROM "member" m');
-		expect(historicalMigration).not.toContain("owner_memberships");
-		expect(historicalMigration).not.toContain('SET "enabled" = false');
-		expect(cleanupMigration).toContain("ambiguous_owner_orgs");
-		expect(cleanupMigration).toContain(
-			'HAVING count(DISTINCT "organization_id") > 1',
-		);
-		expect(cleanupMigration).toContain('SET "enabled" = false');
-		expect(cleanupMigration).toContain('"organizationId" IS NULL');
-	});
-
-	it("backfills existing SSO domains as verified in the forward migration", () => {
-		const migration = readFileSync(
-			new URL("../../drizzle/0173_scope_sso_domains.sql", import.meta.url),
-			"utf8",
-		);
-
+		expect(migration).toContain("owner_memberships");
 		expect(migration).toContain(
-			'ADD COLUMN "domainVerified" boolean DEFAULT false',
+			'count(DISTINCT m."organization_id") AS "owner_org_count"',
 		);
-		expect(migration).toContain(
-			'UPDATE "sso_provider" SET "domainVerified" = true',
-		);
-		expect(migration).toContain(
-			"WHERE NULLIF(btrim(\"domain\"), '') IS NOT NULL",
-		);
-		expect(migration.indexOf('ADD COLUMN "domainVerified"')).toBeLessThan(
-			migration.indexOf('UPDATE "sso_provider"'),
-		);
+		expect(migration).toContain('AND owner_memberships."owner_org_count" = 1');
+		expect(migration).toContain('SET "enabled" = false');
+		expect(migration).not.toContain('FROM "member" m\nWHERE');
 	});
 });

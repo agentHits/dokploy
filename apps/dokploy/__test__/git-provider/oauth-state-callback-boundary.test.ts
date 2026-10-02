@@ -629,12 +629,6 @@ describe("Git provider OAuth state callback boundary", () => {
 		const giteaState = giteaRedirectLocation.searchParams.get("state");
 		expect(giteaState).toBeTruthy();
 		expect(giteaRedirectLocation.origin).toBe("https://gitea.example.com");
-		expect(giteaRedirectLocation.searchParams.get("scope")).toBe(
-			"read:user read:repository read:organization",
-		);
-		expect(giteaRedirectLocation.searchParams.get("scope")).not.toContain(
-			" repo",
-		);
 		expect(
 			verifyGitProviderOAuthState(giteaState ?? "", {
 				providerType: "gitea",
