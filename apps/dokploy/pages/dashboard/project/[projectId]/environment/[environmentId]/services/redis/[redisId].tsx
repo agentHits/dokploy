@@ -372,7 +372,12 @@ export async function getServerSideProps(
 					activeTab: (activeTab || "general") as TabState,
 				},
 			};
-		} catch {
+		} catch (error) {
+			console.error(
+				"[getServerSideProps] failed to load redis",
+				params?.redisId,
+				error,
+			);
 			return {
 				redirect: {
 					permanent: false,

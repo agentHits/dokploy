@@ -365,7 +365,12 @@ export async function getServerSideProps(
 					activeTab: (activeTab || "general") as TabState,
 				},
 			};
-		} catch {
+		} catch (error) {
+			console.error(
+				"[getServerSideProps] failed to load mysql",
+				params?.mysqlId,
+				error,
+			);
 			return {
 				redirect: {
 					permanent: false,

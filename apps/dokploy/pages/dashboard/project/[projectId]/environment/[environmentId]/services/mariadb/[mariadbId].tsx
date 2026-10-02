@@ -381,7 +381,12 @@ export async function getServerSideProps(
 					environmentId: params?.environmentId,
 				},
 			};
-		} catch {
+		} catch (error) {
+			console.error(
+				"[getServerSideProps] failed to load mariadb",
+				params?.mariadbId,
+				error,
+			);
 			return {
 				redirect: {
 					permanent: false,
