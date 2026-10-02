@@ -4,6 +4,7 @@ import { createInterface } from "node:readline";
 import { paths } from "@dokploy/server/constants";
 import type { Domain } from "@dokploy/server/services/domain";
 import { parse, stringify } from "yaml";
+import { quote } from "shell-quote";
 import { quoteShellArg } from "../filesystem/safe-path";
 import {
 	execAsync,
