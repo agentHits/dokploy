@@ -8,7 +8,7 @@ import {
 	findRedisById,
 	getAccessibleServerIds,
 	getContainerLogs,
-	getServiceContainerCommand,
+	getServiceContainer,
 	getWebServerSettings,
 	IS_CLOUD,
 	rebuildDatabase,

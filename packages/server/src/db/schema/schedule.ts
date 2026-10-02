@@ -57,6 +57,7 @@ export const schedules = pgTable("schedule", {
 });
 
 export type Schedule = typeof schedules.$inferSelect;
+export type ScheduleType = Schedule["scheduleType"];
 
 export const schedulesRelations = relations(schedules, ({ one, many }) => ({
 	application: one(applications, {
@@ -85,6 +86,7 @@ export const createScheduleSchema = createInsertSchema(schedules, {
 		.max(63)
 		.regex(APP_NAME_REGEX, APP_NAME_MESSAGE)
 		.optional(),
+	scheduleType: z.enum(["application", "compose", "server", "dokploy-server"]),
 });
 
 export const updateScheduleSchema = createScheduleSchema.extend({

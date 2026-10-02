@@ -87,8 +87,8 @@ export const webServerSettings = pgTable("webServerSettings", {
 			docsUrl: string | null;
 			errorPageTitle: string | null;
 			errorPageDescription: string | null;
-			metaTitle: string | null;
 			footerText: string | null;
+			ogImageUrl: string | null;
 		}>()
 		.default({
 			appName: null,
@@ -101,12 +101,12 @@ export const webServerSettings = pgTable("webServerSettings", {
 			docsUrl: null,
 			errorPageTitle: null,
 			errorPageDescription: null,
-			metaTitle: null,
 			footerText: null,
+			ogImageUrl: null,
 		}),
 	// Deployment Configuration (self-hosted only)
 	remoteServersOnly: boolean("remoteServersOnly").notNull().default(false),
-	// Concurrent builds on the local web server (enterprise-gated to > 1)
+	// Concurrent builds on the local web server
 	buildsConcurrency: integer("buildsConcurrency").notNull().default(1),
 	// Auth Configuration (self-hosted only)
 	enforceSSO: boolean("enforceSSO").notNull().default(false),
@@ -224,8 +224,8 @@ export const whitelabelingConfigSchema = z.object({
 	docsUrl: safeUrl,
 	errorPageTitle: z.string().nullable(),
 	errorPageDescription: z.string().nullable(),
-	metaTitle: z.string().nullable(),
 	footerText: z.string().nullable(),
+	ogImageUrl: safeUrl,
 });
 
 export const apiUpdateWhitelabeling = z.object({

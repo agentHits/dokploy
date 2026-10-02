@@ -1,5 +1,6 @@
 import { db } from "@dokploy/server/db";
-import { ai } from "@dokploy/server/db/schema";
+import { ai, organization } from "@dokploy/server/db/schema";
+import { aiCustomProviderSchema } from "@dokploy/server/db/schema/ai";
 import {
 	assertAIProviderApiUrlAllowed,
 	selectAIProvider,
@@ -65,6 +66,54 @@ export const getAiSettingById = async (
 	return aiSetting;
 };
 
+type AiCustomProvider = z.infer<typeof aiCustomProviderSchema>;
+
+const parseOrgMetadata = (metadata: string | null) => {
+	try {
+		const parsed = JSON.parse(metadata || "{}");
+		return typeof parsed === "object" && parsed !== null
+			? (parsed as Record<string, unknown>)
+			: {};
+	} catch {
+		return {};
+	}
+};
+
+export const getCustomAiProviders = async (organizationId: string) => {
+	const org = await db.query.organization.findFirst({
+		where: eq(organization.id, organizationId),
+	});
+	const metadata = parseOrgMetadata(org?.metadata ?? null);
+	const result = z
+		.array(aiCustomProviderSchema)
+		.safeParse(metadata.aiProviders);
+	return result.success ? result.data : [];
+};
+
+export const saveCustomAiProviders = async (
+	organizationId: string,
+	providers: AiCustomProvider[],
+) => {
+	const org = await db.query.organization.findFirst({
+		where: eq(organization.id, organizationId),
+	});
+	if (!org) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: "Organization not found",
+		});
+	}
+	const metadata = parseOrgMetadata(org.metadata);
+	metadata.aiProviders = providers;
+	await db
+		.update(organization)
+		.set({ metadata: JSON.stringify(metadata) })
+		.where(eq(organization.id, organizationId));
+	return providers;
+};
+
+const normalizeApiUrl = (url: string) => url.trim().replace(/\/+$/, "");
+
 export const saveAiSettings = async (organizationId: string, settings: any) => {
 	const aiId = settings.aiId;
 	if (aiId) {
@@ -92,6 +141,23 @@ export const saveAiSettings = async (organizationId: string, settings: any) => {
 		normalizedSettings.apiUrl = await assertAIProviderApiUrlAllowed(
 			normalizedSettings.apiUrl,
 		);
+	}
+	if (normalizedSettings.apiUrl) {
+		const customProviders = await getCustomAiProviders(organizationId);
+		if (customProviders.length > 0) {
+			const isAllowed = customProviders.some(
+				(provider) =>
+					normalizeApiUrl(provider.apiUrl) ===
+					normalizeApiUrl(normalizedSettings.apiUrl),
+			);
+			if (!isAllowed) {
+				throw new TRPCError({
+					code: "FORBIDDEN",
+					message:
+						"This API URL is not in your organization's allowed AI providers",
+				});
+			}
+		}
 	}
 
 	const [savedSetting] = await db

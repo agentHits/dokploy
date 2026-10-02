@@ -191,22 +191,60 @@ export const getAccessibleGitProviderIds = async (session: {
 	return result;
 };
 
-export const assertGitProviderAccess = async (
+/**
+ * Authorizes read access to a specific git provider for the current session.
+ * Throws if the provider belongs to a different organization (cross-org IDOR)
+ * or if the caller is not entitled to it within the active organization.
+ *
+ * This only proves the caller may *use* the provider (e.g. pick it as a repo
+ * source when creating a deploy) - it does NOT mean they may see its raw
+ * credentials. Being able to use a shared provider and being able to read its
+ * OAuth tokens / client secrets / private keys are different privileges; gate
+ * the latter with canViewGitProviderSecrets before returning secret fields.
+ */
+export async function assertGitProviderAccess(
 	gitProviderId: string | null | undefined,
 	session: GitProviderSession,
-) => {
-	if (!gitProviderId) {
+): Promise<void>;
+export async function assertGitProviderAccess(
+	session: GitProviderSession,
+	provider: { gitProviderId: string; organizationId: string },
+): Promise<void>;
+export async function assertGitProviderAccess(
+	a: GitProviderSession | string | null | undefined,
+	b: GitProviderSession | { gitProviderId: string; organizationId: string },
+): Promise<void> {
+	if (typeof a === "string" || a == null) {
+		const gitProviderId = a;
+		const session = b as GitProviderSession;
+		if (!gitProviderId) {
+			throw new TRPCError({
+				code: "NOT_FOUND",
+				message: "Git Provider not found",
+			});
+		}
+		const accessibleIds = await getAccessibleGitProviderIds(session);
+		if (!accessibleIds.has(gitProviderId)) {
+			throw new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You are not authorized to access this Git provider",
+			});
+		}
+		return;
+	}
+	const session = a as GitProviderSession;
+	const provider = b as { gitProviderId: string; organizationId: string };
+	if (provider.organizationId !== session.activeOrganizationId) {
 		throw new TRPCError({
 			code: "NOT_FOUND",
-			message: "Git Provider not found",
+			message: "Git provider not found",
 		});
 	}
-
 	const accessibleIds = await getAccessibleGitProviderIds(session);
-	if (!accessibleIds.has(gitProviderId)) {
+	if (!accessibleIds.has(provider.gitProviderId)) {
 		throw new TRPCError({
-			code: "UNAUTHORIZED",
-			message: "You are not authorized to access this Git provider",
+			code: "FORBIDDEN",
+			message: "You don't have access to this git provider",
 		});
 	}
 };
@@ -254,4 +292,25 @@ export const assertGitProviderManagementAccess = async (
 			message: "You are not authorized to manage this Git provider",
 		});
 	}
+};
+
+// Being allowed to use a shared provider (assertGitProviderAccess) must not
+// imply being allowed to read its raw OAuth tokens / client secrets / private
+// keys. Only the provider's owner or an org owner/admin gets those back.
+export const canViewGitProviderSecrets = async (
+	session: { userId: string; activeOrganizationId: string },
+	provider: { userId: string; organizationId: string },
+): Promise<boolean> => {
+	if (provider.organizationId !== session.activeOrganizationId) return false;
+	if (provider.userId === session.userId) return true;
+
+	const memberRecord = await db.query.member.findFirst({
+		where: and(
+			eq(member.userId, session.userId),
+			eq(member.organizationId, session.activeOrganizationId),
+		),
+		columns: { role: true },
+	});
+
+	return memberRecord?.role === "owner" || memberRecord?.role === "admin";
 };

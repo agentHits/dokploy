@@ -18,6 +18,7 @@ type DeployJob =
 			serverId?: string;
 			operationId?: string;
 			expectedRevision?: string;
+			freshVolumes?: boolean;
 	  }
 	| {
 			applicationId: string;

@@ -25,8 +25,6 @@
 		],
 		"incremental": true,
 		/* Path Aliases */
-		"baseUrl": ".",
-		"ignoreDeprecations": "6.0",
 		"paths": {
 			"@/*": ["./*"],
 			"@dokploy/server/*": ["../../packages/server/src/*"]

@@ -768,7 +768,7 @@ export const reconnectServicesToTraefik = async (serverId?: string) => {
 		),
 	});
 
-	if (!composeResult) {
+	if (composeResult.length === 0) {
 		return;
 	}
 	let commands = "";

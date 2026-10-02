@@ -221,6 +221,11 @@ export const assertRcloneS3DestinationAllowed = async (
 	};
 };
 
+// User-controlled values (database name, user, password) are passed to the
+// container as environment variables via `docker exec -e VAR=<escaped>` and
+// referenced as "$VAR" inside the inner shell, so they never appear in the
+// inner command text. The -e value is escaped for the outer shell with
+// shell-quote; the inner script is single-quoted and reads the env vars.
 export const getPostgresBackupCommand = (
 	database: string,
 	databaseUser: string,
@@ -431,7 +436,8 @@ export const generateBackupCommand = (backup: BackupSchedule) => {
 
 export const getBackupCommand = (
 	backup: BackupSchedule,
-	rcloneCommand: string,
+	rcloneFlags: string[],
+	rcloneDestination: string,
 	logPath: string,
 ) => {
 	if (!isBackupScheduleTargetBound(backup)) {
@@ -440,6 +446,8 @@ export const getBackupCommand = (
 
 	const containerSearch = getContainerSearchCommand(backup);
 	const backupCommand = generateBackupCommand(backup);
+	const rcloneCommand = `rclone rcat ${rcloneFlags.join(" ")} "${rcloneDestination}"`;
+	const rcloneDeleteCommand = `rclone deletefile ${rcloneFlags.join(" ")} "${rcloneDestination}"`;
 
 	if (!containerSearch || !backupCommand) {
 		throw new Error("Backup command could not be generated.");
@@ -459,17 +467,17 @@ export const getBackupCommand = (
 	set -eo pipefail;
 	echo "[$(date)] Starting backup process..." >> ${logPath};
 	echo "[$(date)] Executing backup command..." >> ${logPath};
-	CONTAINER_ID=$(${containerSearch})
+	CONTAINER_ID=$(${containerSearch});
 
 	if [ -z "$CONTAINER_ID" ]; then
 		echo "[$(date)] ❌ Error: Container not found" >> ${logPath};
 		exit 1;
-	fi
+	fi;
 
 	echo "[$(date)] Container Up: $CONTAINER_ID" >> ${logPath};
+	echo "[$(date)] Starting backup and upload to S3..." >> ${logPath};
 
-	# Run the backup command and capture the exit status
-	BACKUP_OUTPUT=$(${backupCommand} 2>&1 >/dev/null) || {
+	UPLOAD_OUTPUT=$({ ${backupCommand} | ${rcloneCommand}; } 2>&1 >/dev/null) || {
 		echo "[$(date)] ❌ Error: Backup failed" >> ${logPath};
 		echo "Error: Backup command failed. Check server logs for details." >> ${logPath};
 		exit 1;
@@ -483,9 +491,9 @@ export const getBackupCommand = (
 		echo "[$(date)] ❌ Error: Upload to S3 failed" >> ${logPath};
 		echo "Error: Upload command failed. Check server logs for details." >> ${logPath};
 		exit 1;
-	}
+	};
 
-	echo "[$(date)] ✅ Upload to S3 completed successfully" >> ${logPath};
+	echo "[$(date)] ✅ Backup uploaded to S3 successfully" >> ${logPath};
 	echo "Backup done ✅" >> ${logPath};
 	`;
 };

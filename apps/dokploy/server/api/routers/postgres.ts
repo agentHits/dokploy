@@ -10,7 +10,7 @@ import {
 	getAccessibleServerIds,
 	getContainerLogs,
 	getMountPath,
-	getServiceContainerCommand,
+	getServiceContainer,
 	getWebServerSettings,
 	IS_CLOUD,
 	rebuildDatabase,

@@ -7,6 +7,7 @@ import {
 	Server,
 	Sparkles,
 	Stars,
+	X,
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -14,6 +15,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogClose,
 	DialogContent,
 	DialogTitle,
 	DialogTrigger,
@@ -136,9 +138,9 @@ export const UpdateServer = ({
 					</TooltipProvider>
 				)}
 			</DialogTrigger>
-			<DialogContent className="max-w-lg">
-				<div className="flex items-center justify-between mb-8">
-					<DialogTitle className="text-2xl font-semibold">
+			<DialogContent className="max-w-lg" showCloseButton={false}>
+				<div className="flex items-center gap-2 mb-8">
+					<DialogTitle className="text-2xl font-semibold mr-auto">
 						Web Server Update
 					</DialogTitle>
 					{dokployVersionData && (
@@ -160,6 +162,12 @@ export const UpdateServer = ({
 							</div>
 						</div>
 					)}
+					<DialogClose asChild>
+						<Button variant="ghost" size="icon-sm" className="shrink-0">
+							<X />
+							<span className="sr-only">Close</span>
+						</Button>
+					</DialogClose>
 				</div>
 
 				{/* Initial state */}

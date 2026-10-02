@@ -46,6 +46,7 @@ import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 import { api } from "@/utils/api";
 import { useWhitelabeling } from "@/utils/hooks/use-whitelabeling";
+import { DeleteAccountByEmail } from "./delete-account-by-email";
 
 type AdminListUser = NonNullable<
 	Awaited<ReturnType<typeof authClient.admin.listUsers>>["data"]
@@ -287,6 +288,7 @@ export const ImpersonationBar = () => {
 									<Shield className="h-4 w-4" />
 									Impersonate
 								</Button>
+								<DeleteAccountByEmail />
 							</div>
 						) : (
 							<div className="flex items-center gap-4 w-full flex-wrap">

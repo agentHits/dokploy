@@ -23,6 +23,7 @@ import { ShowGeneralPostgres } from "@/components/dashboard/postgres/general/sho
 import { ShowInternalPostgresCredentials } from "@/components/dashboard/postgres/general/show-internal-postgres-credentials";
 import { UpdatePostgres } from "@/components/dashboard/postgres/update-postgres";
 import { ShowDatabaseAdvancedSettings } from "@/components/dashboard/shared/show-database-advanced-settings";
+import { TransferService } from "@/components/dashboard/shared/transfer-service";
 import { PostgresqlIcon } from "@/components/icons/data-tools-icons";
 import { DashboardLayout } from "@/components/layouts/dashboard-layout";
 import { AdvanceBreadcrumb } from "@/components/shared/advance-breadcrumb";
@@ -158,6 +159,13 @@ const Postgresql = (
 									{permissions?.service.create && (
 										<UpdatePostgres postgresId={postgresId} />
 									)}
+									{permissions?.service.create && (
+										<TransferService
+											id={postgresId}
+											type="postgres"
+											serverId={data?.serverId}
+										/>
+									)}
 									{permissions?.service.delete && (
 										<DeleteService id={postgresId} type="postgres" />
 									)}
@@ -200,7 +208,7 @@ const Postgresql = (
 										});
 									}}
 								>
-									<div className="flex flex-row items-center justify-between w-full gap-4 overflow-x-scroll">
+									<div className="flex flex-row items-center justify-between w-full gap-4 overflow-x-auto">
 										<TabsList
 											className={cn(
 												"md:grid md:w-fit max-md:overflow-y-scroll justify-start",
@@ -277,6 +285,7 @@ const Postgresql = (
 												<ShowDockerLogs
 													serverId={data?.serverId || ""}
 													appName={data?.appName || ""}
+													serviceId={data?.postgresId}
 												/>
 											</div>
 										</TabsContent>

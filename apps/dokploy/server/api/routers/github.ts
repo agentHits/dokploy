@@ -1,5 +1,6 @@
 import {
 	assertGitProviderAccess,
+	canViewGitProviderSecrets,
 	findGithubById,
 	findGithubGitProviderId,
 	getAccessibleGitProviderIds,
@@ -144,6 +145,7 @@ export const githubRouter = createTRPCRouter({
 			.map((provider) => {
 				return {
 					githubId: provider.githubId,
+					githubUrl: provider.githubUrl,
 					gitProvider: {
 						...provider.gitProvider,
 					},
@@ -160,6 +162,8 @@ export const githubRouter = createTRPCRouter({
 			await assertGitProviderAccess(gitProviderId, ctx.session);
 
 			try {
+				const github = await findGithubById(input.githubId);
+				await assertGitProviderAccess(ctx.session, github.gitProvider);
 				const result = await getGithubRepositories(input.githubId);
 				return `Found ${result.length} repositories`;
 			} catch (err) {

@@ -21,8 +21,6 @@
 		"plugins": [{ "name": "next" }],
 		"outDir": "./dist",
 		/* Path Aliases */
-		"baseUrl": ".",
-		"ignoreDeprecations": "6.0",
 		"paths": {
 			"@dokploy/server/*": ["./src/*"]
 		}

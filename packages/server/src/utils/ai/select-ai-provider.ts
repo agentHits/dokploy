@@ -169,6 +169,7 @@ export function selectAIProvider(config: { apiUrl: string; apiKey: string }) {
 				fetch: aiProviderFetch,
 				headers: {
 					Authorization: `Bearer ${config.apiKey}`,
+					"X-Pplx-Integration": "dokploy",
 				},
 			});
 		case "mistral":
