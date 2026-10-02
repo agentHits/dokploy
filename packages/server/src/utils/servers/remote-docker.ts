@@ -3,21 +3,27 @@ import { findServerById } from "@dokploy/server/services/server";
 import Dockerode from "dockerode";
 import { resolveServerDestinationHost } from "./destination";
 
+type DockerSshOptions = Dockerode.DockerOptions & {
+	sshOptions?: {
+		privateKey?: string | Buffer;
+	};
+};
+
 export const getRemoteDocker = async (serverId?: string | null) => {
 	if (!serverId) return docker;
 	const server = await findServerById(serverId);
 	if (!server.sshKeyId) return docker;
 	const host = await resolveServerDestinationHost(server);
-	const dockerode = new Dockerode({
+	const dockerOptions: DockerSshOptions = {
 		host,
 		port: server.port,
 		username: server.username,
 		protocol: "ssh",
-		// @ts-expect-error - @types/dockerode 3.3.23 lacks sshOptions, supported at runtime
 		sshOptions: {
-			privateKey: server.sshKey?.privateKey,
+			privateKey: server.sshKey?.privateKey ?? undefined,
 		},
-	});
+	};
+	const dockerode = new Dockerode(dockerOptions);
 
 	return dockerode;
 };

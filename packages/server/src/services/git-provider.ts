@@ -16,7 +16,12 @@ const githubSecretKeys = [
 	"githubWebhookSecret",
 ] as const;
 
-const gitlabSecretKeys = ["secret", "accessToken", "refreshToken"] as const;
+const gitlabSecretKeys = [
+	"secret",
+	"webhookSecret",
+	"accessToken",
+	"refreshToken",
+] as const;
 
 const giteaSecretKeys = [
 	"clientSecret",

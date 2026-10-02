@@ -707,12 +707,40 @@ export const getApplicationInfo = async (
 	}
 };
 
+const parseDockerLabels = (
+	labels: Record<string, string> | string | null | undefined,
+) => {
+	if (!labels) {
+		return {};
+	}
+
+	if (typeof labels !== "string") {
+		return labels;
+	}
+
+	return labels
+		.split(",")
+		.reduce<Record<string, string>>((accumulator, label) => {
+			const separatorIndex = label.indexOf("=");
+			if (separatorIndex <= 0) {
+				return accumulator;
+			}
+
+			const key = label.slice(0, separatorIndex).trim();
+			const value = label.slice(separatorIndex + 1).trim();
+			if (key && value) {
+				accumulator[key] = value;
+			}
+			return accumulator;
+		}, {});
+};
+
 export const getAllContainerStats = async (serverId?: string) => {
 	try {
 		const statsCommand =
 			'docker stats --no-stream --format \'{"BlockIO":"{{.BlockIO}}","CPUPerc":"{{.CPUPerc}}","Container":"{{.Container}}","ID":"{{.ID}}","MemPerc":"{{.MemPerc}}","MemUsage":"{{.MemUsage}}","Name":"{{.Name}}","NetIO":"{{.NetIO}}"}\'';
 		const sizeCommand =
-			'docker ps --size --format \'{"ID":"{{.ID}}","Name":"{{.Names}}","Size":"{{.Size}}"}\'';
+			'docker ps --size --format \'{"ID":"{{.ID}}","Name":"{{.Names}}","Size":"{{.Size}}","Labels":{{json .Labels}}}\'';
 
 		let statsStdout = "";
 		let sizeStdout = "";
@@ -732,7 +760,10 @@ export const getAllContainerStats = async (serverId?: string) => {
 			return [];
 		}
 
-		const sizeByContainerId = new Map<string, string>();
+		const metadataByContainerId = new Map<
+			string,
+			{ labels: Record<string, string>; size: string }
+		>();
 		if (sizeStdout.trim()) {
 			const sizes = sizeStdout
 				.trim()
@@ -740,7 +771,10 @@ export const getAllContainerStats = async (serverId?: string) => {
 				.map((line) => JSON.parse(line));
 
 			for (const size of sizes) {
-				sizeByContainerId.set(size.ID, size.Size);
+				metadataByContainerId.set(size.ID, {
+					labels: parseDockerLabels(size.Labels),
+					size: size.Size ?? "",
+				});
 			}
 		}
 
@@ -749,9 +783,11 @@ export const getAllContainerStats = async (serverId?: string) => {
 			.split("\n")
 			.map((line) => {
 				const stat = JSON.parse(line);
+				const metadata = metadataByContainerId.get(stat.ID);
 				return {
 					...stat,
-					Size: sizeByContainerId.get(stat.ID) ?? "",
+					Labels: metadata?.labels ?? {},
+					Size: metadata?.size ?? "",
 				};
 			});
 

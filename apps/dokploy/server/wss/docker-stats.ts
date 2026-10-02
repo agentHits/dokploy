@@ -124,7 +124,13 @@ export const setupDockerStatsMonitoringSocketServer = (
 					return;
 				}
 			} else {
-				await assertContainerMetricsServiceAccess({ user, session }, appName);
+				await assertContainerMetricsServiceAccess(
+					{
+						user: { id: user.id },
+						session: { activeOrganizationId: session.activeOrganizationId },
+					},
+					appName,
+				);
 			}
 		} catch {
 			ws.close();
