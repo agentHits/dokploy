@@ -24,6 +24,12 @@ export { ExecError } from "./ExecError";
 
 const execAsyncBase = util.promisify(exec);
 
+type ExecErrorLike = Error & {
+	code?: number | string;
+	stdout?: Buffer | string;
+	stderr?: Buffer | string;
+};
+
 export const execAsync = async (
 	command: string,
 	options?: { cwd?: string; env?: NodeJS.ProcessEnv; shell?: string },

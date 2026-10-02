@@ -57,7 +57,10 @@ import {
 } from "@dokploy/server/utils/restore";
 import { normalizeRestoreBackupFile } from "@dokploy/server/utils/restore/safe-input";
 import { signScheduledQueueJob } from "@dokploy/server/utils/schedules/signed-job";
-import { redactBackupScheduleSecrets } from "@dokploy/server/utils/security/redaction";
+import {
+	isRedactedSecretValue,
+	redactBackupScheduleSecrets,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -102,6 +105,67 @@ type RestoreBackupInput = z.infer<typeof apiRestoreBackup>;
 type BackupAccessCtx = {
 	session: { userId: string; activeOrganizationId: string };
 	user: { id: string; role: string };
+};
+
+type BackupMetadataInput = z.infer<typeof apiUpdateBackup>["metadata"];
+
+const preserveBackupSecretValue = (value: string, existingValue?: string) =>
+	isRedactedSecretValue(value) ? (existingValue ?? "") : value;
+
+const preserveBackupMetadataSecrets = (
+	metadata: BackupMetadataInput,
+	existingMetadata: BackupMetadataInput,
+) => {
+	if (!metadata) {
+		return metadata;
+	}
+
+	return {
+		...existingMetadata,
+		...metadata,
+		postgres: metadata.postgres ?? existingMetadata?.postgres,
+		mariadb:
+			metadata.mariadb || existingMetadata?.mariadb
+				? {
+						databaseUser:
+							metadata.mariadb?.databaseUser ??
+							existingMetadata?.mariadb?.databaseUser ??
+							"",
+						databasePassword: metadata.mariadb
+							? preserveBackupSecretValue(
+									metadata.mariadb.databasePassword,
+									existingMetadata?.mariadb?.databasePassword,
+								)
+							: (existingMetadata?.mariadb?.databasePassword ?? ""),
+					}
+				: metadata.mariadb,
+		mongo:
+			metadata.mongo || existingMetadata?.mongo
+				? {
+						databaseUser:
+							metadata.mongo?.databaseUser ??
+							existingMetadata?.mongo?.databaseUser ??
+							"",
+						databasePassword: metadata.mongo
+							? preserveBackupSecretValue(
+									metadata.mongo.databasePassword,
+									existingMetadata?.mongo?.databasePassword,
+								)
+							: (existingMetadata?.mongo?.databasePassword ?? ""),
+					}
+				: metadata.mongo,
+		mysql:
+			metadata.mysql || existingMetadata?.mysql
+				? {
+						databaseRootPassword: metadata.mysql
+							? preserveBackupSecretValue(
+									metadata.mysql.databaseRootPassword,
+									existingMetadata?.mysql?.databaseRootPassword,
+								)
+							: (existingMetadata?.mysql?.databaseRootPassword ?? ""),
+					}
+				: metadata.mysql,
+	};
 };
 
 const backupServiceIdFields = [
@@ -696,7 +760,14 @@ export const backupRouter = createTRPCRouter({
 							)
 						: null;
 
-				await updateBackupById(input.backupId, input);
+				const updateInput = {
+					...input,
+					metadata: preserveBackupMetadataSecrets(
+						input.metadata,
+						existing.metadata as BackupMetadataInput,
+					),
+				};
+				await updateBackupById(input.backupId, updateInput);
 				const backup = await findBackupById(input.backupId);
 
 				if (IS_CLOUD) {

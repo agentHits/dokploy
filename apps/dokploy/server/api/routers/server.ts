@@ -15,7 +15,6 @@ import {
 	haveActiveServices,
 	IS_CLOUD,
 	redactServer,
-	redactServerSshKey,
 	redactServers,
 	removeDeploymentsByServerId,
 	resolveServerMetricsConfigUpdate,
@@ -193,6 +192,11 @@ const buildMetricsRequest = ({
 		token: normalizedToken,
 	};
 };
+
+const metricsFetchOptions = {
+	allowPrivateNetwork: true,
+	fieldName: "Monitoring metrics URL",
+} as const;
 
 export const serverRouter = createTRPCRouter({
 	create: withPermission("server", "create")
@@ -737,11 +741,15 @@ export const serverRouter = createTRPCRouter({
 			});
 
 			try {
-				const response = await fetchWithPublicEgress(request.url.toString(), {
-					headers: {
-						Authorization: `Bearer ${request.token}`,
+				const response = await fetchWithPublicEgress(
+					request.url.toString(),
+					{
+						headers: {
+							Authorization: `Bearer ${request.token}`,
+						},
 					},
-				});
+					metricsFetchOptions,
+				);
 				if (!response.ok) {
 					throw new Error(
 						`Error ${response.status}: ${response.statusText}. Ensure the container is running and this service is included in the monitoring configuration.`,

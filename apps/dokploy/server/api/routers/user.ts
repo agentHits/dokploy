@@ -239,6 +239,11 @@ const buildContainerMetricsRequest = ({
 		token: normalizedToken,
 	};
 };
+
+const metricsFetchOptions = {
+	allowPrivateNetwork: true,
+	fieldName: "Monitoring metrics URL",
+} as const;
 const hasRootAccess = (ctx: {
 	user: { id: string };
 	session: { impersonatedBy?: string } | null;
@@ -903,11 +908,15 @@ export const userRouter = createTRPCRouter({
 					dataPoints: input.dataPoints,
 					appName: input.appName,
 				});
-				const response = await fetchWithPublicEgress(request.url.toString(), {
-					headers: {
-						Authorization: `Bearer ${request.token}`,
+				const response = await fetchWithPublicEgress(
+					request.url.toString(),
+					{
+						headers: {
+							Authorization: `Bearer ${request.token}`,
+						},
 					},
-				});
+					metricsFetchOptions,
+				);
 				if (!response.ok) {
 					throw new Error(
 						`Error ${response.status}: ${response.statusText}. Please verify that the application "${input.appName}" is running and this service is included in the monitoring configuration.`,

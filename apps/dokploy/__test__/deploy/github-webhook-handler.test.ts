@@ -225,6 +225,34 @@ describe("GitHub app webhook auto-deploy", () => {
 		expect(res.json).toHaveBeenCalledWith({ message: "Deployed 1 apps" });
 	});
 
+	it("keeps remote application server id in queued push deployments", async () => {
+		mocks.applicationsFindMany.mockResolvedValue([
+			{
+				applicationId: "application-id",
+				serverId: "server-application",
+				watchPaths: null,
+			},
+		]);
+		const res = createResponse();
+
+		await handler(createPushRequest("main"), res);
+
+		expect(mocks.queueAdd).toHaveBeenCalledWith(
+			"deployments",
+			expect.objectContaining({
+				applicationId: "application-id",
+				applicationType: "application",
+				server: true,
+				serverId: "server-application",
+				type: "deploy",
+			}),
+			expect.objectContaining({
+				removeOnComplete: true,
+				removeOnFail: true,
+			}),
+		);
+	});
+
 	it("matches compose push events using repository owner login fallback", async () => {
 		mocks.applicationsFindMany.mockResolvedValue([]);
 		mocks.composeFindMany.mockImplementation(({ where }) => {
@@ -242,7 +270,7 @@ describe("GitHub app webhook auto-deploy", () => {
 					? [
 							{
 								composeId: "compose-id",
-								serverId: null,
+								serverId: "server-compose",
 								watchPaths: null,
 							},
 						]
@@ -258,6 +286,8 @@ describe("GitHub app webhook auto-deploy", () => {
 			expect.objectContaining({
 				applicationType: "compose",
 				composeId: "compose-id",
+				server: true,
+				serverId: "server-compose",
 				type: "deploy",
 			}),
 			expect.objectContaining({
