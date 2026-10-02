@@ -54,6 +54,7 @@ feat: add new feature
 Before you start, please make the clone based on the `canary` branch, since the `main` branch is the source of truth and should always reflect the latest stable release, also the PRs will be merged to the `canary` branch.
 
 We use Node v24.4.0 and recommend this specific version. If you have nvm installed, you can run `nvm install 24.4.0 && nvm use` in the root directory.
+We use Bun v1.4.2 as the package manager and recommend this specific version. The lockfile requires Bun >=1.4.2.
 
 ```bash
 git clone https://github.com/dokploy/dokploy.git
@@ -129,7 +130,7 @@ bun run --filter './apps/dokploy' reset-password
 To reset the password of a specific user instead, pass their email as an argument
 
 ```bash
-pnpm --filter=dokploy run reset-password user@example.com
+bun run --filter './apps/dokploy' reset-password user@example.com
 ```
 
 Both commands print the new randomly generated password to the console.
