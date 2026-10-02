@@ -47,7 +47,6 @@ export const Terminal: React.FC<Props> = ({ id, serverId }) => {
 
 		// @ts-expect-error
 		term.open(termRef.current);
-		// @ts-expect-error
 		term.loadAddon(addonFit);
 		addonFit.fit();
 

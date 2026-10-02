@@ -234,10 +234,11 @@ export const cloneGithubRepository = async ({
 	const outputPath = outputPathOverride ?? join(basePath, appName, "code");
 	const octokit = authGithub(githubProvider);
 	const token = await getGithubToken(octokit);
-	const repoclone = `github.com/${owner}/${repository}.git`;
+	const cloneBase = new URL(normalizeGithubUrl(githubProvider.githubUrl));
+	const repoclone = `${cloneBase.host}/${owner}/${repository}.git`;
 	command += buildRemovePathCommand(outputPath);
 	command += buildCreateDirectoryCommand(outputPath);
-	const cloneUrl = `https://oauth2:${token}@${repoclone}`;
+	const cloneUrl = `${cloneBase.protocol}//oauth2:${token}@${repoclone}`;
 
 	command += buildProviderEchoCommand(
 		`Cloning Repo ${repoclone} to ${outputPath}: ✅`,
