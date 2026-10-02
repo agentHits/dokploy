@@ -1,0 +1,99 @@
+name: Bun Migration Docker Check
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [AgentHits-Dev]
+    paths:
+      - ".github/workflows/bun-migration-docker-check.yml"
+      - "Dockerfile"
+      - "Dockerfile.cloud"
+      - "Dockerfile.server"
+      - "Dockerfile.schedule"
+      - "apps/**"
+      - "packages/**"
+      - "package.json"
+      - "bun.lock"
+
+permissions:
+  contents: read
+
+jobs:
+  main-image-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare production env file
+        run: |
+          cp apps/dokploy/.env.production.example .env.production
+          cp apps/dokploy/.env.production.example apps/dokploy/.env.production
+          echo "POSTGRES_PASSWORD=build-time-postgres-password" >> .env.production
+          echo "POSTGRES_PASSWORD=build-time-postgres-password" >> apps/dokploy/.env.production
+
+      - name: Build main image for smoke
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          push: false
+          tags: dokploy-bun-check:main
+          build-args: |
+            DOKPLOY_OFFICIAL_VERSION=ci-bun-check
+            DOKPLOY_FORK_VERSION=ci-bun-check
+
+      - name: Smoke main image
+        run: |
+          docker run --rm --entrypoint bun dokploy-bun-check:main --version
+          docker run --rm --entrypoint sh dokploy-bun-check:main -lc '
+            test -f /app/packages/server/dist/index.js
+            node --input-type=module -e "console.log(await import.meta.resolve(\"@dokploy/server\"))"
+          '
+
+  service-image-builds:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cloud
+            file: ./Dockerfile.cloud
+          - name: server
+            file: ./Dockerfile.server
+          - name: schedule
+            file: ./Dockerfile.schedule
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare production env file
+        run: |
+          cp apps/dokploy/.env.production.example .env.production
+          cp apps/dokploy/.env.production.example apps/dokploy/.env.production
+          echo "POSTGRES_PASSWORD=build-time-postgres-password" >> .env.production
+          echo "POSTGRES_PASSWORD=build-time-postgres-password" >> apps/dokploy/.env.production
+
+      - name: Build ${{ matrix.name }} image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          load: true
+          push: false
+          tags: dokploy-bun-check:${{ matrix.name }}
+
+      - name: Smoke ${{ matrix.name }} image
+        run: |
+          docker run --rm --entrypoint bun dokploy-bun-check:${{ matrix.name }} --version
+          docker run --rm --entrypoint sh dokploy-bun-check:${{ matrix.name }} -lc '
+            test -f /app/packages/server/dist/index.js
+            node --input-type=module -e "console.log(await import.meta.resolve(\"@dokploy/server\"))"
+          '
