@@ -52,7 +52,8 @@ vi.mock("ssh2", () => ({
 	})),
 }));
 
-vi.mock("../../server/wss/utils", () => ({
+vi.mock("../../server/wss/utils", async (importOriginal) => ({
+	...((await importOriginal<typeof import("../../server/wss/utils")>()) as object),
 	setupLocalServerSSHKey: mocks.setupLocalServerSSHKey,
 }));
 

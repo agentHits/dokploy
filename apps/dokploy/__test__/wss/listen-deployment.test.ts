@@ -51,13 +51,23 @@ vi.mock("ssh2", () => ({
 
 const mockValidateRequest = vi.hoisted(() => vi.fn());
 const mockFindServerById = vi.hoisted(() => vi.fn());
+const mockFindDeploymentById = vi.hoisted(() => vi.fn());
+const mockCheckServicePermissionAndAccess = vi.hoisted(() => vi.fn());
+// NOTE: full mocks (no importOriginal) — importing the real server barrel
+// OOMs the websocket test worker.
 vi.mock("@dokploy/server", () => ({
 	IS_CLOUD: false,
 	validateRequest: mockValidateRequest,
 	findServerById: mockFindServerById,
+	findDeploymentById: mockFindDeploymentById,
+}));
+vi.mock("@dokploy/server/services/permission", () => ({
+	checkPermission: vi.fn(async () => undefined),
+	checkServicePermissionAndAccess: mockCheckServicePermissionAndAccess,
 }));
 vi.mock("@dokploy/server/wss/utils", () => ({
 	readValidDirectory: () => true,
+	readValidDeploymentLogPath: () => true,
 }));
 
 import { setupDeploymentLogsWebSocketServer } from "@/server/wss/listen-deployment";
@@ -85,11 +95,25 @@ beforeEach(async () => {
 	sshClients.length = 0;
 	nextChild.ignoreSigterm = false;
 	vi.clearAllMocks();
+	mockFindDeploymentById.mockResolvedValue({
+		deploymentId: "dep-1",
+		logPath: "/etc/dokploy/logs/app/deploy.log",
+		applicationId: "app-1",
+		composeId: null,
+		scheduleId: null,
+		volumeBackupId: null,
+		serverId: null,
+		buildServerId: null,
+		backup: null,
+		volumeBackup: null,
+		schedule: null,
+	});
+	mockCheckServicePermissionAndAccess.mockResolvedValue(undefined);
 	server = http.createServer();
 	setupDeploymentLogsWebSocketServer(server);
 	await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
 	const { port } = server.address() as AddressInfo;
-	url = `ws://127.0.0.1:${port}/listen-deployment?logPath=/etc/dokploy/logs/app/deploy.log`;
+	url = `ws://127.0.0.1:${port}/listen-deployment?deploymentId=dep-1&logPath=/etc/dokploy/logs/app/deploy.log`;
 });
 
 afterEach(async () => {
