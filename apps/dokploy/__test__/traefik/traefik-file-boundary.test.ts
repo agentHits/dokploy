@@ -117,9 +117,7 @@ describe("Traefik file path boundary", () => {
 		const [serverId, remotePath, payload] =
 			mocks.writeFileRemote.mock.calls.at(-1) ?? [];
 		expect(serverId).toBe("server-1");
-		expect(remotePath).toBe(
-			"/etc/dokploy/traefik/dynamic/middlewares.yml",
-		);
+		expect(remotePath).toBe("/etc/dokploy/traefik/dynamic/middlewares.yml");
 		// SFTP carries YAML as data, never as shell text.
 		expect(payload).toContain("touch /tmp/pwn");
 		expect(payload).toContain("$(id)");
@@ -136,7 +134,8 @@ describe("Traefik file path boundary", () => {
 			"server-1",
 		);
 
-		const [serverId, remotePath] = mocks.writeFileRemote.mock.calls.at(-1) ?? [];
+		const [serverId, remotePath] =
+			mocks.writeFileRemote.mock.calls.at(-1) ?? [];
 		expect(serverId).toBe("server-1");
 		// SFTP takes the resolved path as data: no shell quoting layers,
 		// but also no unquoted shell redirection.

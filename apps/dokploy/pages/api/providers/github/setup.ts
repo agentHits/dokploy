@@ -1,15 +1,15 @@
 import { createGithub, findGithubById, updateGithub } from "@dokploy/server";
 import { validateRequest } from "@dokploy/server/lib/auth";
 import {
+	deriveGithubApiUrl,
+	parseGithubBaseUrl,
+} from "@dokploy/server/utils/providers/github";
+import {
 	canManageGitProviderOAuth,
 	GITHUB_APP_INIT_STATE_PROVIDER_ID,
 	getGithubIdFromAppSetupStateProviderId,
 	verifyGitProviderOAuthState,
 } from "@dokploy/server/utils/providers/oauth-state";
-import {
-	deriveGithubApiUrl,
-	parseGithubBaseUrl,
-} from "@dokploy/server/utils/providers/github";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { Octokit } from "octokit";
 

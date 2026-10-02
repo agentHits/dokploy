@@ -369,8 +369,8 @@ const { handler, api } = betterAuth({
 						}
 						if (!canProvisionSsoMembershipForEmail(user.email, provider)) {
 							throw new APIError("UNAUTHORIZED", {
-							message: "SSO email domain is not allowed for this provider",
-						});
+								message: "SSO email domain is not allowed for this provider",
+							});
 						}
 						const defaultRole = provider.organizationId
 							? await resolveOrganizationDefaultRole(provider.organizationId)
