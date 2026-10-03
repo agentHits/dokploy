@@ -9,6 +9,11 @@ permissions:
   contents: read
   packages: write
 
+# Cancel superseded dev builds on rapid pushes.
+concurrency:
+  group: agenthits-image-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: agenthits/dokploy
@@ -78,8 +83,8 @@ jobs:
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=registry,ref=${{ steps.tags.outputs.cache }}
           cache-to: type=registry,ref=${{ steps.tags.outputs.cache }},mode=max
-          provenance: true
-          sbom: true
+          provenance: false
+          sbom: false
           build-args: |
             DOKPLOY_OFFICIAL_VERSION=${{ steps.tags.outputs.official-version }}
             DOKPLOY_FORK_VERSION=${{ steps.tags.outputs.fork-version }}
