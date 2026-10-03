@@ -14,13 +14,23 @@ ARG DOKPLOY_OFFICIAL_VERSION=v0.29.8
 ARG DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_local
 ENV DOKPLOY_OFFICIAL_VERSION=$DOKPLOY_OFFICIAL_VERSION
 ENV DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION
-COPY . /usr/src/app
 WORKDIR /usr/src/app
+
+# Copy workspace manifests first so the dependency install layer stays cached
+# unless dependencies actually change.
+COPY package.json bun.lock ./
+COPY apps/api/package.json ./apps/api/package.json
+COPY apps/dokploy/package.json ./apps/dokploy/package.json
+COPY apps/schedules/package.json ./apps/schedules/package.json
+COPY packages/server/package.json ./packages/server/package.json
 
 RUN apt-get update && apt-get install -y python3 make g++ git python3-pip pkg-config libsecret-1-dev && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
 RUN --mount=type=cache,id=bun,target=/root/.bun/install/cache bun install --frozen-lockfile
+
+# Copy the rest of the source. Changes here no longer reinstall dependencies.
+COPY . /usr/src/app
 
 # Deploy only the dokploy app
 
