@@ -84,10 +84,10 @@ jobs:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64
-          push: true
           tags: ${{ steps.tags.outputs.tags }}
+          outputs: type=registry,compression=zstd,compression-level=3
           cache-from: type=registry,ref=${{ steps.tags.outputs.cache }}
-          cache-to: type=registry,ref=${{ steps.tags.outputs.cache }},mode=max
+          cache-to: type=registry,ref=${{ steps.tags.outputs.cache }},mode=max,compression=zstd,compression-level=3
           provenance: false
           sbom: false
           build-args: |
