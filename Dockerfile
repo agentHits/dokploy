@@ -40,21 +40,10 @@ RUN bun run --filter './apps/dokploy' build
 
 RUN bun install --production --frozen-lockfile --linker hoisted
 
-RUN mkdir -p /prod/dokploy \
-    && cp -R /usr/src/app/apps/dokploy/package.json /prod/dokploy/package.json \
-    && cp -R /usr/src/app/apps/dokploy/next.config.mjs /prod/dokploy/next.config.mjs \
-    && cp -R /usr/src/app/apps/dokploy/public /prod/dokploy/public \
-    && cp -R /usr/src/app/apps/dokploy/drizzle /prod/dokploy/drizzle \
-    && cp -R /usr/src/app/apps/dokploy/components.json /prod/dokploy/components.json \
-    && cp -R /usr/src/app/node_modules /prod/dokploy/node_modules \
-    && mkdir -p /prod/dokploy/packages \
-    && cp -R /usr/src/app/packages/server /prod/dokploy/packages/server \
-    && rm -f /prod/dokploy/node_modules/dokploy \
-    && rm -f /prod/dokploy/node_modules/@dokploy/api \
-    && rm -f /prod/dokploy/node_modules/@dokploy/schedules
-
-RUN cp -R /usr/src/app/apps/dokploy/.next /prod/dokploy/.next
-RUN cp -R /usr/src/app/apps/dokploy/dist /prod/dokploy/dist
+# Drop workspace symlinks in place so the runtime stage can copy node_modules
+# straight from this layer. Re-copying it through a staging dir gave it fresh
+# mtimes, which invalidated the layer cache and re-pushed ~2GB on every build.
+RUN rm -f node_modules/dokploy node_modules/@dokploy/api node_modules/@dokploy/schedules
 
 FROM base AS dokploy
 WORKDIR /app
@@ -69,16 +58,16 @@ ENV DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION
 RUN apt-get update && apt-get install -y tini curl unzip zip apache2-utils iproute2 rsync git-lfs && git lfs install && rm -rf /var/lib/apt/lists/*
 
 # Copy only the necessary files
-COPY --from=build /prod/dokploy/.next ./.next
-COPY --from=build /prod/dokploy/dist ./dist
-COPY --from=build /prod/dokploy/next.config.mjs ./next.config.mjs
-COPY --from=build /prod/dokploy/public ./public
-COPY --from=build /prod/dokploy/package.json ./package.json
-COPY --from=build /prod/dokploy/drizzle ./drizzle
+COPY --from=build /usr/src/app/apps/dokploy/.next ./.next
+COPY --from=build /usr/src/app/apps/dokploy/dist ./dist
+COPY --from=build /usr/src/app/apps/dokploy/next.config.mjs ./next.config.mjs
+COPY --from=build /usr/src/app/apps/dokploy/public ./public
+COPY --from=build /usr/src/app/apps/dokploy/package.json ./package.json
+COPY --from=build /usr/src/app/apps/dokploy/drizzle ./drizzle
 COPY .env.production ./.env
-COPY --from=build /prod/dokploy/components.json ./components.json
-COPY --from=build /prod/dokploy/node_modules ./node_modules
-COPY --from=build /prod/dokploy/packages ./packages
+COPY --from=build /usr/src/app/apps/dokploy/components.json ./components.json
+COPY --from=build /usr/src/app/node_modules ./node_modules
+COPY --from=build /usr/src/app/packages/server ./packages/server
 
 
 # Install docker
