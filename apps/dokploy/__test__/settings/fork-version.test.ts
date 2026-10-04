@@ -165,6 +165,50 @@ describe("AgentHits fork version metadata", () => {
 		});
 	});
 
+	it("checks AgentHits updates when the tag is a bare manifest without an index", async () => {
+		const { execAsync } = await import(
+			"@dokploy/server/utils/process/execAsync"
+		);
+		vi.mocked(execAsync).mockResolvedValue({
+			stdout: "ghcr.io/agenthits/dokploy:agenthits-dev@sha256:current\n",
+			stderr: "",
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = input.toString();
+				if (url.includes("/token")) {
+					return createJsonResponse({ token: "token" });
+				}
+				if (url.endsWith("/manifests/agenthits-dev")) {
+					return createJsonResponse(
+						{ config: { digest: "sha256:config" } },
+						{ "docker-content-digest": "sha256:latest" },
+					);
+				}
+				if (url.endsWith("/blobs/sha256:config")) {
+					return createJsonResponse({
+						config: {
+							Env: [
+								"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+								"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_159+next",
+							],
+						},
+					});
+				}
+
+				throw new Error(`Unexpected URL: ${url}`);
+			}),
+		);
+
+		expect(await getAgentHitsUpdateData("v0.29.8")).toMatchObject({
+			latestVersion: "off_v0.29.8/Fork_159+next",
+			updateAvailable: true,
+			latestDigest: "sha256:latest",
+			latestPlatformDigest: "sha256:latest",
+		});
+	});
+
 	it("routes generic update checks to GHCR and detects stale fork metadata", async () => {
 		process.env.RELEASE_TAG = "agenthits-dev";
 		const { execAsync } = await import(
