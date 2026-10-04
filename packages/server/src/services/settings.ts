@@ -186,28 +186,32 @@ const findEnvValue = (env: string[] | undefined, name: string) => {
 export const getAgentHitsLatestImageData = async () => {
 	const token = await getGhcrPullToken();
 	const tag = getAgentHitsUpdateTag();
-	const indexResult = await fetchGhcrJson<RegistryManifestList>(
-		token,
-		`manifests/${tag}`,
-		MANIFEST_LIST_ACCEPT,
-	);
+	const indexResult = await fetchGhcrJson<
+		RegistryManifestList & RegistryImageManifest
+	>(token, `manifests/${tag}`, MANIFEST_LIST_ACCEPT);
 	const latestDigest = indexResult.digest;
-	const imageManifestDigest =
-		indexResult.data.manifests?.find(
-			(manifest) =>
-				manifest.platform?.os === "linux" &&
-				manifest.platform.architecture === "amd64",
-		)?.digest ?? indexResult.data.manifests?.[0]?.digest;
+
+	// Images pushed with provenance/sbom disabled are a bare manifest, not an index.
+	const isBareManifest = Boolean(indexResult.data.config?.digest);
+	const imageManifestDigest = isBareManifest
+		? latestDigest
+		: (indexResult.data.manifests?.find(
+				(manifest) =>
+					manifest.platform?.os === "linux" &&
+					manifest.platform.architecture === "amd64",
+			)?.digest ?? indexResult.data.manifests?.[0]?.digest);
 
 	if (!latestDigest || !imageManifestDigest) {
 		throw new Error("Could not resolve AgentHits image manifest digest");
 	}
 
-	const imageManifestResult = await fetchGhcrJson<RegistryImageManifest>(
-		token,
-		`manifests/${imageManifestDigest}`,
-		IMAGE_MANIFEST_ACCEPT,
-	);
+	const imageManifestResult = isBareManifest
+		? indexResult
+		: await fetchGhcrJson<RegistryImageManifest>(
+				token,
+				`manifests/${imageManifestDigest}`,
+				IMAGE_MANIFEST_ACCEPT,
+			);
 	const configDigest = imageManifestResult.data.config?.digest;
 	if (!configDigest) {
 		throw new Error("Could not resolve AgentHits image config digest");
