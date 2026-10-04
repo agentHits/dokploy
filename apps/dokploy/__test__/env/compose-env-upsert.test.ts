@@ -1,17 +1,41 @@
+import { compose } from "@dokploy/server/db/schema";
 import {
 	deployCompose,
 	upsertComposeEnvironment,
 } from "@dokploy/server/services/compose";
 import { getComposeEnvRevision } from "@dokploy/server/utils/env-upsert";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dbMocks = vi.hoisted(() => {
 	const returning = vi.fn();
-	const where = vi.fn(() => ({ returning }));
+	const where = vi.fn((_condition: unknown) => ({ returning }));
 	const set = vi.fn(() => ({ where }));
 	const update = vi.fn(() => ({ set }));
 	const findFirst = vi.fn();
-	return { findFirst, returning, set, update, where };
+	const lockForUpdate = vi.fn();
+	const selectWhere = vi.fn(() => ({ for: lockForUpdate }));
+	const from = vi.fn(() => ({ where: selectWhere }));
+	const select = vi.fn(() => ({ from }));
+	const transaction = vi.fn(
+		async (
+			callback: (tx: {
+				select: typeof select;
+				update: typeof update;
+			}) => unknown,
+		) => callback({ select, update }),
+	);
+	return {
+		findFirst,
+		lockForUpdate,
+		returning,
+		select,
+		set,
+		transaction,
+		update,
+		where,
+	};
 });
 
 const exactMocks = vi.hoisted(() => ({
@@ -35,6 +59,7 @@ const exactMocks = vi.hoisted(() => ({
 vi.mock("@dokploy/server/db", () => ({
 	db: {
 		query: { compose: { findFirst: dbMocks.findFirst } },
+		transaction: dbMocks.transaction,
 		update: dbMocks.update,
 	},
 }));
@@ -89,21 +114,18 @@ vi.mock("@dokploy/server/services/patch", () => ({
 	generateApplyPatchesCommand: exactMocks.generateApplyPatchesCommand,
 }));
 
-const compose = (env: string | null) => ({
-	composeId: "compose_1",
-	env,
-});
-
 describe("upsertComposeEnvironment", () => {
+	const lockedRow = (env: string | null) =>
+		dbMocks.lockForUpdate.mockResolvedValue([{ env }]);
+
 	beforeEach(() => {
 		vi.clearAllMocks();
-		dbMocks.returning.mockResolvedValue([{ composeId: "compose_1" }]);
 	});
 
 	it("preserves unrelated comments and secret lines while returning metadata only", async () => {
 		const currentEnv =
 			"# keep this\nAPI_URL=https://old.example\nREDIS_PASSWORD=secret-canary\n";
-		dbMocks.findFirst.mockResolvedValue(compose(currentEnv));
+		lockedRow(currentEnv);
 
 		const result = await upsertComposeEnvironment({
 			composeId: "compose_1",
@@ -124,7 +146,7 @@ describe("upsertComposeEnvironment", () => {
 
 	it("dry run returns current revision and performs no write", async () => {
 		const currentEnv = "A=one";
-		dbMocks.findFirst.mockResolvedValue(compose(currentEnv));
+		lockedRow(currentEnv);
 		const result = await upsertComposeEnvironment({
 			composeId: "compose_1",
 			variables: { A: "two" },
@@ -137,7 +159,7 @@ describe("upsertComposeEnvironment", () => {
 	});
 
 	it("rejects a stale revision without writing", async () => {
-		dbMocks.findFirst.mockResolvedValue(compose("A=one"));
+		lockedRow("A=one");
 		await expect(
 			upsertComposeEnvironment({
 				composeId: "compose_1",
@@ -148,17 +170,43 @@ describe("upsertComposeEnvironment", () => {
 		expect(dbMocks.update).not.toHaveBeenCalled();
 	});
 
-	it("rejects a concurrent conditional-write loser", async () => {
+	it("locks the compose row for the read-check-write cycle", async () => {
 		const currentEnv = "A=one";
-		dbMocks.findFirst.mockResolvedValue(compose(currentEnv));
-		dbMocks.returning.mockResolvedValue([]);
+		lockedRow(currentEnv);
+		await upsertComposeEnvironment({
+			composeId: "compose_1",
+			variables: { A: "two" },
+			expectedRevision: getComposeEnvRevision("compose_1", currentEnv),
+		});
+		expect(dbMocks.lockForUpdate).toHaveBeenCalledWith("update");
+	});
+
+	it("keys the write by composeId only and never compares the encrypted env column", async () => {
+		const currentEnv = "A=one";
+		lockedRow(currentEnv);
+		await upsertComposeEnvironment({
+			composeId: "compose_1",
+			variables: { A: "two" },
+			expectedRevision: getComposeEnvRevision("compose_1", currentEnv),
+		});
+
+		expect(dbMocks.where).toHaveBeenCalledTimes(1);
+		const condition = dbMocks.where.mock.calls[0]?.[0] as SQL;
+		const { sql, params } = new PgDialect().sqlToQuery(condition);
+		expect(sql).toContain(`"${compose.composeId.name}"`);
+		expect(sql).not.toContain(`"${compose.env.name}"`);
+		expect(params).toEqual(["compose_1"]);
+	});
+
+	it("rejects an unknown compose without writing", async () => {
+		dbMocks.lockForUpdate.mockResolvedValue([]);
 		await expect(
 			upsertComposeEnvironment({
-				composeId: "compose_1",
+				composeId: "missing",
 				variables: { A: "two" },
-				expectedRevision: getComposeEnvRevision("compose_1", currentEnv),
 			}),
-		).rejects.toMatchObject({ code: "CONFLICT" });
+		).rejects.toMatchObject({ code: "NOT_FOUND" });
+		expect(dbMocks.update).not.toHaveBeenCalled();
 	});
 
 	it.each([
@@ -171,6 +219,8 @@ describe("upsertComposeEnvironment", () => {
 				variables: { API_TOKEN: value },
 			}),
 		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+		expect(dbMocks.transaction).not.toHaveBeenCalled();
+		expect(dbMocks.select).not.toHaveBeenCalled();
 		expect(dbMocks.findFirst).not.toHaveBeenCalled();
 		expect(dbMocks.update).not.toHaveBeenCalled();
 	});

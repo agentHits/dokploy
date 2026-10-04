@@ -38,7 +38,7 @@ import { cloneGitlabRepository } from "@dokploy/server/utils/providers/gitlab";
 import { getCreateComposeFileCommand } from "@dokploy/server/utils/providers/raw";
 import { quoteShellArgs } from "@dokploy/server/utils/shell";
 import { TRPCError } from "@trpc/server";
-import { and, eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { z } from "zod";
 import { encodeBase64 } from "../utils/docker/utils";
 import {
@@ -266,51 +266,57 @@ export const upsertComposeEnvironment = async (
 		});
 	}
 
-	const currentCompose = await findComposeById(input.composeId);
-	const capturedEnv = currentCompose.env;
-	const currentRevision = getComposeEnvRevision(input.composeId, capturedEnv);
+	return await db.transaction(async (tx) => {
+		// compose.env is encrypted with a random IV, so it can't be compared in
+		// SQL; the row lock is what makes the revision check and write atomic.
+		const [row] = await tx
+			.select({ env: compose.env })
+			.from(compose)
+			.where(eq(compose.composeId, input.composeId))
+			.for("update");
 
-	if (input.expectedRevision && input.expectedRevision !== currentRevision) {
-		throw new TRPCError({
-			code: "CONFLICT",
-			message: "Compose environment revision does not match",
-		});
-	}
+		if (!row) {
+			throw new TRPCError({
+				code: "NOT_FOUND",
+				message: "Compose not found",
+			});
+		}
 
-	const result = upsertEnvVariables(capturedEnv, input.variables);
-	const dryRun = input.dryRun ?? false;
-	if (dryRun || !result.changed) {
+		const capturedEnv = row.env;
+		const currentRevision = getComposeEnvRevision(input.composeId, capturedEnv);
+
+		if (input.expectedRevision && input.expectedRevision !== currentRevision) {
+			throw new TRPCError({
+				code: "CONFLICT",
+				message: "Compose environment revision does not match",
+			});
+		}
+
+		const result = upsertEnvVariables(capturedEnv, input.variables);
+		const dryRun = input.dryRun ?? false;
+		if (dryRun || !result.changed) {
+			return {
+				composeId: input.composeId,
+				changed: result.changed,
+				revision: currentRevision,
+				dryRun,
+				variables: result.variables,
+			};
+		}
+
+		await tx
+			.update(compose)
+			.set({ env: result.env })
+			.where(eq(compose.composeId, input.composeId));
+
 		return {
 			composeId: input.composeId,
-			changed: result.changed,
-			revision: currentRevision,
-			dryRun,
+			changed: true,
+			revision: getComposeEnvRevision(input.composeId, result.env),
+			dryRun: false,
 			variables: result.variables,
 		};
-	}
-
-	const capturedEnvPredicate =
-		capturedEnv == null ? isNull(compose.env) : eq(compose.env, capturedEnv);
-	const updated = await db
-		.update(compose)
-		.set({ env: result.env })
-		.where(and(eq(compose.composeId, input.composeId), capturedEnvPredicate))
-		.returning({ composeId: compose.composeId });
-
-	if (updated.length !== 1) {
-		throw new TRPCError({
-			code: "CONFLICT",
-			message: "Compose environment changed concurrently",
-		});
-	}
-
-	return {
-		composeId: input.composeId,
-		changed: true,
-		revision: getComposeEnvRevision(input.composeId, result.env),
-		dryRun: false,
-		variables: result.variables,
-	};
+	});
 };
 
 export const deployCompose = async ({
