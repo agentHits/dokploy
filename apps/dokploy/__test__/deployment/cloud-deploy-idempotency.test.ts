@@ -72,12 +72,29 @@ const serviceDbMocks = vi.hoisted(() => {
 	const onConflictDoNothing = vi.fn(() => ({ returning: insertReturning }));
 	const values = vi.fn(() => ({ onConflictDoNothing }));
 	const insert = vi.fn(() => ({ values }));
+	const lockForUpdate = vi.fn();
+	const selectWhere = vi.fn(() => ({ for: lockForUpdate }));
+	const from = vi.fn(() => ({ where: selectWhere }));
+	const select = vi.fn(() => ({ from }));
+	const updateWhere = vi.fn();
+	const set = vi.fn(() => ({ where: updateWhere }));
+	const update = vi.fn(() => ({ set }));
+	const transaction = vi.fn(
+		async (
+			callback: (tx: {
+				select: typeof select;
+				update: typeof update;
+			}) => unknown,
+		) => callback({ select, update }),
+	);
 	return {
 		composeFindFirst,
 		insert,
 		insertReturning,
+		lockForUpdate,
 		onConflictDoNothing,
 		operationFindFirst,
+		transaction,
 		values,
 	};
 });
@@ -110,6 +127,7 @@ vi.mock("@dokploy/server/db", () => ({
 				findFirst: serviceDbMocks.operationFindFirst,
 			},
 		},
+		transaction: serviceDbMocks.transaction,
 	},
 }));
 vi.mock("@dokploy/server/services/permission", () => ({
@@ -366,6 +384,7 @@ describe("compose recovery authorized caller contracts", () => {
 			sourceType: "git",
 			env: "API_TOKEN=old",
 		});
+		serviceDbMocks.lockForUpdate.mockResolvedValue([{ env: "API_TOKEN=old" }]);
 		mocks.findComposeDeploymentOperation.mockResolvedValue(operation);
 		mocks.markDeploymentOperationDispatched.mockResolvedValue(undefined);
 		routerMocks.myQueueAdd.mockResolvedValue(undefined);
@@ -409,6 +428,7 @@ describe("compose recovery authorized caller contracts", () => {
 			).toHaveBeenCalledOnce();
 			expect(mocks.findComposeById).not.toHaveBeenCalled();
 			expect(serviceDbMocks.composeFindFirst).not.toHaveBeenCalled();
+			expect(serviceDbMocks.transaction).not.toHaveBeenCalled();
 			expect(routerMocks.audit).not.toHaveBeenCalled();
 			expect(routerMocks.myQueueAdd).not.toHaveBeenCalled();
 			expect(routerMocks.deploy).not.toHaveBeenCalled();
