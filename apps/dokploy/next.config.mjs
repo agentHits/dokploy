@@ -6,6 +6,9 @@
 /** @type {import("next").NextConfig} */
 const nextConfig = {
 	reactStrictMode: true,
+	// Runtime is a custom server running `next start`, not standalone/serverless,
+	// so the .nft.json traces are never read; collecting them added ~100s per build.
+	outputFileTracing: false,
 	experimental: {
 		webpackMemoryOptimizations: true,
 	},
