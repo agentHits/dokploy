@@ -5,7 +5,7 @@
 import { ChevronRight, type LucideIcon } from "lucide-react";
 import { Accordion as AccordionPrimitive } from "radix-ui";
 import React from "react";
-import useResizeObserver from "use-resize-observer";
+import { useResizeObserver } from "use-resize-observer";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "./scroll-area";
 
