@@ -1,5 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	maxJsonBuildArrayArgs,
+	POSTGRES_MAX_FUNCTION_ARGS,
+	relationalQueryDb,
+} from "../helpers/postgres-function-args";
 
 const mocks = vi.hoisted(() => ({
 	audit: vi.fn(),
@@ -748,6 +753,42 @@ describe("volume backup restore access boundary", () => {
 		expect(mocks.restoreVolume).not.toHaveBeenCalled();
 		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
 		expect(mocks.execAsyncStream).not.toHaveBeenCalled();
+	});
+
+	it("keeps the restore schedule lookup within the Postgres function argument limit", async () => {
+		let compiledSql = "";
+		mocks.findVolumeBackups.mockImplementation(async (config) => {
+			compiledSql = relationalQueryDb.query.volumeBackups
+				.findMany(config)
+				.toSQL().sql;
+			return [
+				{
+					application: { appName: "app-one" },
+					applicationId: "app-1",
+					destinationId: "destination-1",
+					prefix: "prefix",
+					serviceType: "application",
+					volumeName: "data_volume",
+				},
+			];
+		});
+
+		await expect(
+			runVolumeRestoreSubscription({
+				backupFileName: "app-one/prefix/data_volume-2026-06-22.tar",
+				destinationId: "destination-1",
+				volumeName: "data_volume",
+				id: "app-1",
+				serviceType: "application",
+			}),
+		).resolves.toBe(undefined);
+
+		expect(mocks.findVolumeBackups).toHaveBeenCalledTimes(1);
+		expect(compiledSql).toContain("json_build_array(");
+		expect(maxJsonBuildArrayArgs(compiledSql)).toBeLessThanOrEqual(
+			POSTGRES_MAX_FUNCTION_ARGS,
+		);
+		expect(mocks.restoreVolume).toHaveBeenCalledTimes(1);
 	});
 
 	it("allows restore objects bound to the matching volume-backup schedule", async () => {

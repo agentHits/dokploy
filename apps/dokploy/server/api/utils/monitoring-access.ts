@@ -55,10 +55,14 @@ const findMonitoringServiceByAppName = async (appName: string) => {
 		} satisfies MonitoringService;
 	}
 
+	// The application table has more than 100 columns. Drizzle puts every
+	// selected column of a nested relation into one json_build_array() call,
+	// and Postgres rejects calls with more than 100 arguments (54023).
 	const previewDeployment = await db.query.previewDeployments.findFirst({
 		where: eq(previewDeployments.appName, appName),
 		with: {
 			application: {
+				columns: { applicationId: true, serverId: true },
 				with: {
 					environment: {
 						with: {
