@@ -370,17 +370,29 @@ const { handler, api } = betterAuth({
 								message: "Provider not found",
 							});
 						}
+						// user.validateUserInfo already rejects these emails before the user
+						// exists; SSO callbacks only log errors thrown from after-hooks.
 						if (!canProvisionSsoMembershipForEmail(user.email, provider)) {
 							throw new APIError("UNAUTHORIZED", {
 								message: "SSO email domain is not allowed for this provider",
 							});
 						}
-						const defaultRole = provider.organizationId
-							? await resolveOrganizationDefaultRole(provider.organizationId)
-							: "member";
+						const existingMembership = await db.query.member.findFirst({
+							where: and(
+								eq(schema.member.userId, user.id),
+								eq(schema.member.organizationId, provider.organizationId),
+							),
+							columns: { id: true },
+						});
+						if (existingMembership) {
+							return;
+						}
+						const defaultRole = await resolveOrganizationDefaultRole(
+							provider.organizationId,
+						);
 						await db.insert(schema.member).values({
 							userId: user.id,
-							organizationId: provider?.organizationId || "",
+							organizationId: provider.organizationId,
 							role: defaultRole,
 							createdAt: new Date(),
 							isDefault: true,
@@ -448,6 +460,39 @@ const { handler, api } = betterAuth({
 		fields: {
 			name: "firstName", // Map better-auth's default 'name' field to 'firstName' column
 		},
+		// SSO callbacks commit the user, account and session before after-hooks
+		// run and only log after-hook errors, so the email domain gate must run
+		// here, before an SSO identity is created or linked.
+		validateUserInfo: async ({ user, source }) => {
+			if (source.method !== "sso-oidc" && source.method !== "sso-saml") {
+				return;
+			}
+			// Returning users keep signing in as before, including through
+			// providers whose domain has not been verified yet.
+			if (source.action === "sign-in") {
+				return;
+			}
+			const providerId = source.sso?.providerId;
+			const provider = providerId
+				? await db.query.ssoProvider.findFirst({
+						where: eq(schema.ssoProvider.providerId, providerId),
+						columns: {
+							domain: true,
+							domainVerified: true,
+							organizationId: true,
+						},
+					})
+				: undefined;
+			if (
+				!provider ||
+				!canProvisionSsoMembershipForEmail(user.email, provider)
+			) {
+				return {
+					error: "sso_email_domain_not_allowed",
+					errorDescription: "SSO email domain is not allowed for this provider",
+				};
+			}
+		},
 		additionalFields: {
 			role: {
 				type: "string",
@@ -486,6 +531,9 @@ const { handler, api } = betterAuth({
 			domainVerification: {
 				enabled: true,
 			},
+			saml: {
+				allowIdpInitiated: false,
+			},
 			organizationProvisioning: {
 				getRole: async ({ user, provider }) => {
 					if (!canProvisionSsoMembershipForEmail(user.email, provider)) {
@@ -493,7 +541,12 @@ const { handler, api } = betterAuth({
 							message: "SSO email domain is not allowed for this provider",
 						});
 					}
-					return "member";
+					// Better Auth types this as member | admin, but member.role also
+					// stores custom roles; keep it equal to the role the user.create
+					// hook assigns to new SSO users.
+					return (await resolveOrganizationDefaultRole(
+						provider.organizationId,
+					)) as "member" | "admin";
 				},
 			},
 		}),
