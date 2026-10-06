@@ -13,6 +13,10 @@ await migrate(db, { migrationsFolder: "drizzle" })
 	})
 	.catch((error) => {
 		console.log("Migration failed", error);
+		// Keep `&& node dist/server.mjs` from starting on a partially migrated
+		// schema: Better Auth refuses every request when its tables do not match,
+		// while a failed start is retried by the orchestrator.
+		process.exitCode = 1;
 	})
 	.finally(() => {
 		sql.end();

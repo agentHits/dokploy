@@ -114,6 +114,12 @@ const { resolveTrustedOriginsForAuthRequest } = await import(
 const { canProvisionSsoMembershipForEmail } = await import(
 	"../../../../packages/server/src/lib/auth"
 );
+const { drizzleAdapter } = await import("better-auth/adapters/drizzle");
+const { organization } = await import("better-auth/plugins");
+
+// Captured before any beforeEach clears the mock call history.
+const drizzleAdapterOptions = vi.mocked(drizzleAdapter).mock.calls[0]?.[1];
+const organizationOptions = vi.mocked(organization).mock.calls[0]?.[0];
 
 const apiKeyRequest = {
 	headers: {
@@ -215,6 +221,79 @@ describe("validateRequest API key sessions", () => {
 			},
 			{ api: ["read"] },
 		);
+	});
+});
+
+describe("validateRequest cookie sessions", () => {
+	const cookieRequest = {
+		headers: { cookie: "better-auth.session_token=token" },
+	} as unknown as IncomingMessage;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.getSession.mockResolvedValue({
+			session: {
+				id: "session-1",
+				userId: "user-1",
+				activeOrganizationId: "org-1",
+			},
+			user: { id: "user-1", email: "ada@example.com" },
+		});
+	});
+
+	it("resolves ownerId to the owner of the active organization", async () => {
+		mocks.memberFindFirst.mockResolvedValue({
+			role: "admin",
+			organization: { id: "org-1", ownerId: "owner-1" },
+			user: { enableEnterpriseFeatures: true, isValidEnterpriseLicense: true },
+		});
+
+		await expect(validateRequest(cookieRequest)).resolves.toMatchObject({
+			session: { id: "session-1", activeOrganizationId: "org-1" },
+			user: {
+				id: "user-1",
+				role: "admin",
+				ownerId: "owner-1",
+				enableEnterpriseFeatures: true,
+				isValidEnterpriseLicense: true,
+			},
+		});
+	});
+
+	it("falls back to the user itself when there is no membership", async () => {
+		mocks.memberFindFirst.mockResolvedValue(undefined);
+
+		await expect(validateRequest(cookieRequest)).resolves.toMatchObject({
+			session: { activeOrganizationId: "" },
+			user: {
+				id: "user-1",
+				role: "member",
+				ownerId: "user-1",
+				enableEnterpriseFeatures: false,
+				isValidEnterpriseLicense: false,
+			},
+		});
+	});
+});
+
+describe("Better Auth 1.7 configuration", () => {
+	it("runs the Drizzle adapter with native transactions", () => {
+		expect(drizzleAdapterOptions).toMatchObject({
+			provider: "pg",
+			transaction: true,
+		});
+	});
+
+	it("does not declare ownerId as a Better Auth user column", () => {
+		expect(mocks.authOptions.user.additionalFields).not.toHaveProperty(
+			"ownerId",
+		);
+	});
+
+	it("declares the NOT NULL organization ownerId column", () => {
+		expect(
+			organizationOptions?.schema?.organization?.additionalFields?.ownerId,
+		).toMatchObject({ type: "string", required: true, input: false });
 	});
 });
 
@@ -348,6 +427,92 @@ describe("Better Auth SSO domain verification", () => {
 			enabled: true,
 		});
 	});
+
+	it("keeps IdP-initiated SAML disabled", () => {
+		expect(mocks.ssoPluginOptions.saml).toEqual({ allowIdpInitiated: false });
+	});
+});
+
+describe("Better Auth SSO identity gate", () => {
+	const validate = (email: string, source: Record<string, unknown>) =>
+		mocks.authOptions.user.validateUserInfo({ user: { email }, source }, {});
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.ssoProviderFindFirst.mockResolvedValue({
+			organizationId: "org-acme",
+			domain: "acme.com",
+			domainVerified: true,
+		});
+	});
+
+	it.each(["sso-oidc", "sso-saml"])(
+		"rejects %s identities outside the provider domains before the user is created",
+		async (method) => {
+			await expect(
+				validate("attacker@evil.com", {
+					method,
+					action: "create-user",
+					sso: { providerId: "acme-sso" },
+				}),
+			).resolves.toMatchObject({ error: "sso_email_domain_not_allowed" });
+		},
+	);
+
+	it("rejects linking an SSO account through an unverified provider domain", async () => {
+		mocks.ssoProviderFindFirst.mockResolvedValue({
+			organizationId: "org-acme",
+			domain: "acme.com",
+			domainVerified: false,
+		});
+
+		await expect(
+			validate("ada@acme.com", {
+				method: "sso-oidc",
+				action: "link-account",
+				sso: { providerId: "acme-sso" },
+			}),
+		).resolves.toMatchObject({ error: "sso_email_domain_not_allowed" });
+	});
+
+	it("rejects identities from an unknown SSO provider", async () => {
+		mocks.ssoProviderFindFirst.mockResolvedValue(undefined);
+
+		await expect(
+			validate("ada@acme.com", {
+				method: "sso-saml",
+				action: "create-user",
+				sso: { providerId: "missing" },
+			}),
+		).resolves.toMatchObject({ error: "sso_email_domain_not_allowed" });
+	});
+
+	it("allows SSO identities from a verified provider domain", async () => {
+		await expect(
+			validate("ada@engineering.acme.com", {
+				method: "sso-oidc",
+				action: "create-user",
+				sso: { providerId: "acme-sso" },
+			}),
+		).resolves.toBeUndefined();
+	});
+
+	it("does not gate returning SSO sign-ins or non-SSO identities", async () => {
+		await expect(
+			validate("ada@evil.com", {
+				method: "sso-oidc",
+				action: "sign-in",
+				sso: { providerId: "acme-sso" },
+			}),
+		).resolves.toBeUndefined();
+		await expect(
+			validate("ada@evil.com", {
+				method: "email-password",
+				action: "create-user",
+			}),
+		).resolves.toBeUndefined();
+		expect(mocks.ssoProviderFindFirst).not.toHaveBeenCalled();
+	});
 });
 
 describe("Better Auth SSO membership provisioning", () => {
@@ -445,6 +610,49 @@ describe("Better Auth SSO membership provisioning", () => {
 		).resolves.toBe("member");
 	});
 
+	it("assigns the organization default role through Better Auth provisioning", async () => {
+		mocks.organizationFindFirst.mockResolvedValueOnce({ defaultRole: "admin" });
+
+		await expect(
+			mocks.ssoPluginOptions.organizationProvisioning.getRole({
+				user: {
+					id: "user-sso",
+					email: "ada@acme.com",
+				},
+				userInfo: {},
+				provider: {
+					providerId: "acme-sso",
+					organizationId: "org-acme",
+					domain: "acme.com",
+					domainVerified: true,
+				},
+			}),
+		).resolves.toBe("admin");
+	});
+
+	it("does not insert a second membership when the SSO user already belongs to the organization", async () => {
+		mocks.memberFindFirst
+			.mockResolvedValueOnce({ role: "owner" })
+			.mockResolvedValueOnce({ id: "member-1" });
+
+		await expect(
+			mocks.authOptions.databaseHooks.user.create.after(
+				{
+					id: "user-sso",
+					email: "ada@acme.com",
+				},
+				{
+					path: "/sso/callback/acme-sso",
+					params: {
+						providerId: "acme-sso",
+					},
+				},
+			),
+		).resolves.toBeUndefined();
+
+		expect(mocks.insert).not.toHaveBeenCalled();
+	});
+
 	it("fails closed before inserting SSO membership when email domain mismatches provider domains", async () => {
 		await expect(
 			mocks.authOptions.databaseHooks.user.create.after(
@@ -466,6 +674,10 @@ describe("Better Auth SSO membership provisioning", () => {
 	});
 
 	it("provisions SSO membership only after the local email domain check passes", async () => {
+		mocks.memberFindFirst
+			.mockResolvedValueOnce({ role: "owner" })
+			.mockResolvedValueOnce(undefined);
+
 		await expect(
 			mocks.authOptions.databaseHooks.user.create.after(
 				{

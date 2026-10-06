@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import fs from "node:fs";
 
 const DEVELOPMENT_AUTH_SECRET =
@@ -59,3 +60,10 @@ function resolveBetterAuthSecret(): string {
 }
 
 export const betterAuthSecret = resolveBetterAuthSecret();
+
+// The managed SCIM catalog keeps only HMAC digests of bearer tokens. Deriving
+// its key from the auth secret avoids a second secret on self-hosted installs,
+// so rotating BETTER_AUTH_SECRET also invalidates every issued SCIM token.
+export const scimCredentialHashSecret = createHmac("sha256", betterAuthSecret)
+	.update("scim-credential-hash:v1")
+	.digest("hex");

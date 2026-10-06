@@ -9,12 +9,13 @@ import { db } from "../db";
 import * as schema from "../db/schema";
 import { ac, adminRole, memberRole, ownerRole } from "./access-control";
 
-// CLI-only config for `@better-auth/cli generate` — must mirror the plugin set
-// in auth.ts. Never import this from runtime code.
+// CLI-only config for `auth generate` — must mirror the plugin set and schema
+// options in auth.ts. Never import this from runtime code.
 export const auth = betterAuth({
 	database: drizzleAdapter(db, {
 		provider: "pg",
 		schema,
+		transaction: true,
 	}),
 	user: {
 		modelName: "user",
@@ -23,7 +24,6 @@ export const auth = betterAuth({
 		},
 		additionalFields: {
 			role: { type: "string", input: false },
-			ownerId: { type: "string", input: false },
 			allowImpersonation: { type: "boolean", defaultValue: false },
 			lastName: { type: "string", required: false, defaultValue: "" },
 			enableEnterpriseFeatures: { type: "boolean", required: false },
@@ -33,7 +33,6 @@ export const auth = betterAuth({
 	plugins: [
 		apiKey({ enableMetadata: true, references: "user" }),
 		sso({
-			trustEmailVerified: true,
 			domainVerification: {
 				enabled: true,
 			},
@@ -47,8 +46,24 @@ export const auth = betterAuth({
 				enabled: true,
 				maximumRolesPerOrganization: 10,
 			},
+			schema: {
+				organization: {
+					additionalFields: {
+						ownerId: {
+							type: "string",
+							required: true,
+							input: false,
+							references: { model: "user", field: "id", onDelete: "cascade" },
+						},
+					},
+				},
+			},
 		}),
-		scim(),
+		scim({
+			connections: [],
+			// Only the table set matters here; the runtime key comes from auth-secret.ts.
+			managedConnections: { credentialHashSecret: "x".repeat(32) },
+		}),
 		admin(),
 	],
 });
