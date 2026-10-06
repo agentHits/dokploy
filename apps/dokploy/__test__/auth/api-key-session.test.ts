@@ -427,6 +427,92 @@ describe("Better Auth SSO domain verification", () => {
 			enabled: true,
 		});
 	});
+
+	it("keeps IdP-initiated SAML disabled", () => {
+		expect(mocks.ssoPluginOptions.saml).toEqual({ allowIdpInitiated: false });
+	});
+});
+
+describe("Better Auth SSO identity gate", () => {
+	const validate = (email: string, source: Record<string, unknown>) =>
+		mocks.authOptions.user.validateUserInfo({ user: { email }, source }, {});
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.ssoProviderFindFirst.mockResolvedValue({
+			organizationId: "org-acme",
+			domain: "acme.com",
+			domainVerified: true,
+		});
+	});
+
+	it.each(["sso-oidc", "sso-saml"])(
+		"rejects %s identities outside the provider domains before the user is created",
+		async (method) => {
+			await expect(
+				validate("attacker@evil.com", {
+					method,
+					action: "create-user",
+					sso: { providerId: "acme-sso" },
+				}),
+			).resolves.toMatchObject({ error: "sso_email_domain_not_allowed" });
+		},
+	);
+
+	it("rejects linking an SSO account through an unverified provider domain", async () => {
+		mocks.ssoProviderFindFirst.mockResolvedValue({
+			organizationId: "org-acme",
+			domain: "acme.com",
+			domainVerified: false,
+		});
+
+		await expect(
+			validate("ada@acme.com", {
+				method: "sso-oidc",
+				action: "link-account",
+				sso: { providerId: "acme-sso" },
+			}),
+		).resolves.toMatchObject({ error: "sso_email_domain_not_allowed" });
+	});
+
+	it("rejects identities from an unknown SSO provider", async () => {
+		mocks.ssoProviderFindFirst.mockResolvedValue(undefined);
+
+		await expect(
+			validate("ada@acme.com", {
+				method: "sso-saml",
+				action: "create-user",
+				sso: { providerId: "missing" },
+			}),
+		).resolves.toMatchObject({ error: "sso_email_domain_not_allowed" });
+	});
+
+	it("allows SSO identities from a verified provider domain", async () => {
+		await expect(
+			validate("ada@engineering.acme.com", {
+				method: "sso-oidc",
+				action: "create-user",
+				sso: { providerId: "acme-sso" },
+			}),
+		).resolves.toBeUndefined();
+	});
+
+	it("does not gate returning SSO sign-ins or non-SSO identities", async () => {
+		await expect(
+			validate("ada@evil.com", {
+				method: "sso-oidc",
+				action: "sign-in",
+				sso: { providerId: "acme-sso" },
+			}),
+		).resolves.toBeUndefined();
+		await expect(
+			validate("ada@evil.com", {
+				method: "email-password",
+				action: "create-user",
+			}),
+		).resolves.toBeUndefined();
+		expect(mocks.ssoProviderFindFirst).not.toHaveBeenCalled();
+	});
 });
 
 describe("Better Auth SSO membership provisioning", () => {
@@ -524,6 +610,49 @@ describe("Better Auth SSO membership provisioning", () => {
 		).resolves.toBe("member");
 	});
 
+	it("assigns the organization default role through Better Auth provisioning", async () => {
+		mocks.organizationFindFirst.mockResolvedValueOnce({ defaultRole: "admin" });
+
+		await expect(
+			mocks.ssoPluginOptions.organizationProvisioning.getRole({
+				user: {
+					id: "user-sso",
+					email: "ada@acme.com",
+				},
+				userInfo: {},
+				provider: {
+					providerId: "acme-sso",
+					organizationId: "org-acme",
+					domain: "acme.com",
+					domainVerified: true,
+				},
+			}),
+		).resolves.toBe("admin");
+	});
+
+	it("does not insert a second membership when the SSO user already belongs to the organization", async () => {
+		mocks.memberFindFirst
+			.mockResolvedValueOnce({ role: "owner" })
+			.mockResolvedValueOnce({ id: "member-1" });
+
+		await expect(
+			mocks.authOptions.databaseHooks.user.create.after(
+				{
+					id: "user-sso",
+					email: "ada@acme.com",
+				},
+				{
+					path: "/sso/callback/acme-sso",
+					params: {
+						providerId: "acme-sso",
+					},
+				},
+			),
+		).resolves.toBeUndefined();
+
+		expect(mocks.insert).not.toHaveBeenCalled();
+	});
+
 	it("fails closed before inserting SSO membership when email domain mismatches provider domains", async () => {
 		await expect(
 			mocks.authOptions.databaseHooks.user.create.after(
@@ -545,6 +674,10 @@ describe("Better Auth SSO membership provisioning", () => {
 	});
 
 	it("provisions SSO membership only after the local email domain check passes", async () => {
+		mocks.memberFindFirst
+			.mockResolvedValueOnce({ role: "owner" })
+			.mockResolvedValueOnce(undefined);
+
 		await expect(
 			mocks.authOptions.databaseHooks.user.create.after(
 				{
