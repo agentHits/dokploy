@@ -73,6 +73,7 @@ const permissionMocks = vi.hoisted(() => ({
 	checkServiceAccess: vi.fn(),
 	checkServicePermissionAndAccess: vi.fn(),
 	findMemberByUserId: vi.fn(),
+	hasPermission: vi.fn(),
 }));
 
 const auditMocks = vi.hoisted(() => ({
@@ -161,6 +162,7 @@ vi.mock("@dokploy/server/services/permission", () => ({
 	checkServicePermissionAndAccess:
 		permissionMocks.checkServicePermissionAndAccess,
 	findMemberByUserId: permissionMocks.findMemberByUserId,
+	hasPermission: permissionMocks.hasPermission,
 }));
 
 vi.mock("@dokploy/server/templates/github", () => ({
@@ -236,12 +238,17 @@ const compose = (organizationId = "org-1") => ({
 	appName: "compose-one",
 	sourceType: "docker",
 	env: "COMPOSE_SECRET=secret",
+	composeFile:
+		"services:\n  api:\n    environment:\n      TOKEN: compose-secret",
+	customGitUrl: "https://compose-token@example.com/org/private.git",
 	environment: {
 		project: {
 			organizationId,
 		},
 	},
 });
+
+const redactedCustomGitUrl = `https://${REDACTED_SECRET_VALUE}@example.com/org/private.git`;
 
 describe("service environment reveal boundary", () => {
 	beforeEach(() => {
@@ -250,6 +257,7 @@ describe("service environment reveal boundary", () => {
 		permissionMocks.checkServicePermissionAndAccess.mockResolvedValue(
 			undefined,
 		);
+		permissionMocks.hasPermission.mockResolvedValue(false);
 		serverMocks.canEditDeployGitSource.mockResolvedValue(true);
 		serverMocks.findApplicationById.mockResolvedValue(application());
 		serverMocks.findComposeById.mockResolvedValue(compose());
@@ -283,7 +291,15 @@ describe("service environment reveal boundary", () => {
 		const caller = composeRouter.createCaller(createContext());
 
 		const normalRead = await caller.one({ composeId: "compose-1" });
-		expect(normalRead.env).toBe(REDACTED_SECRET_VALUE);
+		expect(normalRead).toMatchObject({
+			env: REDACTED_SECRET_VALUE,
+			composeFile: REDACTED_SECRET_VALUE,
+			customGitUrl: redactedCustomGitUrl,
+		});
+		expect(permissionMocks.hasPermission).toHaveBeenCalledWith(
+			expect.anything(),
+			{ envVars: ["read"] },
+		);
 
 		const revealed = await caller.revealEnvironment({
 			composeId: "compose-1",
@@ -296,6 +312,38 @@ describe("service environment reveal boundary", () => {
 		});
 		expect(revealed).toEqual({
 			env: "COMPOSE_SECRET=secret",
+		});
+	});
+
+	it("keeps the compose file for callers that can read env vars", async () => {
+		permissionMocks.hasPermission.mockResolvedValueOnce(true);
+
+		const normalRead = await composeRouter
+			.createCaller(createContext())
+			.one({ composeId: "compose-1" });
+
+		expect(normalRead).toMatchObject({
+			env: REDACTED_SECRET_VALUE,
+			composeFile: compose().composeFile,
+			customGitUrl: redactedCustomGitUrl,
+		});
+	});
+
+	it("redacts compose secrets in update responses", async () => {
+		serverMocks.updateCompose.mockResolvedValueOnce(compose());
+
+		const updated = await composeRouter
+			.createCaller(createContext())
+			.update({ composeId: "compose-1", composeFile: REDACTED_SECRET_VALUE });
+
+		expect(serverMocks.updateCompose).toHaveBeenCalledWith(
+			"compose-1",
+			expect.objectContaining({ composeFile: compose().composeFile }),
+		);
+		expect(updated).toMatchObject({
+			env: REDACTED_SECRET_VALUE,
+			composeFile: REDACTED_SECRET_VALUE,
+			customGitUrl: redactedCustomGitUrl,
 		});
 	});
 
