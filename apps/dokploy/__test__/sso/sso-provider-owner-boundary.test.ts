@@ -342,9 +342,8 @@ describe("SSO provider owner boundary", () => {
 		expect(updateBody.samlConfig.privateKey).toBe(
 			existingSamlConfig.privateKey,
 		);
-		expect(updateBody.samlConfig.decryptionPvk).toBe(
-			existingSamlConfig.decryptionPvk,
-		);
+		// Removed in Better Auth 1.7; dropped instead of being preserved.
+		expect(updateBody.samlConfig).not.toHaveProperty("decryptionPvk");
 		expect(updateBody.samlConfig.idpMetadata.metadata).toBe(
 			existingSamlConfig.idpMetadata.metadata,
 		);
@@ -372,6 +371,67 @@ describe("SSO provider owner boundary", () => {
 		expect(updateBody.samlConfig.spMetadata.encPrivateKeyPass).toBe(
 			existingSamlConfig.spMetadata.encPrivateKeyPass,
 		);
+	});
+
+	it("strips mapping.id, which Better Auth 1.7 rejects, before registering", async () => {
+		await expect(
+			createCaller("owner").register({
+				...providerInput,
+				oidcConfig: {
+					...providerInput.oidcConfig,
+					// Older API clients still send the 1.6 subject mapping.
+					mapping: { id: "sub", email: "email", name: "name" } as {
+						email: string;
+						name: string;
+					},
+				},
+			}),
+		).resolves.toEqual({ success: true });
+
+		const body = mocks.registerSSOProvider.mock.calls[0]?.[0]?.body;
+		expect(body.oidcConfig.mapping).toEqual({ email: "email", name: "name" });
+	});
+
+	it("requires the IdP metadata XML or entity ID for SAML providers", async () => {
+		const { idpMetadata: _idpMetadata, ...samlConfig } = cloneSamlConfig();
+
+		await expect(
+			createCaller("owner").register({
+				providerId: "acme-saml",
+				issuer: "https://8.8.8.8",
+				domains: ["example.com"],
+				samlConfig: samlConfig as never,
+			}),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(mocks.registerSSOProvider).not.toHaveBeenCalled();
+	});
+
+	it("registers manual SAML providers with the IdP entity ID and no generated SP XML", async () => {
+		await expect(
+			createCaller("owner").register({
+				providerId: "acme-saml",
+				issuer: "https://8.8.8.8",
+				domains: ["example.com"],
+				samlConfig: {
+					entryPoint: "https://8.8.8.8/sso",
+					cert: ["current-cert", "next-cert"],
+					callbackUrl: "https://dokploy.example.com/dashboard/home",
+					audience: "https://dokploy.example.com",
+					idpMetadata: { entityID: "https://8.8.8.8" },
+					spMetadata: { entityID: "https://dokploy.example.com" },
+					mapping: { email: "email", name: "displayName" },
+				},
+			}),
+		).resolves.toEqual({ success: true });
+
+		const body = mocks.registerSSOProvider.mock.calls[0]?.[0]?.body;
+		expect(body.samlConfig).toMatchObject({
+			cert: ["current-cert", "next-cert"],
+			idpMetadata: { entityID: "https://8.8.8.8" },
+			spMetadata: { entityID: "https://dokploy.example.com" },
+		});
+		expect(body.samlConfig.spMetadata).not.toHaveProperty("metadata");
 	});
 
 	it("rejects SSO provider updates that reuse a domain from another organization", async () => {

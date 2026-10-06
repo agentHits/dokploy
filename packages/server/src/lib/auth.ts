@@ -17,6 +17,10 @@ import { checkPermission } from "../services/permission";
 import { createAuditLog } from "../services/proprietary/audit-log";
 import { resolveOrganizationDefaultRole } from "../services/proprietary/license-key";
 import {
+	reconcileSCIMOrganizationMembership,
+	resolveLegacySCIMUser,
+} from "../services/proprietary/scim";
+import {
 	getWebServerSettings,
 	updateWebServerSettings,
 } from "../services/web-server-settings";
@@ -27,7 +31,7 @@ import {
 } from "../verification/send-verification-email";
 import { getPublicIpWithFallback } from "../wss/utils";
 import { ac, adminRole, memberRole, ownerRole } from "./access-control";
-import { betterAuthSecret } from "./auth-secret";
+import { betterAuthSecret, scimCredentialHashSecret } from "./auth-secret";
 
 export const isEmailPasswordSignInPath = (path: string | undefined) =>
 	path === "/sign-in/email" || path?.endsWith("/sign-in/email");
@@ -129,6 +133,10 @@ const { handler, api } = betterAuth({
 	database: drizzleAdapter(db, {
 		provider: "pg",
 		schema: schema,
+		// SCIM and SSO user resolution need native interactive transactions. Hooks
+		// that run inside them must not write through the global `db`: that second
+		// connection would wait on locks held by the open transaction.
+		transaction: true,
 	}),
 	disabledPaths: [
 		"/sso/register",
@@ -313,21 +321,8 @@ const { handler, api } = betterAuth({
 						}
 					}
 
+					// The SCIM projection owns memberships of provisioned users.
 					if (isSCIMRequest) {
-						const membership = await db.query.member.findFirst({
-							where: eq(schema.member.userId, user.id),
-						});
-						if (membership) {
-							const defaultRole = await resolveOrganizationDefaultRole(
-								membership.organizationId,
-							);
-							if (defaultRole !== membership.role) {
-								await db
-									.update(schema.member)
-									.set({ role: defaultRole })
-									.where(eq(schema.member.id, membership.id));
-							}
-						}
 						return;
 					}
 
@@ -367,17 +362,29 @@ const { handler, api } = betterAuth({
 								message: "Provider not found",
 							});
 						}
+						// user.validateUserInfo already rejects these emails before the user
+						// exists; SSO callbacks only log errors thrown from after-hooks.
 						if (!canProvisionSsoMembershipForEmail(user.email, provider)) {
 							throw new APIError("UNAUTHORIZED", {
 								message: "SSO email domain is not allowed for this provider",
 							});
 						}
-						const defaultRole = provider.organizationId
-							? await resolveOrganizationDefaultRole(provider.organizationId)
-							: "member";
+						const existingMembership = await db.query.member.findFirst({
+							where: and(
+								eq(schema.member.userId, user.id),
+								eq(schema.member.organizationId, provider.organizationId),
+							),
+							columns: { id: true },
+						});
+						if (existingMembership) {
+							return;
+						}
+						const defaultRole = await resolveOrganizationDefaultRole(
+							provider.organizationId,
+						);
 						await db.insert(schema.member).values({
 							userId: user.id,
-							organizationId: provider?.organizationId || "",
+							organizationId: provider.organizationId,
 							role: defaultRole,
 							createdAt: new Date(),
 							isDefault: true,
@@ -445,13 +452,41 @@ const { handler, api } = betterAuth({
 		fields: {
 			name: "firstName", // Map better-auth's default 'name' field to 'firstName' column
 		},
+		// SSO callbacks commit the user, account and session before after-hooks
+		// run and only log after-hook errors, so the email domain gate must run
+		// here, before an SSO identity is created or linked.
+		validateUserInfo: async ({ user, source }) => {
+			if (source.method !== "sso-oidc" && source.method !== "sso-saml") {
+				return;
+			}
+			// Returning users keep signing in as before, including through
+			// providers whose domain has not been verified yet.
+			if (source.action === "sign-in") {
+				return;
+			}
+			const providerId = source.sso?.providerId;
+			const provider = providerId
+				? await db.query.ssoProvider.findFirst({
+						where: eq(schema.ssoProvider.providerId, providerId),
+						columns: {
+							domain: true,
+							domainVerified: true,
+							organizationId: true,
+						},
+					})
+				: undefined;
+			if (
+				!provider ||
+				!canProvisionSsoMembershipForEmail(user.email, provider)
+			) {
+				return {
+					error: "sso_email_domain_not_allowed",
+					errorDescription: "SSO email domain is not allowed for this provider",
+				};
+			}
+		},
 		additionalFields: {
 			role: {
-				type: "string",
-				// required: true,
-				input: false,
-			},
-			ownerId: {
 				type: "string",
 				// required: true,
 				input: false,
@@ -488,6 +523,9 @@ const { handler, api } = betterAuth({
 			domainVerification: {
 				enabled: true,
 			},
+			saml: {
+				allowIdpInitiated: false,
+			},
 			organizationProvisioning: {
 				getRole: async ({ user, provider }) => {
 					if (!canProvisionSsoMembershipForEmail(user.email, provider)) {
@@ -495,26 +533,28 @@ const { handler, api } = betterAuth({
 							message: "SSO email domain is not allowed for this provider",
 						});
 					}
-					return "member";
+					// Better Auth types this as member | admin, but member.role also
+					// stores custom roles; keep it equal to the role the user.create
+					// hook assigns to new SSO users.
+					return (await resolveOrganizationDefaultRole(
+						provider.organizationId,
+					)) as "member" | "admin";
 				},
 			},
 		}),
+		// Connections are created per organization from the Dokploy UI
+		// (provisioningDomainId = organization id) through the managed catalog.
 		scim({
-			// Personal (non-org) SCIM providers are ownerless on 1.6.x, so any user could
-			// take them over (GHSA-j8v8-g9cx-5qf4); Dokploy only issues org-scoped tokens.
-			canGenerateToken: ({ organizationId, member }) =>
-				Boolean(organizationId && member),
-			beforeSCIMTokenGenerated: async ({ user }) => {
-				const dbUser = await db.query.user.findFirst({
-					where: eq(schema.user.id, user.id),
-					columns: { enableEnterpriseFeatures: true },
-				});
-
-				if (!dbUser?.enableEnterpriseFeatures) {
-					throw new APIError("FORBIDDEN", {
-						message: "SCIM provisioning requires an enterprise license",
-					});
-				}
+			connections: [],
+			managedConnections: {
+				credentialHashSecret: scimCredentialHashSecret,
+				maxActiveCredentials: 5,
+			},
+			identity: {
+				resolveUser: resolveLegacySCIMUser,
+			},
+			projection: {
+				reconcileUser: reconcileSCIMOrganizationMembership,
 			},
 		}),
 		passkey(),
@@ -529,6 +569,20 @@ const { handler, api } = betterAuth({
 			dynamicAccessControl: {
 				enabled: true,
 				maximumRolesPerOrganization: 10,
+			},
+			schema: {
+				organization: {
+					additionalFields: {
+						// Declared so the startup schema check accepts this NOT NULL column.
+						// Dokploy creates organizations itself (/organization/create is disabled).
+						ownerId: {
+							type: "string",
+							required: true,
+							input: false,
+							references: { model: "user", field: "id", onDelete: "cascade" },
+						},
+					},
+				},
 			},
 		}),
 		...(IS_CLOUD
@@ -546,9 +600,13 @@ const _auth = {
 	createApiKey: api.createApiKey,
 	registerSSOProvider: api.registerSSOProvider,
 	updateSSOProvider: api.updateSSOProvider,
-	generateSCIMToken: api.generateSCIMToken,
-	listSCIMProviderConnections: api.listSCIMProviderConnections,
-	deleteSCIMProviderConnection: api.deleteSCIMProviderConnection,
+	createSCIMManagedConnection: api.createSCIMManagedConnection,
+	listSCIMManagedConnections: api.listSCIMManagedConnections,
+	getSCIMManagedConnection: api.getSCIMManagedConnection,
+	rotateSCIMManagedCredential: api.rotateSCIMManagedCredential,
+	revokeSCIMManagedCredential: api.revokeSCIMManagedCredential,
+	listSCIMManagedConnectionEvents: api.listSCIMManagedConnectionEvents,
+	decommissionSCIMManagedConnection: api.decommissionSCIMManagedConnection,
 };
 
 export type AuthType = typeof _auth;
@@ -677,38 +735,38 @@ export const validateRequest = async (request: IncomingMessage) => {
 		};
 	}
 
-	if (session?.user) {
-		const member = await db.query.member.findFirst({
-			where: and(
-				eq(schema.member.userId, session.user.id),
-				...(session.session.activeOrganizationId
-					? [
-							eq(
-								schema.member.organizationId,
-								session.session.activeOrganizationId || "",
-							),
-						]
-					: []),
-			),
-			orderBy: [desc(schema.member.isDefault), desc(schema.member.createdAt)],
-			with: {
-				organization: true,
-				user: true,
-			},
-		});
+	const member = await db.query.member.findFirst({
+		where: and(
+			eq(schema.member.userId, session.user.id),
+			...(session.session.activeOrganizationId
+				? [
+						eq(
+							schema.member.organizationId,
+							session.session.activeOrganizationId || "",
+						),
+					]
+				: []),
+		),
+		orderBy: [desc(schema.member.isDefault), desc(schema.member.createdAt)],
+		with: {
+			organization: true,
+			user: true,
+		},
+	});
 
-		session.user.role = member?.role || "member";
-		session.user.enableEnterpriseFeatures =
-			member?.user.enableEnterpriseFeatures || false;
-		session.user.isValidEnterpriseLicense =
-			member?.user.isValidEnterpriseLicense || false;
-		session.session.activeOrganizationId = member?.organization.id || "";
-		if (member) {
-			session.user.ownerId = member.organization.ownerId;
-		} else {
-			session.user.ownerId = session.user.id;
-		}
-	}
-
-	return session;
+	return {
+		session: {
+			...session.session,
+			activeOrganizationId: member?.organization.id || "",
+		},
+		user: {
+			...session.user,
+			role: member?.role || "member",
+			// Not a better-auth user field (there is no column): it is the owner of
+			// the active organization.
+			ownerId: member ? member.organization.ownerId : session.user.id,
+			enableEnterpriseFeatures: member?.user.enableEnterpriseFeatures || false,
+			isValidEnterpriseLicense: member?.user.isValidEnterpriseLicense || false,
+		},
+	};
 };
