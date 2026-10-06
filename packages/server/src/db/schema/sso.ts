@@ -30,6 +30,8 @@ export const ssoProviderRelations = relations(ssoProvider, ({ one }) => ({
 	}),
 }));
 const domainRegex = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
+const signingCertSchema = z.union([z.string(), z.array(z.string()).nonempty()]);
+
 export const ssoProviderBodySchema = z.object({
 	providerId: z.string({}),
 	issuer: z.string({}),
@@ -60,9 +62,10 @@ export const ssoProviderBodySchema = z.object({
 			skipDiscovery: z.boolean().optional(),
 			scopes: z.array(z.string()).optional(),
 			pkce: z.boolean().default(true).optional(),
+			// Better Auth 1.7 always uses the verified `sub` as the account subject;
+			// an `id` sent by older clients is stripped here.
 			mapping: z
 				.object({
-					id: z.string({}),
 					email: z.string({}),
 					emailVerified: z.string({}).optional(),
 					name: z.string({}),
@@ -75,14 +78,16 @@ export const ssoProviderBodySchema = z.object({
 	samlConfig: z
 		.object({
 			entryPoint: z.string({}),
-			cert: z.string({}),
-			callbackUrl: z.string({}),
+			cert: signingCertSchema,
+			// Post-login redirect only; the ACS endpoint is derived by Better Auth.
+			callbackUrl: z.string({}).optional(),
+			idpInitiatedCallbackUrl: z.string().optional(),
 			audience: z.string().optional(),
 			idpMetadata: z
 				.object({
 					metadata: z.string().optional(),
 					entityID: z.string().optional(),
-					cert: z.string().optional(),
+					cert: signingCertSchema.optional(),
 					privateKey: z.string().optional(),
 					privateKeyPass: z.string().optional(),
 					isAssertionEncrypted: z.boolean().optional(),
@@ -97,28 +102,35 @@ export const ssoProviderBodySchema = z.object({
 						)
 						.optional(),
 				})
+				.refine(
+					(idp) => Boolean(idp.metadata?.trim() || idp.entityID?.trim()),
+					{
+						message: "Provide the IdP metadata XML or the IdP entity ID",
+						path: ["entityID"],
+					},
+				),
+			spMetadata: z
+				.object({
+					metadata: z.string().optional(),
+					entityID: z.string().optional(),
+					binding: z.string().optional(),
+					privateKey: z.string().optional(),
+					privateKeyPass: z.string().optional(),
+					isAssertionEncrypted: z.boolean().optional(),
+					encPrivateKey: z.string().optional(),
+					encPrivateKeyPass: z.string().optional(),
+				})
 				.optional(),
-			spMetadata: z.object({
-				metadata: z.string().optional(),
-				entityID: z.string().optional(),
-				binding: z.string().optional(),
-				privateKey: z.string().optional(),
-				privateKeyPass: z.string().optional(),
-				isAssertionEncrypted: z.boolean().optional(),
-				encPrivateKey: z.string().optional(),
-				encPrivateKeyPass: z.string().optional(),
-			}),
 			wantAssertionsSigned: z.boolean().optional(),
 			authnRequestsSigned: z.boolean().optional(),
 			signatureAlgorithm: z.string().optional(),
 			digestAlgorithm: z.string().optional(),
 			identifierFormat: z.string().optional(),
 			privateKey: z.string().optional(),
-			decryptionPvk: z.string().optional(),
-			additionalParams: z.record(z.string(), z.any()).optional(),
+			// The signed NameID is the account subject in Better Auth 1.7; an `id`
+			// sent by older clients is stripped here.
 			mapping: z
 				.object({
-					id: z.string({}),
 					email: z.string({}),
 					emailVerified: z.string({}).optional(),
 					name: z.string({}),

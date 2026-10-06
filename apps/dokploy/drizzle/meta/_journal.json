@@ -1394,6 +1394,13 @@
       "when": 1790969854332,
       "tag": "0198_add_gitlab_webhook_secret",
       "breakpoints": true
+    },
+    {
+      "idx": 199,
+      "version": "7",
+      "when": 1791293732134,
+      "tag": "0199_sso_better_auth_1_7",
+      "breakpoints": true
     }
   ]
 }
