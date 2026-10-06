@@ -500,6 +500,10 @@ const { handler, api } = betterAuth({
 			},
 		}),
 		scim({
+			// Personal (non-org) SCIM providers are ownerless on 1.6.x, so any user could
+			// take them over (GHSA-j8v8-g9cx-5qf4); Dokploy only issues org-scoped tokens.
+			canGenerateToken: ({ organizationId, member }) =>
+				Boolean(organizationId && member),
 			beforeSCIMTokenGenerated: async ({ user }) => {
 				const dbUser = await db.query.user.findFirst({
 					where: eq(schema.user.id, user.id),
