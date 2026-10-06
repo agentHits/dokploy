@@ -1,4 +1,6 @@
+import * as schema from "@dokploy/server/db/schema";
 import { TRPCError } from "@trpc/server";
+import { drizzle } from "drizzle-orm/postgres-js";
 import { parse } from "shell-quote";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -323,6 +325,40 @@ const emit = (log: string) => emittedLogs.push(log);
 
 const parseShellArgs = (command: string) =>
 	parse(command).filter((part): part is string => typeof part === "string");
+
+const POSTGRES_MAX_FUNCTION_ARGS = 100;
+
+const maxJsonBuildArrayArgs = (sqlText: string) => {
+	let max = 0;
+	for (const match of sqlText.matchAll(/json_build_array\(/g)) {
+		let depth = 1;
+		let args = 1;
+		let inIdentifier = false;
+		for (
+			let index = match.index + match[0].length;
+			index < sqlText.length && depth > 0;
+			index++
+		) {
+			const char = sqlText[index];
+			if (char === '"') {
+				inIdentifier = !inIdentifier;
+				continue;
+			}
+			if (inIdentifier) {
+				continue;
+			}
+			if (char === "(") {
+				depth++;
+			} else if (char === ")") {
+				depth--;
+			} else if (char === "," && depth === 1) {
+				args++;
+			}
+		}
+		max = Math.max(max, args);
+	}
+	return max;
+};
 
 describe("backup destination ownership boundary", () => {
 	beforeEach(() => {
@@ -782,6 +818,62 @@ describe("backup restore route boundary", () => {
 
 		expect(mocks.execAsync).not.toHaveBeenCalled();
 		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+	});
+
+	it("keeps backup file listing queries within the Postgres function argument limit", async () => {
+		const relationalDb = drizzle.mock({ schema });
+		const compiledQueries: string[] = [];
+		mocks.findRestoreBackups.mockImplementation(async (config) => {
+			compiledQueries.push(
+				relationalDb.query.backups.findMany(config).toSQL().sql,
+			);
+			return [
+				{
+					appName: "backup-one",
+					backupType: "database",
+					databaseType: "postgres",
+					destinationId: "destination-1",
+					postgresId: "postgres-1",
+					prefix: "daily",
+					postgres: { appName: "app-one" },
+				},
+			];
+		});
+		mocks.findVolumeBackupSchedules.mockImplementation(async (config) => {
+			compiledQueries.push(
+				relationalDb.query.volumeBackups.findMany(config).toSQL().sql,
+			);
+			return [
+				{
+					appName: "volume-backup-one",
+					applicationId: "application-1",
+					prefix: "volumes",
+					application: { appName: "web-app" },
+				},
+			];
+		});
+		mocks.execAsync.mockResolvedValue({ stdout: "[]" });
+
+		await expect(
+			createCaller().listBackupFiles({
+				destinationId: "destination-1",
+				search: "",
+			}),
+		).resolves.toEqual([]);
+
+		expect(compiledQueries).toHaveLength(2);
+		for (const sqlText of compiledQueries) {
+			expect(sqlText).toContain("json_build_array(");
+			expect(maxJsonBuildArrayArgs(sqlText)).toBeLessThanOrEqual(
+				POSTGRES_MAX_FUNCTION_ARGS,
+			);
+		}
+		const listedArgs = mocks.execAsync.mock.calls.map(([command]) =>
+			parseShellArgs((command as string).replace(/\s+2>\/dev\/null$/, "")),
+		);
+		expect(listedArgs).toHaveLength(2);
+		expect(listedArgs[0]).toContain(":s3:dokploy-backups/app-one/daily/");
+		expect(listedArgs[1]).toContain(":s3:dokploy-backups/web-app/volumes/");
 	});
 
 	it("requires backup management permission before remote backup file listing", async () => {

@@ -518,11 +518,14 @@ const getAccessibleBackupListingPrefixes = async (
 		}
 	}
 
+	// The application table has more than 100 columns, and Drizzle packs every
+	// selected column of a nested relation into one json_build_array() call,
+	// which Postgres rejects (54023). Only appName is needed for the prefix.
 	const volumeBackupSchedules = await db.query.volumeBackups.findMany({
 		where: eq(volumeBackups.destinationId, destinationId),
 		with: {
-			application: true,
-			compose: true,
+			application: { columns: { appName: true } },
+			compose: { columns: { appName: true } },
 		},
 	});
 
