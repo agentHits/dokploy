@@ -77,6 +77,10 @@ export const apiCreateDestination = createSchema
 		serverId: z.string().optional(),
 	});
 
+export const apiTestDestinationConnection = apiCreateDestination.extend({
+	destinationId: z.string().min(1).optional(),
+});
+
 export const apiFindOneDestination = z.object({
 	destinationId: z.string().min(1),
 });

@@ -8,7 +8,6 @@ import { findEnvironmentById } from "@dokploy/server/services/environment";
 import type { Postgres } from "@dokploy/server/services/postgres";
 import { findProjectById } from "@dokploy/server/services/project";
 import { sendDatabaseBackupNotifications } from "../notifications/database-backup";
-import { execAsync, execAsyncRemote } from "../process/execAsync";
 import {
 	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
@@ -16,6 +15,7 @@ import {
 	getBackupTimestamp,
 	getRcloneS3Destination,
 	normalizeS3Path,
+	runBackupCommand,
 } from "./utils";
 
 export const runPostgresBackup = async (
@@ -56,13 +56,11 @@ export const runPostgresBackup = async (
 			rcloneDeleteCommand,
 			deployment.logPath,
 		);
-		if (postgres.serverId) {
-			await execAsyncRemote(postgres.serverId, backupCommand);
-		} else {
-			await execAsync(backupCommand, {
-				shell: "/bin/bash",
-			});
-		}
+		await runBackupCommand(
+			backupCommand,
+			deployment.logPath,
+			postgres.serverId,
+		);
 
 		await sendDatabaseBackupNotifications({
 			applicationName: name,

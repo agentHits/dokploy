@@ -27,6 +27,7 @@ import {
 	apiCreateDestination,
 	apiFindOneDestination,
 	apiRemoveDestination,
+	apiTestDestinationConnection,
 	apiUpdateDestination,
 	destinations,
 } from "@/server/db/schema";
@@ -86,7 +87,7 @@ export const destinationRouter = createTRPCRouter({
 			}
 		}),
 	testConnection: withPermission("destination", "create")
-		.input(apiCreateDestination)
+		.input(apiTestDestinationConnection)
 		.mutation(async ({ input, ctx }) => {
 			if (IS_CLOUD && !input.serverId) {
 				throw new TRPCError({
@@ -98,8 +99,28 @@ export const destinationRouter = createTRPCRouter({
 				await assertDestinationServerAccess(ctx, input.serverId);
 			}
 
+			const { destinationId, ...connectionInput } = input;
+			if (isRedactedSecretValue(connectionInput.secretAccessKey)) {
+				if (!destinationId) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message:
+							"The secret access key is hidden. Enter it again or pass destinationId to test the saved destination.",
+					});
+				}
+				const destination = await findDestinationById(destinationId);
+				if (destination.organizationId !== ctx.session.activeOrganizationId) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You are not allowed to access this destination",
+					});
+				}
+				connectionInput.secretAccessKey = destination.secretAccessKey;
+			}
+
 			try {
-				const destinationInput = await normalizeDestinationEndpointInput(input);
+				const destinationInput =
+					await normalizeDestinationEndpointInput(connectionInput);
 				const rcloneCommand = buildRcloneS3Command("ls", destinationInput, [
 					"--retries",
 					"1",
