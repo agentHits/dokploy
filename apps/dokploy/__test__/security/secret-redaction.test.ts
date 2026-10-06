@@ -309,6 +309,28 @@ describe("shared secret redaction helpers", () => {
 		}
 	});
 
+	it("keeps the argument after a negated password flag while masking real passwords", () => {
+		expect(
+			redactSensitiveText(
+				"pg_dump -Fc -h localhost -U postgres --no-password appdb | gzip",
+			),
+		).toContain("--no-password appdb |");
+
+		const messages = [
+			"psql --password hunter2 -d appdb",
+			"tool --db-password=hunter2",
+			"cli -password hunter2",
+			"ALTER USER app WITH PASSWORD 'hunter2'",
+			"CREATE USER 'app'@'%' IDENTIFIED BY 'hunter2'",
+		];
+		for (const message of messages) {
+			const redacted = redactSensitiveText(message);
+
+			expect(redacted).not.toContain("hunter2");
+			expect(redacted).toContain(REDACTED_SECRET_VALUE);
+		}
+	});
+
 	it("stores only redacted command output on ExecError", () => {
 		const error = new ExecError(
 			"Command failed: npm run build TOKEN=build-secret",

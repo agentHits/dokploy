@@ -335,16 +335,18 @@ export function redactSensitiveText(value: string | null | undefined) {
 		`$1${REDACTED_SECRET_VALUE}`,
 	);
 
+	// Negated flags such as pg_dump's `--no-password` take no value, so the word
+	// after them is a positional argument (the database name), not a secret.
 	redacted = redacted.replace(
 		new RegExp(
-			`(\\s--?[a-z0-9-]*${SENSITIVE_KEY_PATTERN}[a-z0-9-]*(?:=|\\s+))("[^"]*"|'[^']*'|[^\\s;&|]+)`,
+			`(\\s(?!--?no-)--?[a-z0-9-]*${SENSITIVE_KEY_PATTERN}[a-z0-9-]*(?:=|\\s+))("[^"]*"|'[^']*'|[^\\s;&|]+)`,
 			"gi",
 		),
 		`$1${REDACTED_SECRET_VALUE}`,
 	);
 
 	redacted = redacted.replace(
-		/(\b(?:PASSWORD|IDENTIFIED\s+BY)\s+)('[^']*'|"[^"]*"|[^\s;&|]+)/gi,
+		/(\b(?<!\bno-)(?:PASSWORD|IDENTIFIED\s+BY)\s+)('[^']*'|"[^"]*"|[^\s;&|]+)/gi,
 		`$1${REDACTED_SECRET_VALUE}`,
 	);
 
