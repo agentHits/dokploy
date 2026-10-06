@@ -380,7 +380,7 @@ export const AdvanceBreadcrumb = () => {
 										Esc
 									</kbd>
 								</div>
-								<CommandList>
+								<CommandList className="max-h-none">
 									<CommandEmpty>No projects found.</CommandEmpty>
 									<CommandGroup>
 										<ScrollArea className="h-[300px]">
@@ -516,7 +516,7 @@ export const AdvanceBreadcrumb = () => {
 											Esc
 										</kbd>
 									</div>
-									<CommandList>
+									<CommandList className="max-h-none">
 										<CommandEmpty>No environments found.</CommandEmpty>
 										<CommandGroup>
 											<ScrollArea className="h-[300px]">
@@ -589,7 +589,7 @@ export const AdvanceBreadcrumb = () => {
 												Esc
 											</kbd>
 										</div>
-										<CommandList>
+										<CommandList className="max-h-none">
 											<CommandEmpty>No services found.</CommandEmpty>
 											<CommandGroup>
 												<ScrollArea className="h-[300px]">

@@ -15,6 +15,7 @@ import {
 	CommandGroup,
 	CommandInput,
 	CommandItem,
+	CommandList,
 } from "@/components/ui/command";
 import {
 	Form,
@@ -277,40 +278,44 @@ export const SaveGithubProviderCompose = ({ composeId }: Props) => {
 														Loading Repositories....
 													</span>
 												) : null}
-												<CommandEmpty>No repositories found.</CommandEmpty>
-												<ScrollArea className="h-96">
-													<CommandGroup>
-														{repositories?.map((repo) => (
-															<CommandItem
-																value={`${repo.owner.login}/${repo.name}`}
-																key={repo.url}
-																onSelect={() => {
-																	form.setValue("repository", {
-																		owner: repo.owner.login as string,
-																		repo: repo.name,
-																	});
-																	form.setValue("branch", "");
-																}}
-															>
-																<span className="flex min-w-0 items-center gap-2">
-																	<span className="truncate">{repo.name}</span>
-																	<span className="text-muted-foreground text-xs">
-																		{repo.owner.login}
+												<CommandList className="max-h-none">
+													<CommandEmpty>No repositories found.</CommandEmpty>
+													<ScrollArea className="h-96">
+														<CommandGroup>
+															{repositories?.map((repo) => (
+																<CommandItem
+																	value={`${repo.owner.login}/${repo.name}`}
+																	key={repo.url}
+																	onSelect={() => {
+																		form.setValue("repository", {
+																			owner: repo.owner.login as string,
+																			repo: repo.name,
+																		});
+																		form.setValue("branch", "");
+																	}}
+																>
+																	<span className="flex min-w-0 items-center gap-2">
+																		<span className="truncate">
+																			{repo.name}
+																		</span>
+																		<span className="text-muted-foreground text-xs">
+																			{repo.owner.login}
+																		</span>
 																	</span>
-																</span>
-																<CheckIcon
-																	className={cn(
-																		"ml-auto h-4 w-4",
-																		repo.name === field.value.repo &&
-																			repo.owner.login === field.value.owner
-																			? "opacity-100"
-																			: "opacity-0",
-																	)}
-																/>
-															</CommandItem>
-														))}
-													</CommandGroup>
-												</ScrollArea>
+																	<CheckIcon
+																		className={cn(
+																			"ml-auto h-4 w-4",
+																			repo.name === field.value.repo &&
+																				repo.owner.login === field.value.owner
+																				? "opacity-100"
+																				: "opacity-0",
+																		)}
+																	/>
+																</CommandItem>
+															))}
+														</CommandGroup>
+													</ScrollArea>
+												</CommandList>
 											</Command>
 										</PopoverContent>
 									</Popover>
@@ -368,31 +373,35 @@ export const SaveGithubProviderCompose = ({ composeId }: Props) => {
 														Select a repository
 													</span>
 												)}
-												<ScrollArea className="h-96">
-													<CommandEmpty>No branch found.</CommandEmpty>
+												<CommandList className="max-h-none">
+													<ScrollArea className="h-96">
+														<CommandEmpty>No branch found.</CommandEmpty>
 
-													<CommandGroup>
-														{branches?.map((branch) => (
-															<CommandItem
-																value={branch.name}
-																key={branch.commit.sha}
-																onSelect={() => {
-																	form.setValue("branch", branch.name);
-																}}
-															>
-																<span className="truncate">{branch.name}</span>
-																<CheckIcon
-																	className={cn(
-																		"ml-auto h-4 w-4",
-																		branch.name === field.value
-																			? "opacity-100"
-																			: "opacity-0",
-																	)}
-																/>
-															</CommandItem>
-														))}
-													</CommandGroup>
-												</ScrollArea>
+														<CommandGroup>
+															{branches?.map((branch) => (
+																<CommandItem
+																	value={branch.name}
+																	key={branch.commit.sha}
+																	onSelect={() => {
+																		form.setValue("branch", branch.name);
+																	}}
+																>
+																	<span className="truncate">
+																		{branch.name}
+																	</span>
+																	<CheckIcon
+																		className={cn(
+																			"ml-auto h-4 w-4",
+																			branch.name === field.value
+																				? "opacity-100"
+																				: "opacity-0",
+																		)}
+																	/>
+																</CommandItem>
+															))}
+														</CommandGroup>
+													</ScrollArea>
+												</CommandList>
 											</Command>
 										</PopoverContent>
 

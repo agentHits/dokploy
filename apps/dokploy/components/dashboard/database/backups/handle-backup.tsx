@@ -19,6 +19,7 @@ import {
 	CommandGroup,
 	CommandInput,
 	CommandItem,
+	CommandList,
 } from "@/components/ui/command";
 import {
 	Dialog,
@@ -441,33 +442,36 @@ export const HandleBackup = ({
 															Loading Destinations....
 														</span>
 													)}
-													<CommandEmpty>No destinations found.</CommandEmpty>
-													<ScrollArea className="h-64">
-														<CommandGroup>
-															{data?.map((destination) => (
-																<CommandItem
-																	value={destination.destinationId}
-																	key={destination.destinationId}
-																	onSelect={() => {
-																		form.setValue(
-																			"destinationId",
-																			destination.destinationId,
-																		);
-																	}}
-																>
-																	{destination.name}
-																	<CheckIcon
-																		className={cn(
-																			"ml-auto h-4 w-4",
-																			destination.destinationId === field.value
-																				? "opacity-100"
-																				: "opacity-0",
-																		)}
-																	/>
-																</CommandItem>
-															))}
-														</CommandGroup>
-													</ScrollArea>
+													<CommandList className="max-h-none">
+														<CommandEmpty>No destinations found.</CommandEmpty>
+														<ScrollArea className="h-64">
+															<CommandGroup>
+																{data?.map((destination) => (
+																	<CommandItem
+																		value={destination.destinationId}
+																		key={destination.destinationId}
+																		onSelect={() => {
+																			form.setValue(
+																				"destinationId",
+																				destination.destinationId,
+																			);
+																		}}
+																	>
+																		{destination.name}
+																		<CheckIcon
+																			className={cn(
+																				"ml-auto h-4 w-4",
+																				destination.destinationId ===
+																					field.value
+																					? "opacity-100"
+																					: "opacity-0",
+																			)}
+																		/>
+																	</CommandItem>
+																))}
+															</CommandGroup>
+														</ScrollArea>
+													</CommandList>
 												</Command>
 											</PopoverContent>
 										</Popover>
