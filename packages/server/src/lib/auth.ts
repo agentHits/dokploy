@@ -1,7 +1,6 @@
 import type { IncomingMessage } from "node:http";
 import { apiKey } from "@better-auth/api-key";
 import { passkey } from "@better-auth/passkey";
-import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
 import * as bcrypt from "bcrypt";
 import { betterAuth } from "better-auth";
@@ -129,6 +128,10 @@ const { handler, api } = betterAuth({
 	database: drizzleAdapter(db, {
 		provider: "pg",
 		schema: schema,
+		// SCIM and SSO user resolution need native interactive transactions. Hooks
+		// that run inside them must not write through the global `db`: that second
+		// connection would wait on locks held by the open transaction.
+		transaction: true,
 	}),
 	disabledPaths: [
 		"/sso/register",
@@ -451,11 +454,6 @@ const { handler, api } = betterAuth({
 				// required: true,
 				input: false,
 			},
-			ownerId: {
-				type: "string",
-				// required: true,
-				input: false,
-			},
 			allowImpersonation: {
 				fieldName: "allowImpersonation",
 				type: "boolean",
@@ -499,24 +497,6 @@ const { handler, api } = betterAuth({
 				},
 			},
 		}),
-		scim({
-			// Personal (non-org) SCIM providers are ownerless on 1.6.x, so any user could
-			// take them over (GHSA-j8v8-g9cx-5qf4); Dokploy only issues org-scoped tokens.
-			canGenerateToken: ({ organizationId, member }) =>
-				Boolean(organizationId && member),
-			beforeSCIMTokenGenerated: async ({ user }) => {
-				const dbUser = await db.query.user.findFirst({
-					where: eq(schema.user.id, user.id),
-					columns: { enableEnterpriseFeatures: true },
-				});
-
-				if (!dbUser?.enableEnterpriseFeatures) {
-					throw new APIError("FORBIDDEN", {
-						message: "SCIM provisioning requires an enterprise license",
-					});
-				}
-			},
-		}),
 		passkey(),
 		twoFactor(),
 		organization({
@@ -529,6 +509,20 @@ const { handler, api } = betterAuth({
 			dynamicAccessControl: {
 				enabled: true,
 				maximumRolesPerOrganization: 10,
+			},
+			schema: {
+				organization: {
+					additionalFields: {
+						// Declared so the startup schema check accepts this NOT NULL column.
+						// Dokploy creates organizations itself (/organization/create is disabled).
+						ownerId: {
+							type: "string",
+							required: true,
+							input: false,
+							references: { model: "user", field: "id", onDelete: "cascade" },
+						},
+					},
+				},
 			},
 		}),
 		...(IS_CLOUD
@@ -546,9 +540,6 @@ const _auth = {
 	createApiKey: api.createApiKey,
 	registerSSOProvider: api.registerSSOProvider,
 	updateSSOProvider: api.updateSSOProvider,
-	generateSCIMToken: api.generateSCIMToken,
-	listSCIMProviderConnections: api.listSCIMProviderConnections,
-	deleteSCIMProviderConnection: api.deleteSCIMProviderConnection,
 };
 
 export type AuthType = typeof _auth;
@@ -677,38 +668,38 @@ export const validateRequest = async (request: IncomingMessage) => {
 		};
 	}
 
-	if (session?.user) {
-		const member = await db.query.member.findFirst({
-			where: and(
-				eq(schema.member.userId, session.user.id),
-				...(session.session.activeOrganizationId
-					? [
-							eq(
-								schema.member.organizationId,
-								session.session.activeOrganizationId || "",
-							),
-						]
-					: []),
-			),
-			orderBy: [desc(schema.member.isDefault), desc(schema.member.createdAt)],
-			with: {
-				organization: true,
-				user: true,
-			},
-		});
+	const member = await db.query.member.findFirst({
+		where: and(
+			eq(schema.member.userId, session.user.id),
+			...(session.session.activeOrganizationId
+				? [
+						eq(
+							schema.member.organizationId,
+							session.session.activeOrganizationId || "",
+						),
+					]
+				: []),
+		),
+		orderBy: [desc(schema.member.isDefault), desc(schema.member.createdAt)],
+		with: {
+			organization: true,
+			user: true,
+		},
+	});
 
-		session.user.role = member?.role || "member";
-		session.user.enableEnterpriseFeatures =
-			member?.user.enableEnterpriseFeatures || false;
-		session.user.isValidEnterpriseLicense =
-			member?.user.isValidEnterpriseLicense || false;
-		session.session.activeOrganizationId = member?.organization.id || "";
-		if (member) {
-			session.user.ownerId = member.organization.ownerId;
-		} else {
-			session.user.ownerId = session.user.id;
-		}
-	}
-
-	return session;
+	return {
+		session: {
+			...session.session,
+			activeOrganizationId: member?.organization.id || "",
+		},
+		user: {
+			...session.user,
+			role: member?.role || "member",
+			// Not a better-auth user field (there is no column): it is the owner of
+			// the active organization.
+			ownerId: member ? member.organization.ownerId : session.user.id,
+			enableEnterpriseFeatures: member?.user.enableEnterpriseFeatures || false,
+			isValidEnterpriseLicense: member?.user.isValidEnterpriseLicense || false,
+		},
+	};
 };
