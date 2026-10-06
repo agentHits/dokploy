@@ -199,6 +199,7 @@ export const HandleDestinations = ({ destinationId }: Props) => {
 		const connectionString = `:s3,provider=${provider},access_key_id=${accessKey},secret_access_key=${secretKey},endpoint=${endpoint}${region ? `,region=${region}` : ""}:${bucket}`;
 
 		await testConnection({
+			destinationId,
 			provider,
 			accessKey,
 			bucket,

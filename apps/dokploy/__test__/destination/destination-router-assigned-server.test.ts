@@ -10,13 +10,16 @@ const mocks = vi.hoisted(() => ({
 	execAsyncRemote: vi.fn(),
 	findDestinationById: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
+	isCloud: true,
 	removeDestinationById: vi.fn(),
 	assertDestinationEndpointAllowed: vi.fn(),
 	updateDestinationById: vi.fn(),
 }));
 
 vi.mock("@dokploy/server", () => ({
-	IS_CLOUD: true,
+	get IS_CLOUD() {
+		return mocks.isCloud;
+	},
 	createDestination: mocks.createDestination,
 	execAsync: mocks.execAsync,
 	execAsyncRemote: mocks.execAsyncRemote,
@@ -83,6 +86,7 @@ const createCaller = () =>
 describe("destination router assigned-server boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mocks.isCloud = true;
 		mocks.checkPermission.mockResolvedValue(undefined);
 		mocks.destinationFindMany.mockResolvedValue([]);
 		mocks.execAsync.mockResolvedValue({ stdout: "", stderr: "" });
@@ -201,6 +205,116 @@ describe("destination router assigned-server boundary", () => {
 		expect(mocks.execAsyncRemote).toHaveBeenCalledWith(
 			"server-1",
 			expect.stringContaining("rclone ls"),
+		);
+	});
+
+	it("tests a saved destination with the stored secret when the edit form sends the placeholder", async () => {
+		mocks.isCloud = false;
+
+		await expect(
+			createCaller().testConnection({
+				...destinationInput,
+				serverId: undefined,
+				secretAccessKey: REDACTED_SECRET_VALUE,
+				destinationId: "destination-1",
+			}),
+		).resolves.toBeUndefined();
+
+		expect(mocks.findDestinationById).toHaveBeenCalledWith("destination-1");
+		const command = mocks.execAsync.mock.calls[0]?.[0] as string;
+		expect(command).toContain(
+			"RCLONE_CONFIG_DOKPLOYS3_SECRET_ACCESS_KEY=stored-secret",
+		);
+		expect(command).not.toContain(REDACTED_SECRET_VALUE);
+	});
+
+	it("uses a newly entered secret instead of the saved one", async () => {
+		mocks.isCloud = false;
+
+		await expect(
+			createCaller().testConnection({
+				...destinationInput,
+				serverId: undefined,
+				secretAccessKey: "new-secret",
+				destinationId: "destination-1",
+			}),
+		).resolves.toBeUndefined();
+
+		expect(mocks.findDestinationById).not.toHaveBeenCalled();
+		expect(mocks.execAsync).toHaveBeenCalledWith(
+			expect.stringContaining(
+				"RCLONE_CONFIG_DOKPLOYS3_SECRET_ACCESS_KEY=new-secret",
+			),
+		);
+	});
+
+	it("rejects the placeholder secret without a destinationId before running rclone", async () => {
+		mocks.isCloud = false;
+
+		await expect(
+			createCaller().testConnection({
+				...destinationInput,
+				serverId: undefined,
+				secretAccessKey: REDACTED_SECRET_VALUE,
+			}),
+		).rejects.toMatchObject({
+			code: "BAD_REQUEST",
+			message: expect.stringContaining("destinationId"),
+		});
+
+		expect(mocks.findDestinationById).not.toHaveBeenCalled();
+		expect(mocks.execAsync).not.toHaveBeenCalled();
+	});
+
+	it("does not use the stored secret of another organization's destination", async () => {
+		mocks.isCloud = false;
+		mocks.findDestinationById.mockResolvedValue({
+			destinationId: "destination-2",
+			secretAccessKey: "other-org-secret",
+			organizationId: "org-2",
+		});
+
+		await expect(
+			createCaller().testConnection({
+				...destinationInput,
+				serverId: undefined,
+				secretAccessKey: REDACTED_SECRET_VALUE,
+				destinationId: "destination-2",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.execAsync).not.toHaveBeenCalled();
+	});
+
+	it("checks cloud server access before loading the stored secret", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().testConnection({
+				...destinationInput,
+				secretAccessKey: REDACTED_SECRET_VALUE,
+				destinationId: "destination-1",
+			}),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.findDestinationById).not.toHaveBeenCalled();
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+	});
+
+	it("tests a saved destination on an accessible cloud server with the stored secret", async () => {
+		await expect(
+			createCaller().testConnection({
+				...destinationInput,
+				secretAccessKey: REDACTED_SECRET_VALUE,
+				destinationId: "destination-1",
+			}),
+		).resolves.toBeUndefined();
+
+		expect(mocks.execAsyncRemote).toHaveBeenCalledWith(
+			"server-1",
+			expect.stringContaining(
+				"RCLONE_CONFIG_DOKPLOYS3_SECRET_ACCESS_KEY=stored-secret",
+			),
 		);
 	});
 });
