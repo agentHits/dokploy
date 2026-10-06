@@ -1,1 +1,1 @@
-DROP TABLE "scim_provider" CASCADE;
+DROP TABLE IF EXISTS "scim_provider" CASCADE;

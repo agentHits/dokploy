@@ -1422,6 +1422,13 @@
       "when": 1791294310363,
       "tag": "0202_drop_legacy_scim_provider",
       "breakpoints": true
+    },
+    {
+      "idx": 203,
+      "version": "7",
+      "when": 1791296078177,
+      "tag": "0203_repair_skipped_upstream_columns",
+      "breakpoints": true
     }
   ]
 }
