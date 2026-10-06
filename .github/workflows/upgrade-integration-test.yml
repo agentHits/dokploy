@@ -22,6 +22,10 @@ on:
         description: 'Target version to upgrade to (version B). Leave empty to use the highest available.'
         required: false
         default: ''
+      target_image:
+        description: 'Image for version B instead of dokploy/dokploy:<target>, e.g. ghcr.io/agenthits/dokploy:agenthits-dev-<sha>. Pairs still come from official tags below target_version.'
+        required: false
+        default: ''
 
 env:
   DOKPLOY_IMAGE:   dokploy/dokploy
@@ -30,6 +34,7 @@ env:
 
 permissions:
   contents: read
+  packages: read
 
 # ──────────────────────────────────────────────────────────────────────────────
 jobs:
@@ -332,10 +337,18 @@ jobs:
           echo "✅ All user services healthy before upgrade"
 
       # ── Upgrade ────────────────────────────────────────────────────────────
+      - name: Log in to GHCR for the target image
+        if: ${{ startsWith(inputs.target_image, 'ghcr.io/') }}
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
       - name: Upgrade Dokploy to VERSION B (${{ matrix.pair.to }})
+        env:
+          TARGET_IMAGE: ${{ inputs.target_image || format('{0}:{1}', env.DOKPLOY_IMAGE, matrix.pair.to) }}
         run: |
+          echo "Upgrading to ${TARGET_IMAGE}"
           docker service update \
-            --image "${{ env.DOKPLOY_IMAGE }}:${{ matrix.pair.to }}" \
+            --image "${TARGET_IMAGE}" \
+            --with-registry-auth \
             --force \
             "${{ env.DOKPLOY_SERVICE }}"
 
@@ -363,6 +376,23 @@ jobs:
             done
           '
           echo "✅ Dokploy API is up after upgrade"
+
+      # A schema the auth library rejects still serves pages but fails every
+      # sign-in, so check a fresh sign-in of the admin created before the upgrade.
+      - name: Sign in with the pre-upgrade admin
+        run: |
+          JAR="$RUNNER_TEMP/post-upgrade-cookies.txt"
+          : > "$JAR"
+          chmod 600 "$JAR"
+          curl -sSf -X POST \
+            "http://localhost:${{ env.DOKPLOY_PORT }}/api/auth/sign-in/email" \
+            -H "Content-Type: application/json" \
+            -c "$JAR" \
+            -d '{"email":"ci@dokploy.test","password":"CiTest1234!"}' > /dev/null
+          curl -sSf "http://localhost:${{ env.DOKPLOY_PORT }}/api/auth/get-session" \
+            -b "$JAR" > /tmp/post-upgrade-session.json
+          jq -e '.user.email == "ci@dokploy.test"' /tmp/post-upgrade-session.json
+          echo "✅ Pre-upgrade admin can sign in after the upgrade"
 
       # ── Post-upgrade health check ──────────────────────────────────────────
       - name: Verify all services still healthy (post-upgrade)
