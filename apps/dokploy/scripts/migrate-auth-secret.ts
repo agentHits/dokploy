@@ -7,6 +7,9 @@
  *
  * Both OLD_SECRET and NEW_SECRET are required.
  * Run this BEFORE restarting Dokploy with the new secret.
+ *
+ * SCIM bearer tokens cannot be migrated: their digests are keyed by the auth
+ * secret, so issue new ones in Manage SCIM after the restart.
  */
 import { db } from "@dokploy/server/db";
 import { twoFactor } from "@dokploy/server/db/schema";
@@ -41,6 +44,9 @@ async function reEncrypt(
 }
 
 async function main() {
+	console.log(
+		"ℹ️ SCIM tokens are keyed by BETTER_AUTH_SECRET: issue new ones in Manage SCIM after the restart.",
+	);
 	console.log("🔍 Fetching 2FA records...");
 	const records = await db.select().from(twoFactor);
 

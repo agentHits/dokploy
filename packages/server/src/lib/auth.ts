@@ -1,6 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import { apiKey } from "@better-auth/api-key";
 import { passkey } from "@better-auth/passkey";
+import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
 import * as bcrypt from "bcrypt";
 import { betterAuth } from "better-auth";
@@ -16,6 +17,10 @@ import { checkPermission } from "../services/permission";
 import { createAuditLog } from "../services/proprietary/audit-log";
 import { resolveOrganizationDefaultRole } from "../services/proprietary/license-key";
 import {
+	reconcileSCIMOrganizationMembership,
+	resolveLegacySCIMUser,
+} from "../services/proprietary/scim";
+import {
 	getWebServerSettings,
 	updateWebServerSettings,
 } from "../services/web-server-settings";
@@ -26,7 +31,7 @@ import {
 } from "../verification/send-verification-email";
 import { getPublicIpWithFallback } from "../wss/utils";
 import { ac, adminRole, memberRole, ownerRole } from "./access-control";
-import { betterAuthSecret } from "./auth-secret";
+import { betterAuthSecret, scimCredentialHashSecret } from "./auth-secret";
 
 export const isEmailPasswordSignInPath = (path: string | undefined) =>
 	path === "/sign-in/email" || path?.endsWith("/sign-in/email");
@@ -316,21 +321,8 @@ const { handler, api } = betterAuth({
 						}
 					}
 
+					// The SCIM projection owns memberships of provisioned users.
 					if (isSCIMRequest) {
-						const membership = await db.query.member.findFirst({
-							where: eq(schema.member.userId, user.id),
-						});
-						if (membership) {
-							const defaultRole = await resolveOrganizationDefaultRole(
-								membership.organizationId,
-							);
-							if (defaultRole !== membership.role) {
-								await db
-									.update(schema.member)
-									.set({ role: defaultRole })
-									.where(eq(schema.member.id, membership.id));
-							}
-						}
 						return;
 					}
 
@@ -550,6 +542,21 @@ const { handler, api } = betterAuth({
 				},
 			},
 		}),
+		// Connections are created per organization from the Dokploy UI
+		// (provisioningDomainId = organization id) through the managed catalog.
+		scim({
+			connections: [],
+			managedConnections: {
+				credentialHashSecret: scimCredentialHashSecret,
+				maxActiveCredentials: 5,
+			},
+			identity: {
+				resolveUser: resolveLegacySCIMUser,
+			},
+			projection: {
+				reconcileUser: reconcileSCIMOrganizationMembership,
+			},
+		}),
 		passkey(),
 		twoFactor(),
 		organization({
@@ -593,6 +600,13 @@ const _auth = {
 	createApiKey: api.createApiKey,
 	registerSSOProvider: api.registerSSOProvider,
 	updateSSOProvider: api.updateSSOProvider,
+	createSCIMManagedConnection: api.createSCIMManagedConnection,
+	listSCIMManagedConnections: api.listSCIMManagedConnections,
+	getSCIMManagedConnection: api.getSCIMManagedConnection,
+	rotateSCIMManagedCredential: api.rotateSCIMManagedCredential,
+	revokeSCIMManagedCredential: api.revokeSCIMManagedCredential,
+	listSCIMManagedConnectionEvents: api.listSCIMManagedConnectionEvents,
+	decommissionSCIMManagedConnection: api.decommissionSCIMManagedConnection,
 };
 
 export type AuthType = typeof _auth;
