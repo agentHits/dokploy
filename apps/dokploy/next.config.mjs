@@ -8,6 +8,10 @@ const nextConfig = {
 	reactStrictMode: true,
 	experimental: {
 		webpackMemoryOptimizations: true,
+		// Webpack builds always write .nft.json traces and Next 16 has no switch
+		// to skip them, so trace in a worker alongside the client compile
+		// instead of after page generation.
+		parallelServerBuildTraces: true,
 	},
 	typescript: {
 		ignoreBuildErrors: true,
