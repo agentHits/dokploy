@@ -414,6 +414,7 @@ export const RestoreBackup = ({
 											<Badge variant="outline" className="truncate">
 												{field.value}
 												<Copy
+													aria-label="Copy backup file"
 													className="ml-2 size-4 cursor-pointer"
 													onClick={(e) => {
 														e.stopPropagation();

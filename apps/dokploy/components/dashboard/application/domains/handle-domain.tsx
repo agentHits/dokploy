@@ -875,6 +875,7 @@ export const AddDomain = ({ id, type, domainId = "", children }: Props) => {
 													<Badge key={index} variant="secondary">
 														{name}
 														<X
+															aria-label={`Remove ${name}`}
 															className="ml-1 size-3 cursor-pointer"
 															onClick={() => {
 																const newMiddlewares = [...(field.value || [])];
