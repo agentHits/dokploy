@@ -1,4 +1,8 @@
-import { checkServicePermissionAndAccess } from "@dokploy/server/services/permission";
+import {
+	checkServicePermissionAndAccess,
+	hasPermission,
+} from "@dokploy/server/services/permission";
+import type { SharedEnvReadAccess } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 
 type ServiceEnvironmentContext = Parameters<
@@ -43,3 +47,10 @@ export const assertServiceEnvironmentReadAccess = async <
 
 	return service;
 };
+
+export const getSharedEnvReadAccess = async (
+	ctx: Parameters<typeof hasPermission>[0],
+): Promise<SharedEnvReadAccess> => ({
+	environmentEnv: await hasPermission(ctx, { environmentEnvVars: ["read"] }),
+	projectEnv: await hasPermission(ctx, { projectEnvVars: ["read"] }),
+});
