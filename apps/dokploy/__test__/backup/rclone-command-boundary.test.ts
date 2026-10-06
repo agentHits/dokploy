@@ -317,13 +317,11 @@ describe("destination rclone command boundary", () => {
 		const command = mocks.execAsyncRemote.mock.calls[0]?.[1] as string;
 
 		expect(command).toContain("UPLOAD_OUTPUT=");
-		expect(command).toContain(
-			"Error: Backup command failed. Check server logs for details.",
-		);
-		expect(command).toContain(
-			"Error: Upload command failed. Check server logs for details.",
-		);
+		expect(command).toContain(`printf '%s\\n' "$UPLOAD_OUTPUT" >&2;`);
 		expect(command).not.toContain('echo "Error: $UPLOAD_OUTPUT"');
+		expect(command).not.toMatch(/\$UPLOAD_OUTPUT"?\s*>>/);
+		expect(command.match(/pg_dump/g)).toHaveLength(1);
+		expect(command.match(/\brcat\b/g)).toHaveLength(1);
 	});
 
 	it("wraps retention rclone delete commands after xargs", async () => {

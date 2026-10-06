@@ -8,7 +8,6 @@ import { findEnvironmentById } from "@dokploy/server/services/environment";
 import type { Mongo } from "@dokploy/server/services/mongo";
 import { findProjectById } from "@dokploy/server/services/project";
 import { sendDatabaseBackupNotifications } from "../notifications/database-backup";
-import { execAsync, execAsyncRemote } from "../process/execAsync";
 import {
 	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
@@ -16,6 +15,7 @@ import {
 	getBackupTimestamp,
 	getRcloneS3Destination,
 	normalizeS3Path,
+	runBackupCommand,
 } from "./utils";
 
 export const runMongoBackup = async (mongo: Mongo, backup: BackupSchedule) => {
@@ -53,13 +53,7 @@ export const runMongoBackup = async (mongo: Mongo, backup: BackupSchedule) => {
 			deployment.logPath,
 		);
 
-		if (mongo.serverId) {
-			await execAsyncRemote(mongo.serverId, backupCommand);
-		} else {
-			await execAsync(backupCommand, {
-				shell: "/bin/bash",
-			});
-		}
+		await runBackupCommand(backupCommand, deployment.logPath, mongo.serverId);
 
 		await sendDatabaseBackupNotifications({
 			applicationName: name,

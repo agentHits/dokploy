@@ -1,3 +1,4 @@
+import { appendFile } from "node:fs/promises";
 import { assertRcloneAdditionalFlagsAllowed } from "@dokploy/server/db/validations/destination";
 import { logger } from "@dokploy/server/lib/logger";
 import type { BackupSchedule } from "@dokploy/server/services/backup";
@@ -6,6 +7,11 @@ import {
 	assertDestinationEndpointAllowed,
 	normalizeDestinationEndpointUrl,
 } from "@dokploy/server/utils/destination/endpoint";
+import { ExecError } from "@dokploy/server/utils/process/ExecError";
+import {
+	execAsync,
+	execAsyncRemote,
+} from "@dokploy/server/utils/process/execAsync";
 import {
 	normalizeRestoreDatabaseName,
 	normalizeRestoreServiceName,
@@ -437,7 +443,7 @@ export const generateBackupCommand = (backup: BackupSchedule) => {
 export const getBackupCommand = (
 	backup: BackupSchedule,
 	rcloneCommand: string,
-	_rcloneDeleteCommand: string,
+	rcloneDeleteCommand: string,
 	logPath: string,
 ) => {
 	if (!isBackupScheduleTargetBound(backup)) {
@@ -477,21 +483,62 @@ export const getBackupCommand = (
 
 	UPLOAD_OUTPUT=$({ ${backupCommand} | ${rcloneCommand}; } 2>&1 >/dev/null) || {
 		echo "[$(date)] ❌ Error: Backup failed" >> ${logPath};
-		echo "Error: Backup command failed. Check server logs for details." >> ${logPath};
-		exit 1;
-	}
-
-	echo "[$(date)] ✅ backup completed successfully" >> ${logPath};
-	echo "[$(date)] Starting upload to S3..." >> ${logPath};
-
-	# Run the upload command and capture the exit status
-	UPLOAD_OUTPUT=$(${backupCommand} | ${rcloneCommand} 2>&1 >/dev/null) || {
-		echo "[$(date)] ❌ Error: Upload to S3 failed" >> ${logPath};
-		echo "Error: Upload command failed. Check server logs for details." >> ${logPath};
+		${rcloneDeleteCommand} >/dev/null 2>&1 || true;
+		printf '%s\\n' "$UPLOAD_OUTPUT" >&2;
 		exit 1;
 	};
 
 	echo "[$(date)] ✅ Backup uploaded to S3 successfully" >> ${logPath};
 	echo "Backup done ✅" >> ${logPath};
 	`;
+};
+
+const appendBackupErrorOutput = async (
+	error: unknown,
+	logPath: string,
+	serverId?: string | null,
+) => {
+	const output =
+		error instanceof ExecError ? redactSensitiveText(error.stderr)?.trim() : "";
+	if (!output) {
+		return;
+	}
+
+	const logLine = `Error: ${output}`;
+	try {
+		if (serverId) {
+			await execAsyncRemote(
+				serverId,
+				`printf '%s\\n' ${quoteShellArgument(logLine)} >> ${quoteShellArgument(logPath)}`,
+			);
+		} else {
+			await appendFile(logPath, `${logLine}\n`);
+		}
+	} catch (appendError) {
+		logger.error(
+			{ logPath, error: redactSensitiveText(String(appendError)) },
+			"Failed to append backup error output to the deployment log",
+		);
+	}
+};
+
+// The backup script never writes command output to the log itself: it prints
+// it to stderr, and it is masked here before it reaches the deployment log.
+export const runBackupCommand = async (
+	command: string,
+	logPath: string,
+	serverId?: string | null,
+) => {
+	try {
+		if (serverId) {
+			await execAsyncRemote(serverId, command);
+		} else {
+			await execAsync(command, {
+				shell: "/bin/bash",
+			});
+		}
+	} catch (error) {
+		await appendBackupErrorOutput(error, logPath, serverId);
+		throw error;
+	}
 };

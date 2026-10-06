@@ -8,7 +8,6 @@ import { findEnvironmentById } from "@dokploy/server/services/environment";
 import type { Mariadb } from "@dokploy/server/services/mariadb";
 import { findProjectById } from "@dokploy/server/services/project";
 import { sendDatabaseBackupNotifications } from "../notifications/database-backup";
-import { execAsync, execAsyncRemote } from "../process/execAsync";
 import {
 	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
@@ -16,6 +15,7 @@ import {
 	getBackupTimestamp,
 	getRcloneS3Destination,
 	normalizeS3Path,
+	runBackupCommand,
 } from "./utils";
 
 export const runMariadbBackup = async (
@@ -55,13 +55,7 @@ export const runMariadbBackup = async (
 			rcloneDeleteCommand,
 			deployment.logPath,
 		);
-		if (mariadb.serverId) {
-			await execAsyncRemote(mariadb.serverId, backupCommand);
-		} else {
-			await execAsync(backupCommand, {
-				shell: "/bin/bash",
-			});
-		}
+		await runBackupCommand(backupCommand, deployment.logPath, mariadb.serverId);
 
 		await sendDatabaseBackupNotifications({
 			applicationName: name,

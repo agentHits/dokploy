@@ -8,7 +8,6 @@ import { findEnvironmentById } from "@dokploy/server/services/environment";
 import type { MySql } from "@dokploy/server/services/mysql";
 import { findProjectById } from "@dokploy/server/services/project";
 import { sendDatabaseBackupNotifications } from "../notifications/database-backup";
-import { execAsync, execAsyncRemote } from "../process/execAsync";
 import {
 	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
@@ -16,6 +15,7 @@ import {
 	getBackupTimestamp,
 	getRcloneS3Destination,
 	normalizeS3Path,
+	runBackupCommand,
 } from "./utils";
 
 export const runMySqlBackup = async (mysql: MySql, backup: BackupSchedule) => {
@@ -54,13 +54,7 @@ export const runMySqlBackup = async (mysql: MySql, backup: BackupSchedule) => {
 			deployment.logPath,
 		);
 
-		if (mysql.serverId) {
-			await execAsyncRemote(mysql.serverId, backupCommand);
-		} else {
-			await execAsync(backupCommand, {
-				shell: "/bin/bash",
-			});
-		}
+		await runBackupCommand(backupCommand, deployment.logPath, mysql.serverId);
 		await sendDatabaseBackupNotifications({
 			applicationName: name,
 			projectName: project.name,

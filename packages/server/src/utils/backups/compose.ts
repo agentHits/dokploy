@@ -8,7 +8,6 @@ import { findDestinationById } from "@dokploy/server/services/destination";
 import { findEnvironmentById } from "@dokploy/server/services/environment";
 import { findProjectById } from "@dokploy/server/services/project";
 import { sendDatabaseBackupNotifications } from "../notifications/database-backup";
-import { execAsync, execAsyncRemote } from "../process/execAsync";
 import {
 	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
@@ -16,6 +15,7 @@ import {
 	getBackupTimestamp,
 	getRcloneS3Destination,
 	normalizeS3Path,
+	runBackupCommand,
 } from "./utils";
 
 export const runComposeBackup = async (
@@ -57,13 +57,7 @@ export const runComposeBackup = async (
 			rcloneDeleteCommand,
 			deployment.logPath,
 		);
-		if (compose.serverId) {
-			await execAsyncRemote(compose.serverId, backupCommand);
-		} else {
-			await execAsync(backupCommand, {
-				shell: "/bin/bash",
-			});
-		}
+		await runBackupCommand(backupCommand, deployment.logPath, compose.serverId);
 
 		await sendDatabaseBackupNotifications({
 			applicationName: name,

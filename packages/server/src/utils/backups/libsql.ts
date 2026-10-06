@@ -8,7 +8,6 @@ import { findEnvironmentById } from "@dokploy/server/services/environment";
 import type { Libsql } from "@dokploy/server/services/libsql";
 import { findProjectById } from "@dokploy/server/services/project";
 import { sendDatabaseBackupNotifications } from "../notifications/database-backup";
-import { execAsync, execAsyncRemote } from "../process/execAsync";
 import {
 	assertRcloneS3DestinationAllowed,
 	buildRcloneS3Command,
@@ -16,6 +15,7 @@ import {
 	getBackupTimestamp,
 	getRcloneS3Destination,
 	normalizeS3Path,
+	runBackupCommand,
 } from "./utils";
 
 export const runLibsqlBackup = async (
@@ -56,13 +56,7 @@ export const runLibsqlBackup = async (
 			rcloneDeleteCommand,
 			deployment.logPath,
 		);
-		if (libsql.serverId) {
-			await execAsyncRemote(libsql.serverId, backupCommand);
-		} else {
-			await execAsync(backupCommand, {
-				shell: "/bin/bash",
-			});
-		}
+		await runBackupCommand(backupCommand, deployment.logPath, libsql.serverId);
 
 		await sendDatabaseBackupNotifications({
 			applicationName: name,
