@@ -242,6 +242,9 @@ const assertVolumeRestoreObjectBound = async (input: {
 		input.serviceType === "application"
 			? volumeBackups.applicationId
 			: volumeBackups.composeId;
+	// The application table has more than 100 columns. Drizzle puts every
+	// selected column of a nested relation into one json_build_array() call,
+	// and Postgres rejects calls with more than 100 arguments (54023).
 	const candidateBackups = await db.query.volumeBackups.findMany({
 		where: and(
 			eq(volumeBackups.destinationId, input.destinationId),
@@ -250,8 +253,8 @@ const assertVolumeRestoreObjectBound = async (input: {
 			eq(serviceIdColumn, input.id),
 		),
 		with: {
-			application: true,
-			compose: true,
+			application: { columns: { appName: true } },
+			compose: { columns: { appName: true } },
 			destination: {
 				columns: {
 					accessKey: false,

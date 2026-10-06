@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	maxJsonBuildArrayArgs,
+	POSTGRES_MAX_FUNCTION_ARGS,
+	relationalQueryDb,
+} from "../helpers/postgres-function-args";
 
 const mocks = vi.hoisted(() => ({
 	checkServicePermissionAndAccess: vi.fn(),
@@ -300,6 +305,57 @@ describe("container resource stats access filtering", () => {
 			ctx,
 			"application-foreign",
 			expect.anything(),
+		);
+	});
+
+	it("keeps the preview deployment lookup within the Postgres function argument limit", async () => {
+		const compiledQueries: string[] = [];
+		mocks.db.query.previewDeployments.findFirst.mockImplementation(
+			async (query) => {
+				// eq() is mocked in this file, and the filter does not change which
+				// columns the relations select.
+				compiledQueries.push(
+					relationalQueryDb.query.previewDeployments
+						.findFirst({ ...query, where: undefined })
+						.toSQL().sql,
+				);
+				return lookupAppName(query) === "preview-service"
+					? {
+							appName: "preview-service",
+							application: {
+								applicationId: "application-allowed",
+								serverId: null,
+								environment: environment("org-1"),
+							},
+						}
+					: null;
+			},
+		);
+		const stats = [
+			{
+				ID: "preview",
+				Labels: {
+					"com.docker.swarm.service.name": "preview-service",
+				},
+				Name: "preview-service.1.task",
+			},
+		];
+
+		await expect(
+			filterContainerResourceStatsByAccess(ctx, stats),
+		).resolves.toEqual(stats);
+
+		expect(compiledQueries.length).toBeGreaterThan(0);
+		for (const sqlText of compiledQueries) {
+			expect(sqlText).toContain("json_build_array(");
+			expect(maxJsonBuildArrayArgs(sqlText)).toBeLessThanOrEqual(
+				POSTGRES_MAX_FUNCTION_ARGS,
+			);
+		}
+		expect(mocks.checkServicePermissionAndAccess).toHaveBeenCalledWith(
+			ctx,
+			"application-allowed",
+			{ monitoring: ["read"] },
 		);
 	});
 });

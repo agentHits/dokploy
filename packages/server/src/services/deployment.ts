@@ -321,10 +321,13 @@ export const finalizeDeploymentOperation = async (
 };
 
 export const findDeploymentById = async (deploymentId: string) => {
+	// The application table has more than 100 columns. Drizzle puts every
+	// selected column of a nested relation into one json_build_array() call,
+	// and Postgres rejects calls with more than 100 arguments (54023).
 	const deployment = await db.query.deployments.findFirst({
 		where: eq(deployments.deploymentId, deploymentId),
 		with: {
-			application: true,
+			application: { columns: { serverId: true } },
 			backup: {
 				with: {
 					compose: true,
@@ -339,13 +342,13 @@ export const findDeploymentById = async (deploymentId: string) => {
 			previewDeployment: true,
 			schedule: {
 				with: {
-					application: true,
+					application: { columns: { serverId: true } },
 					compose: true,
 				},
 			},
 			volumeBackup: {
 				with: {
-					application: true,
+					application: { columns: { serverId: true } },
 					compose: true,
 					libsql: true,
 					mariadb: true,
