@@ -2,12 +2,24 @@ name: Pull Request
 
 on:
   pull_request:
-    branches: [main, canary]
+    branches: [main, canary, AgentHits-Dev]
 
 permissions:
   contents: read
 
 jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      # GHSA-vfj7-8cjw-p6xm: braces 3.0.3 (via micromatch) has no patched release yet.
+      - run: bun audit --audit-level=moderate --ignore GHSA-vfj7-8cjw-p6xm
+
   pr-check:
     runs-on: ubuntu-latest
     strategy:
