@@ -1,5 +1,6 @@
 import { apiKey } from "@better-auth/api-key";
 import { passkey } from "@better-auth/passkey";
+import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -14,6 +15,7 @@ export const auth = betterAuth({
 	database: drizzleAdapter(db, {
 		provider: "pg",
 		schema,
+		transaction: true,
 	}),
 	user: {
 		modelName: "user",
@@ -56,6 +58,11 @@ export const auth = betterAuth({
 					},
 				},
 			},
+		}),
+		scim({
+			connections: [],
+			// Only the table set matters here; the runtime key comes from auth-secret.ts.
+			managedConnections: { credentialHashSecret: "x".repeat(32) },
 		}),
 		admin(),
 	],
