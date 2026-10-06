@@ -1,7 +1,5 @@
 import { db } from "@dokploy/server/db";
 import { scimProvider } from "@dokploy/server/db/schema";
-import { requestToHeaders } from "@dokploy/server/index";
-import { auth } from "@dokploy/server/lib/auth";
 import { TRPCError } from "@trpc/server";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -31,25 +29,12 @@ export const scimRouter = createTRPCRouter({
 	}),
 	generateToken: enterpriseProcedure
 		.input(z.object({ providerId: providerIdSchema }))
-		.mutation(async ({ ctx, input }) => {
-			const existing = await db.query.scimProvider.findFirst({
-				where: eq(scimProvider.providerId, input.providerId),
-				columns: { id: true, organizationId: true },
+		.mutation(async (): Promise<{ scimToken: string; providerId: string }> => {
+			throw new TRPCError({
+				code: "PRECONDITION_FAILED",
+				message:
+					"SCIM tokens cannot be issued until the Better Auth 1.7 SCIM migration is complete",
 			});
-			if (existing) {
-				throw new TRPCError({
-					code: "BAD_REQUEST",
-					message: "A SCIM provider with this ID already exists",
-				});
-			}
-			const result = await auth.generateSCIMToken({
-				body: {
-					providerId: input.providerId,
-					organizationId: ctx.session.activeOrganizationId,
-				},
-				headers: requestToHeaders(ctx.req),
-			});
-			return { scimToken: result.scimToken, providerId: input.providerId };
 		}),
 	deleteProvider: enterpriseProcedure
 		.input(z.object({ providerId: providerIdSchema }))

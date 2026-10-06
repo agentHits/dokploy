@@ -114,6 +114,12 @@ const { resolveTrustedOriginsForAuthRequest } = await import(
 const { canProvisionSsoMembershipForEmail } = await import(
 	"../../../../packages/server/src/lib/auth"
 );
+const { drizzleAdapter } = await import("better-auth/adapters/drizzle");
+const { organization } = await import("better-auth/plugins");
+
+// Captured before any beforeEach clears the mock call history.
+const drizzleAdapterOptions = vi.mocked(drizzleAdapter).mock.calls[0]?.[1];
+const organizationOptions = vi.mocked(organization).mock.calls[0]?.[0];
 
 const apiKeyRequest = {
 	headers: {
@@ -215,6 +221,79 @@ describe("validateRequest API key sessions", () => {
 			},
 			{ api: ["read"] },
 		);
+	});
+});
+
+describe("validateRequest cookie sessions", () => {
+	const cookieRequest = {
+		headers: { cookie: "better-auth.session_token=token" },
+	} as unknown as IncomingMessage;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.getSession.mockResolvedValue({
+			session: {
+				id: "session-1",
+				userId: "user-1",
+				activeOrganizationId: "org-1",
+			},
+			user: { id: "user-1", email: "ada@example.com" },
+		});
+	});
+
+	it("resolves ownerId to the owner of the active organization", async () => {
+		mocks.memberFindFirst.mockResolvedValue({
+			role: "admin",
+			organization: { id: "org-1", ownerId: "owner-1" },
+			user: { enableEnterpriseFeatures: true, isValidEnterpriseLicense: true },
+		});
+
+		await expect(validateRequest(cookieRequest)).resolves.toMatchObject({
+			session: { id: "session-1", activeOrganizationId: "org-1" },
+			user: {
+				id: "user-1",
+				role: "admin",
+				ownerId: "owner-1",
+				enableEnterpriseFeatures: true,
+				isValidEnterpriseLicense: true,
+			},
+		});
+	});
+
+	it("falls back to the user itself when there is no membership", async () => {
+		mocks.memberFindFirst.mockResolvedValue(undefined);
+
+		await expect(validateRequest(cookieRequest)).resolves.toMatchObject({
+			session: { activeOrganizationId: "" },
+			user: {
+				id: "user-1",
+				role: "member",
+				ownerId: "user-1",
+				enableEnterpriseFeatures: false,
+				isValidEnterpriseLicense: false,
+			},
+		});
+	});
+});
+
+describe("Better Auth 1.7 configuration", () => {
+	it("runs the Drizzle adapter with native transactions", () => {
+		expect(drizzleAdapterOptions).toMatchObject({
+			provider: "pg",
+			transaction: true,
+		});
+	});
+
+	it("does not declare ownerId as a Better Auth user column", () => {
+		expect(mocks.authOptions.user.additionalFields).not.toHaveProperty(
+			"ownerId",
+		);
+	});
+
+	it("declares the NOT NULL organization ownerId column", () => {
+		expect(
+			organizationOptions?.schema?.organization?.additionalFields?.ownerId,
+		).toMatchObject({ type: "string", required: true, input: false });
 	});
 });
 
