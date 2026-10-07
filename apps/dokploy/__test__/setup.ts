@@ -1,5 +1,23 @@
 import { vi } from "vitest";
 
+// Production hashes use bcrypt cost 12 (~0.25 s each on an idle core), and the
+// super password suites hash dozens of times; on a busy CI host that blows the
+// 5 s test timeout. Cost 4 keeps the real algorithm and hash format.
+vi.mock("bcrypt", async (importOriginal) => {
+	type Bcrypt = typeof import("bcrypt");
+	// The CJS module also exposes itself as `default` at runtime.
+	const actual = await importOriginal<Bcrypt & { default?: Bcrypt }>();
+	const original = actual.default ?? actual;
+	const hash = ((data: string | Buffer, saltOrRounds: string | number) =>
+		original.hash(
+			data,
+			typeof saltOrRounds === "number"
+				? Math.min(saltOrRounds, 4)
+				: saltOrRounds,
+		)) as typeof original.hash;
+	return { ...actual, hash, default: { ...original, hash } };
+});
+
 /**
  * Mock the DB module so tests that import from @dokploy/server (barrel)
  * never open a real TCP connection to PostgreSQL (e.g. in CI where no DB runs).
