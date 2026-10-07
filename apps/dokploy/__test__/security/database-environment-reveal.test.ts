@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
 	findMySqlById: vi.fn(),
 	findPostgresById: vi.fn(),
 	findRedisById: vi.fn(),
+	hasPermission: vi.fn(),
 	getServiceContainerCommand: vi.fn(
 		(appName: string) =>
 			`docker ps -q --filter "label=com.docker.swarm.service.name=${appName}" | head -n 1`,
@@ -96,6 +97,7 @@ vi.mock("@dokploy/server/services/permission", () => ({
 	checkServiceAccess: mocks.checkServiceAccess,
 	checkServicePermissionAndAccess: mocks.checkServicePermissionAndAccess,
 	findMemberByUserId: mocks.noop,
+	hasPermission: mocks.hasPermission,
 }));
 
 vi.mock("@/server/api/utils/audit", () => ({
@@ -141,7 +143,9 @@ const databaseService = (
 	databasePassword: `${id}-password`,
 	databaseRootPassword: `${id}-root-password`,
 	environment: {
+		env: "ENVIRONMENT_SHARED=secret",
 		project: {
+			env: "PROJECT_SHARED=secret",
 			organizationId,
 		},
 	},
@@ -191,6 +195,7 @@ describe("database environment reveal boundary", () => {
 		vi.clearAllMocks();
 		mocks.checkServiceAccess.mockResolvedValue(undefined);
 		mocks.checkServicePermissionAndAccess.mockResolvedValue(undefined);
+		mocks.hasPermission.mockResolvedValue(false);
 		for (const testCase of cases) {
 			testCase.find.mockResolvedValue(
 				databaseService(testCase.idField, testCase.id),
@@ -219,6 +224,41 @@ describe("database environment reveal boundary", () => {
 					envVars: ["read"],
 				},
 			);
+		},
+	);
+
+	it.each(cases)(
+		"hides shared env in $id reads without shared env read permissions",
+		async (testCase) => {
+			const normalRead = await testCase.router
+				.createCaller(createContext())
+				.one({ [testCase.idField]: testCase.id } as never);
+
+			expect(normalRead.environment).toEqual({
+				env: REDACTED_SECRET_VALUE,
+				project: { env: REDACTED_SECRET_VALUE, organizationId: "org-1" },
+			});
+		},
+	);
+
+	it.each(cases)(
+		"keeps shared env in $id reads for callers that can read it",
+		async (testCase) => {
+			mocks.hasPermission.mockImplementation(
+				async (_ctx: unknown, permissions: Record<string, string[]>) =>
+					"environmentEnvVars" in permissions ||
+					"projectEnvVars" in permissions,
+			);
+
+			const normalRead = await testCase.router
+				.createCaller(createContext())
+				.one({ [testCase.idField]: testCase.id } as never);
+
+			expect(normalRead.env).toBe(REDACTED_SECRET_VALUE);
+			expect(normalRead.environment).toEqual({
+				env: "ENVIRONMENT_SHARED=secret",
+				project: { env: "PROJECT_SHARED=secret", organizationId: "org-1" },
+			});
 		},
 	);
 });

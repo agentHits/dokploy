@@ -53,6 +53,8 @@ type QueueApp = {
 let missingConfigApp: QueueApp;
 let configuredApp: QueueApp;
 
+// Each import below loads the whole API module graph from a fresh registry,
+// which alone can take several seconds on a busy runner.
 beforeAll(async () => {
 	vi.resetModules();
 	vi.stubEnv("INNGEST_BASE_URL", "https://inngest.example");
@@ -64,7 +66,7 @@ beforeAll(async () => {
 	vi.resetModules();
 	vi.stubEnv("INNGEST_SIGNING_KEY", "signing-key");
 	configuredApp = (await import("../../../api/src/index")).app;
-});
+}, 60_000);
 
 afterAll(() => {
 	vi.unstubAllEnvs();
