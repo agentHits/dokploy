@@ -318,7 +318,6 @@ describe("super password alerts", () => {
 		]);
 	});
 
-	// About 20 bcrypt hashes run here; with every CPU core busy they exceed 5 s.
 	it("covers every super password event with no secrets in the payloads", async () => {
 		seedTelegram("alerts", { messageThreadId: "42" });
 		seedDiscord("backup");
@@ -429,7 +428,7 @@ describe("super password alerts", () => {
 			telegramCalls().map(([, text, buttons]) => ({ text, buttons })),
 		);
 		expect(telegramOnly).not.toContain("super-password-reset?token=");
-	}, 30_000);
+	});
 
 	it("puts the one-time lock link on opened and extended alerts as a Telegram button", async () => {
 		seedTelegram("alerts");

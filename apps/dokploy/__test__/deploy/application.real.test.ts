@@ -9,13 +9,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const REAL_TEST_TIMEOUT = 180000; // 3 minutes
 
-// nixpacks keys its build cache on the source path, so a fresh app name per run
-// rebuilds from scratch (~50 s). A name fixed per checkout keeps the cache warm
-// on persistent runners, and still differs between runners sharing one Docker.
-const NIXPACKS_APP_NAME = `real-nixpacks-${createHash("sha256")
+// Runners on one host share Docker, so app names carry the checkout they came
+// from. The PR workflow derives the same id from the path to remove leftovers
+// of a cancelled run without touching another runner's tests.
+const CHECKOUT_ID = createHash("sha256")
 	.update(process.cwd())
 	.digest("hex")
-	.slice(0, 8)}`;
+	.slice(0, 8);
+
+const uniqueAppName = (kind: string) =>
+	`real-${kind}-${CHECKOUT_ID}-${Date.now()}`;
+
+// nixpacks keys its build cache on the source path, so a fresh app name per run
+// rebuilds from scratch (~50 s). A name fixed per checkout keeps the cache warm
+// on persistent runners.
+const NIXPACKS_APP_NAME = `real-nixpacks-${CHECKOUT_ID}`;
 
 // Tests that exercise cloning rather than a builder use the small Dockerfile app.
 const DOCKERFILE_BUILD = {
@@ -113,7 +121,7 @@ const createMockApplication = (
 	({
 		applicationId: "test-app-id",
 		name: "Real Test App",
-		appName: `real-test-${Date.now()}`,
+		appName: uniqueAppName("test"),
 		sourceType: "git" as const,
 		customGitUrl: "https://github.com/Dokploy/examples.git",
 		customGitBranch: "main",
@@ -198,7 +206,7 @@ describe(
 
 		beforeEach(async () => {
 			vi.clearAllMocks();
-			currentAppName = `real-test-${Date.now()}`;
+			currentAppName = uniqueAppName("test");
 			currentDeployment = await createMockDeployment(currentAppName);
 			allTestAppNames.push(currentAppName);
 
@@ -309,7 +317,7 @@ describe(
 		it.skip(
 			"should REALLY build with railpack (SKIPPED: requires special permissions)",
 			async () => {
-				const railpackAppName = `real-railpack-${Date.now()}`;
+				const railpackAppName = uniqueAppName("railpack");
 				const railpackApp = createMockApplication({
 					appName: railpackAppName,
 					buildType: "railpack",
@@ -353,7 +361,7 @@ describe(
 		it(
 			"should handle REAL git clone errors",
 			async () => {
-				const errorAppName = `real-error-${Date.now()}`;
+				const errorAppName = uniqueAppName("error");
 				const errorApp = createMockApplication({
 					appName: errorAppName,
 					customGitUrl:
@@ -398,7 +406,7 @@ describe(
 		it(
 			"should REALLY clone with submodules when enabled",
 			async () => {
-				const submodulesAppName = `real-submodules-${Date.now()}`;
+				const submodulesAppName = uniqueAppName("submodules");
 				const submodulesApp = createMockApplication({
 					...DOCKERFILE_BUILD,
 					appName: submodulesAppName,
@@ -483,7 +491,7 @@ describe(
 		it(
 			"should REALLY build with Dockerfile",
 			async () => {
-				const dockerfileAppName = `real-dockerfile-${Date.now()}`;
+				const dockerfileAppName = uniqueAppName("dockerfile");
 				const dockerfileApp = createMockApplication({
 					...DOCKERFILE_BUILD,
 					appName: dockerfileAppName,

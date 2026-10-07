@@ -90,3 +90,13 @@ jobs:
         env:
           # The fork's db module throws without a password in production, and the Next build imports it.
           POSTGRES_PASSWORD: ${{ matrix.job == 'build' && 'build-time-postgres-password' || '' }}
+
+      # Tests remove their swarm services, but a cancelled or timed-out run skips
+      # that. Docker is shared by all Mac mini runners, so only this checkout's
+      # apps go (see CHECKOUT_ID in application.real.test.ts).
+      - name: Remove leftover real-test services
+        if: always() && matrix.job == 'test'
+        working-directory: apps/dokploy
+        run: |
+          id="$(printf %s "$PWD" | shasum -a 256 | cut -c1-8)"
+          docker service ls --format '{{.Name}}' | grep -E "^real-[a-z]+-${id}" | xargs -r docker service rm
