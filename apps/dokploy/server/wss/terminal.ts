@@ -11,6 +11,7 @@ import { Client, type ConnectConfig } from "ssh2";
 import { WebSocketServer } from "ws";
 import { getDockerHost } from "../utils/docker";
 import { canAccessTerminalOverWss } from "./authorize";
+import { verifyWebSocketOrigin } from "./origin";
 import { canAccessServerTerminalWebSocket } from "./server-permission";
 import {
 	parseResizeMessage,
@@ -75,6 +76,7 @@ export const setupTerminalWebSocketServer = (
 ) => {
 	const wssTerm = new WebSocketServer({
 		noServer: true,
+		verifyClient: verifyWebSocketOrigin,
 		path: "/terminal",
 	});
 

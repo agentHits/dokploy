@@ -18,6 +18,7 @@ import {
 } from "@dokploy/server/wss/utils";
 import { Client } from "ssh2";
 import { WebSocketServer } from "ws";
+import { verifyWebSocketOrigin } from "./origin";
 
 const getDeploymentLogPathRoot = (
 	deployment: Awaited<ReturnType<typeof findDeploymentById>>,
@@ -181,6 +182,7 @@ export const setupDeploymentLogsWebSocketServer = (
 ) => {
 	const wssTerm = new WebSocketServer({
 		noServer: true,
+		verifyClient: verifyWebSocketOrigin,
 		path: "/listen-deployment",
 	});
 
