@@ -397,7 +397,9 @@ export const environmentRouter = createTRPCRouter({
 					resourceId: deletedEnvironment?.environmentId,
 					resourceName: deletedEnvironment?.name,
 				});
-				return deletedEnvironment;
+				return (await canReadEnvironmentEnvVars(ctx))
+					? deletedEnvironment
+					: redactEnvironmentEnv(deletedEnvironment);
 			} catch (error) {
 				if (error instanceof TRPCError) {
 					throw error;
@@ -470,7 +472,9 @@ export const environmentRouter = createTRPCRouter({
 						resourceName: environment.name,
 					});
 				}
-				return environment;
+				return (await canReadEnvironmentEnvVars(ctx))
+					? environment
+					: redactEnvironmentEnv(environment);
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",

@@ -376,6 +376,7 @@ export const deployCompose = async ({
 		const entity = {
 			...compose,
 			type: "compose" as const,
+			checkoutRevision: operation ? expectedRevision : undefined,
 		};
 		let command = "set -e;";
 		if (compose.sourceType === "github") {
@@ -404,30 +405,16 @@ export const deployCompose = async ({
 		if (operationId && expectedRevision && operation) {
 			const { COMPOSE_PATH } = paths(!!compose.serverId);
 			const checkoutPath = join(COMPOSE_PATH, compose.appName, "code");
-			const exactCheckoutCommand = [
-				quoteShellArgs([
-					"git",
-					"-C",
-					checkoutPath,
-					"fetch",
-					"--depth",
-					"1",
-					"origin",
-					expectedRevision,
-				]),
-				quoteShellArgs([
-					"git",
-					"-C",
-					checkoutPath,
-					"checkout",
-					"--detach",
-					expectedRevision,
-				]),
-				quoteShellArgs(["git", "-C", checkoutPath, "rev-parse", "HEAD"]),
-			].join(" && ");
+			const revParseCommand = quoteShellArgs([
+				"git",
+				"-C",
+				checkoutPath,
+				"rev-parse",
+				"HEAD",
+			]);
 			const resolved = compose.serverId
-				? await execAsyncRemote(compose.serverId, exactCheckoutCommand)
-				: await execAsync(exactCheckoutCommand);
+				? await execAsyncRemote(compose.serverId, revParseCommand)
+				: await execAsync(revParseCommand);
 			const resolvedRevision = resolved.stdout.trim().split(/\s+/).at(-1) ?? "";
 			if (resolvedRevision !== expectedRevision) {
 				throw new TRPCError({

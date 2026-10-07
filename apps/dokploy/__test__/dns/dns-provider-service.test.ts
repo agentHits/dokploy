@@ -28,17 +28,31 @@ describe("maskDnsProviderConfig", () => {
 		});
 	});
 
-	it("masks only the secretAccessKey for a route53 config, keeping accessKeyId visible", () => {
+	it("masks both the accessKeyId and the secretAccessKey for a route53 config", () => {
 		const masked = maskDnsProviderConfig({
 			providerType: "route53",
-			accessKeyId: "AKIA_VISIBLE",
+			accessKeyId: "AKIA_STORED",
 			secretAccessKey: "shh",
 		});
 
 		expect(masked).toEqual({
 			providerType: "route53",
-			accessKeyId: "AKIA_VISIBLE",
+			accessKeyId: DNS_SECRET_MASK,
 			secretAccessKey: DNS_SECRET_MASK,
+		});
+	});
+
+	it("masks both porkbun keys", () => {
+		const masked = maskDnsProviderConfig({
+			providerType: "porkbun",
+			apiKey: "pk1_stored",
+			secretApiKey: "sk1_stored",
+		});
+
+		expect(masked).toEqual({
+			providerType: "porkbun",
+			apiKey: DNS_SECRET_MASK,
+			secretApiKey: DNS_SECRET_MASK,
 		});
 	});
 
@@ -95,7 +109,46 @@ describe("mergeDnsProviderConfig", () => {
 		);
 	});
 
-	it("does not require re-entry for fields that are not sensitive", () => {
+	it("restores masked route53 and porkbun key ids from the stored config", () => {
+		expect(
+			mergeDnsProviderConfig(
+				{
+					providerType: "route53",
+					accessKeyId: DNS_SECRET_MASK,
+					secretAccessKey: DNS_SECRET_MASK,
+				},
+				{
+					providerType: "route53",
+					accessKeyId: "AKIA_STORED",
+					secretAccessKey: "stored-secret",
+				},
+			),
+		).toEqual({
+			providerType: "route53",
+			accessKeyId: "AKIA_STORED",
+			secretAccessKey: "stored-secret",
+		});
+		expect(
+			mergeDnsProviderConfig(
+				{
+					providerType: "porkbun",
+					apiKey: DNS_SECRET_MASK,
+					secretApiKey: DNS_SECRET_MASK,
+				},
+				{
+					providerType: "porkbun",
+					apiKey: "pk1_stored",
+					secretApiKey: "sk1_stored",
+				},
+			),
+		).toEqual({
+			providerType: "porkbun",
+			apiKey: "pk1_stored",
+			secretApiKey: "sk1_stored",
+		});
+	});
+
+	it("keeps a newly entered key id next to a masked secret", () => {
 		const existing = {
 			providerType: "route53" as const,
 			accessKeyId: "AKIA_OLD",

@@ -45,7 +45,10 @@ export const buildMysqlPasswordChangeCommand = ({
 }) => {
 	const safeTargetUser = assertSafeDatabaseIdentifier(targetUser);
 	const sql = `ALTER USER ${quoteSqlLiteral(safeTargetUser)}@'%' IDENTIFIED BY ${quoteSqlLiteral(password)}; FLUSH PRIVILEGES;`;
-	return `docker exec "$CONTAINER_ID" ${client} -u root ${quoteShellArg(`-p${databaseRootPassword}`)} -e ${quoteShellArg(sql)}`;
+	// A failed command's text is returned in the error; there the root password
+	// only appears as an env assignment, which redactSensitiveText masks.
+	const clientCommand = `${client} -u root -p"$DOKPLOY_DB_PASSWORD" -e ${quoteShellArg(sql)}`;
+	return `docker exec -e DOKPLOY_DB_PASSWORD=${quoteShellArg(databaseRootPassword)} "$CONTAINER_ID" sh -c ${quoteShellArg(clientCommand)}`;
 };
 
 export const buildRedisPasswordChangeCommand = ({

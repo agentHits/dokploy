@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import path, { join } from "node:path";
 import { IS_CLOUD, paths } from "@dokploy/server/constants";
 import {
@@ -19,6 +20,7 @@ import {
 	buildPrivateKeyWriteCommand,
 	buildProviderEchoCommand,
 	buildRemovePathCommand,
+	type GitHttpCredentials,
 } from "./commands";
 
 interface CloneGitRepository {
@@ -30,6 +32,7 @@ interface CloneGitRepository {
 	serverId: string | null;
 	type?: "application" | "compose";
 	outputPathOverride?: string;
+	checkoutRevision?: string;
 }
 
 const customGitUrlHostname = (customGitUrl: string) => {
@@ -80,6 +83,7 @@ export const cloneGitRepository = async ({
 		enableSubmodules,
 		serverId,
 		outputPathOverride,
+		checkoutRevision,
 	} = entity;
 	const { SSH_PATH, COMPOSE_PATH, APPLICATIONS_PATH } = paths(!!serverId);
 
@@ -90,15 +94,16 @@ export const cloneGitRepository = async ({
 
 	await assertCustomGitUrlAllowed(customGitUrl);
 	const redactedCustomGitUrl = redactSensitiveText(customGitUrl);
+	const { cloneUrl, credentials } = splitHttpUrlCredentials(customGitUrl);
 
-	const temporalKeyPath = path.join("/tmp", "id_rsa");
-
-	if (customGitSSHKeyId) {
-		const sshKey = await findSSHKeyById(customGitSSHKeyId);
-
-		command += buildPrivateKeyWriteCommand(sshKey.privateKey, temporalKeyPath);
-		command += `${quoteShellArgs(["chmod", "600", temporalKeyPath])};`;
-	}
+	// A fixed key path would be shared by concurrent deployments.
+	const temporalKeyPath = path.join(
+		"/tmp",
+		`dokploy-git-ssh-key-${randomUUID()}`,
+	);
+	const sshKey = customGitSSHKeyId
+		? await findSSHKeyById(customGitSSHKeyId)
+		: null;
 	const basePath = type === "compose" ? COMPOSE_PATH : APPLICATIONS_PATH;
 	const outputPath = outputPathOverride ?? join(basePath, appName, "code");
 	const knownHostsPath = path.join(SSH_PATH, "known_hosts");
@@ -123,26 +128,70 @@ export const cloneGitRepository = async ({
 		});
 	}
 
-	if (customGitSSHKeyId) {
+	const removeKeyCommand = sshKey
+		? buildRemovePathCommand(temporalKeyPath)
+		: "";
+	if (sshKey) {
 		const { port } = sanitizeRepoPathSSH(customGitUrl);
 		command += buildGitSshEnvironmentCommand({
 			knownHostsPath,
 			port,
 			privateKeyPath: temporalKeyPath,
 		});
+		command += buildPrivateKeyWriteCommand(sshKey.privateKey, temporalKeyPath);
 	}
 	command += `if ! ${buildGitCloneCommand({
 		branch: customGitBranch,
-		cloneUrl: customGitUrl,
+		checkoutRevision,
+		cloneUrl,
+		credentials,
 		enableSubmodules,
 		outputPath,
 	})}; then
+					${removeKeyCommand}
 					${buildProviderEchoCommand(`❌ [ERROR] Fail to clone the repository ${redactedCustomGitUrl}`)}
 					exit 1;
 				fi
+				${removeKeyCommand}
 			`;
 
 	return command;
+};
+
+const decodeUrlComponent = (value: string) => {
+	try {
+		return decodeURIComponent(value);
+	} catch {
+		return value;
+	}
+};
+
+const splitHttpUrlCredentials = (
+	repositoryUrl: string,
+): { cloneUrl: string; credentials?: GitHttpCredentials } => {
+	if (!isHttpOrHttps(repositoryUrl)) {
+		return { cloneUrl: repositoryUrl };
+	}
+
+	let url: URL;
+	try {
+		url = new URL(repositoryUrl);
+	} catch {
+		return { cloneUrl: repositoryUrl };
+	}
+
+	if (!url.password) {
+		return { cloneUrl: repositoryUrl };
+	}
+
+	const credentials = {
+		username: decodeUrlComponent(url.username),
+		password: decodeUrlComponent(url.password),
+	};
+	url.username = "";
+	url.password = "";
+
+	return { cloneUrl: url.toString(), credentials };
 };
 
 const isHttpOrHttps = (url: string): boolean => {

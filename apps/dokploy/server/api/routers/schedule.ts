@@ -20,6 +20,7 @@ import {
 	updateSchedule,
 } from "@dokploy/server/services/schedule";
 import { signScheduledQueueJob } from "@dokploy/server/utils/schedules/signed-job";
+import { redactServiceRelationSecrets } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { asc, desc, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -162,6 +163,7 @@ export const scheduleRouter = createTRPCRouter({
 				}
 			} else {
 				await checkPermission(ctx, { schedule: ["create"] });
+				await assertHostScheduleAccess(ctx, scheduleType, input.serverId);
 
 				if (IS_CLOUD && input.scheduleType === "server" && input.serverId) {
 					await assertScheduledJobLimit(
@@ -399,7 +401,7 @@ export const scheduleRouter = createTRPCRouter({
 					ctx.session.activeOrganizationId,
 				),
 			};
-			return db.query.schedules.findMany({
+			const scheduleList = await db.query.schedules.findMany({
 				where: where[input.scheduleType],
 				orderBy: [asc(schedules.createdAt)],
 				with: {
@@ -425,6 +427,7 @@ export const scheduleRouter = createTRPCRouter({
 					},
 				},
 			});
+			return scheduleList.map((item) => redactServiceRelationSecrets(item));
 		}),
 
 	one: protectedProcedure
@@ -440,7 +443,7 @@ export const scheduleRouter = createTRPCRouter({
 				await checkPermission(ctx, { schedule: ["read"] });
 				await assertServerLevelScheduleAccess(ctx, schedule);
 			}
-			return schedule;
+			return redactServiceRelationSecrets(schedule);
 		}),
 
 	runManually: protectedProcedure

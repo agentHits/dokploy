@@ -147,7 +147,11 @@ vi.mock("@dokploy/server", () => ({
 }));
 
 vi.mock("@dokploy/server/db", () => ({
-	db: {},
+	db: {
+		delete: () => ({
+			where: () => ({ returning: async () => [] }),
+		}),
+	},
 }));
 
 vi.mock("@dokploy/server/services/git-provider", () => ({
@@ -403,6 +407,84 @@ describe("service environment reveal boundary", () => {
 					project: { env: "PROJECT_SHARED=secret" },
 				},
 			});
+		}
+	});
+
+	it("redacts compose backup metadata passwords in one and delete", async () => {
+		permissionMocks.hasPermission.mockResolvedValue(true);
+		serverMocks.findComposeById.mockResolvedValue({
+			...compose(),
+			backups: [
+				{
+					backupId: "backup-1",
+					backupType: "compose",
+					databaseType: "mariadb",
+					serviceName: "db",
+					destination: { destinationId: "destination-1", name: "bucket" },
+					deployments: [],
+					metadata: {
+						mariadb: {
+							databaseUser: "app",
+							databasePassword: "mariadb-password",
+						},
+					},
+				},
+				{
+					backupId: "backup-2",
+					backupType: "compose",
+					databaseType: "mysql",
+					serviceName: "mysql",
+					metadata: { mysql: { databaseRootPassword: "mysql-root-password" } },
+				},
+				{
+					backupId: "backup-3",
+					backupType: "compose",
+					databaseType: "mongo",
+					serviceName: "mongo",
+					metadata: {
+						mongo: { databaseUser: "app", databasePassword: "mongo-password" },
+					},
+				},
+			],
+		});
+
+		const caller = composeRouter.createCaller(createContext());
+		const read = await caller.one({ composeId: "compose-1" });
+		const deleted = await caller.delete({
+			composeId: "compose-1",
+			deleteVolumes: false,
+		});
+
+		for (const response of [read, deleted]) {
+			expect(response.backups).toEqual([
+				expect.objectContaining({
+					backupId: "backup-1",
+					destination: { destinationId: "destination-1", name: "bucket" },
+					metadata: {
+						mariadb: {
+							databaseUser: "app",
+							databasePassword: REDACTED_SECRET_VALUE,
+						},
+					},
+				}),
+				expect.objectContaining({
+					backupId: "backup-2",
+					metadata: { mysql: { databaseRootPassword: REDACTED_SECRET_VALUE } },
+				}),
+				expect.objectContaining({
+					backupId: "backup-3",
+					metadata: {
+						mongo: {
+							databaseUser: "app",
+							databasePassword: REDACTED_SECRET_VALUE,
+						},
+					},
+				}),
+			]);
+			const serialized = JSON.stringify(response);
+			expect(serialized).not.toContain("mariadb-password");
+			expect(serialized).not.toContain("mysql-root-password");
+			expect(serialized).not.toContain("mongo-password");
 		}
 	});
 

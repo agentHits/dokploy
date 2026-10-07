@@ -21,7 +21,9 @@ export const rollbackRouter = createTRPCRouter({
 						deployment: ["create"],
 					});
 				}
-				const result = await removeRollbackById(input.rollbackId);
+				const { fullContext: _, ...result } = await removeRollbackById(
+					input.rollbackId,
+				);
 				await audit(ctx, {
 					action: "delete",
 					resourceType: "deployment",

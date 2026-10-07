@@ -285,12 +285,26 @@ const assertCanDeleteOwnAccount = async (ctx: {
 	}
 };
 
+// Member listings only need profile fields; the user row also holds billing,
+// license and trusted-origin settings of the account owner.
+const memberUserColumns = {
+	id: true,
+	firstName: true,
+	lastName: true,
+	email: true,
+	emailVerified: true,
+	image: true,
+	banned: true,
+	twoFactorEnabled: true,
+	createdAt: true,
+} as const;
+
 export const userRouter = createTRPCRouter({
 	all: withPermission("member", "read").query(async ({ ctx }) => {
 		return await db.query.member.findMany({
 			where: eq(member.organizationId, ctx.session.activeOrganizationId),
 			with: {
-				user: true,
+				user: { columns: memberUserColumns },
 			},
 			orderBy: [asc(member.createdAt)],
 		});
@@ -308,7 +322,7 @@ export const userRouter = createTRPCRouter({
 					eq(member.organizationId, ctx.session?.activeOrganizationId || ""),
 				),
 				with: {
-					user: true,
+					user: { columns: memberUserColumns },
 				},
 			});
 
@@ -430,7 +444,12 @@ export const userRouter = createTRPCRouter({
 					with: {
 						backups: {
 							with: {
-								destination: true,
+								destination: {
+									columns: {
+										accessKey: false,
+										secretAccessKey: false,
+									},
+								},
 								deployments: true,
 							},
 						},

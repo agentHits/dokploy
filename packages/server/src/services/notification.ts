@@ -38,6 +38,7 @@ import {
 	teams,
 	telegram,
 } from "@dokploy/server/db/schema";
+import { assertStoredSecretTargetUnchanged } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import type { z } from "zod";
@@ -72,6 +73,14 @@ const normalizeBaseUrlUpdateValue = (
 		? normalizeNotificationBaseUrl(secretValue, { fieldName })
 		: undefined;
 };
+
+// Rows saved before targets were normalized must still match when the form
+// sends their stored value back unchanged.
+const nextTargetValue = <T>(
+	raw: T | undefined,
+	normalized: T | undefined,
+	stored: T,
+) => (normalized === undefined || raw === stored ? stored : normalized);
 
 export const createSlackNotification = async (
 	input: z.infer<typeof apiCreateSlack>,
@@ -425,6 +434,26 @@ export const createEmailNotification = async (
 export const updateEmailNotification = async (
 	input: z.infer<typeof apiUpdateEmail>,
 ) => {
+	const smtpServer = input.smtpServer
+		? normalizeNotificationSmtpHost(input.smtpServer)
+		: undefined;
+	const password = notificationSecretUpdateValue(input.password);
+	if (password === undefined) {
+		const current = await db.query.email.findFirst({
+			where: eq(email.emailId, input.emailId),
+		});
+		if (current?.password) {
+			assertStoredSecretTargetUnchanged("SMTP password", {
+				smtpServer: [
+					nextTargetValue(input.smtpServer, smtpServer, current.smtpServer),
+					current.smtpServer,
+				],
+				smtpPort: [input.smtpPort ?? current.smtpPort, current.smtpPort],
+				username: [input.username ?? current.username, current.username],
+			});
+		}
+	}
+
 	await db.transaction(async (tx) => {
 		const newDestination = await tx
 			.update(notifications)
@@ -454,12 +483,10 @@ export const updateEmailNotification = async (
 		await tx
 			.update(email)
 			.set({
-				smtpServer: input.smtpServer
-					? normalizeNotificationSmtpHost(input.smtpServer)
-					: undefined,
+				smtpServer,
 				smtpPort: input.smtpPort,
 				username: input.username,
-				password: notificationSecretUpdateValue(input.password),
+				password,
 				fromAddress: input.fromAddress,
 				toAddresses: input.toAddresses,
 			})
@@ -625,6 +652,25 @@ export const createGotifyNotification = async (
 export const updateGotifyNotification = async (
 	input: z.infer<typeof apiUpdateGotify>,
 ) => {
+	const serverUrl = normalizeBaseUrlUpdateValue(
+		input.serverUrl,
+		"Gotify server URL",
+	);
+	const appToken = notificationSecretUpdateValue(input.appToken);
+	if (appToken === undefined) {
+		const current = await db.query.gotify.findFirst({
+			where: eq(gotify.gotifyId, input.gotifyId),
+		});
+		if (current?.appToken) {
+			assertStoredSecretTargetUnchanged("Gotify app token", {
+				serverUrl: [
+					nextTargetValue(input.serverUrl, serverUrl, current.serverUrl),
+					current.serverUrl,
+				],
+			});
+		}
+	}
+
 	await db.transaction(async (tx) => {
 		const newDestination = await tx
 			.update(notifications)
@@ -654,11 +700,8 @@ export const updateGotifyNotification = async (
 		await tx
 			.update(gotify)
 			.set({
-				serverUrl: normalizeBaseUrlUpdateValue(
-					input.serverUrl,
-					"Gotify server URL",
-				),
-				appToken: notificationSecretUpdateValue(input.appToken),
+				serverUrl,
+				appToken,
 				priority: input.priority,
 				decoration: input.decoration,
 			})
@@ -726,6 +769,25 @@ export const createNtfyNotification = async (
 export const updateNtfyNotification = async (
 	input: z.infer<typeof apiUpdateNtfy>,
 ) => {
+	const serverUrl = normalizeBaseUrlUpdateValue(
+		input.serverUrl,
+		"ntfy server URL",
+	);
+	const accessToken = notificationOptionalSecretUpdateValue(input.accessToken);
+	if (accessToken === undefined) {
+		const current = await db.query.ntfy.findFirst({
+			where: eq(ntfy.ntfyId, input.ntfyId),
+		});
+		if (current?.accessToken) {
+			assertStoredSecretTargetUnchanged("ntfy access token", {
+				serverUrl: [
+					nextTargetValue(input.serverUrl, serverUrl, current.serverUrl),
+					current.serverUrl,
+				],
+			});
+		}
+	}
+
 	await db.transaction(async (tx) => {
 		const newDestination = await tx
 			.update(notifications)
@@ -755,12 +817,9 @@ export const updateNtfyNotification = async (
 		await tx
 			.update(ntfy)
 			.set({
-				serverUrl: normalizeBaseUrlUpdateValue(
-					input.serverUrl,
-					"ntfy server URL",
-				),
+				serverUrl,
 				topic: input.topic,
-				accessToken: notificationOptionalSecretUpdateValue(input.accessToken),
+				accessToken,
 				priority: input.priority,
 			})
 			.where(eq(ntfy.ntfyId, input.ntfyId));
@@ -826,6 +885,26 @@ export const createCustomNotification = async (
 export const updateCustomNotification = async (
 	input: z.infer<typeof apiUpdateCustom>,
 ) => {
+	const endpoint = normalizeWebhookUpdateValue(
+		input.endpoint,
+		"Custom notification endpoint",
+		{ allowPrivateNetwork: false },
+	);
+	const headers = notificationHeadersUpdateValue(input.headers);
+	if (headers === undefined) {
+		const current = await db.query.custom.findFirst({
+			where: eq(custom.customId, input.customId),
+		});
+		if (current?.headers && Object.keys(current.headers).length > 0) {
+			assertStoredSecretTargetUnchanged("custom notification headers", {
+				endpoint: [
+					nextTargetValue(input.endpoint, endpoint, current.endpoint),
+					current.endpoint,
+				],
+			});
+		}
+	}
+
 	await db.transaction(async (tx) => {
 		const newDestination = await tx
 			.update(notifications)
@@ -855,12 +934,8 @@ export const updateCustomNotification = async (
 		await tx
 			.update(custom)
 			.set({
-				endpoint: normalizeWebhookUpdateValue(
-					input.endpoint,
-					"Custom notification endpoint",
-					{ allowPrivateNetwork: false },
-				),
-				headers: notificationHeadersUpdateValue(input.headers),
+				endpoint,
+				headers,
 			})
 			.where(eq(custom.customId, input.customId));
 

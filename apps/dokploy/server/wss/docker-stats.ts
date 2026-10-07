@@ -12,6 +12,7 @@ import { quote } from "shell-quote";
 import { WebSocketServer } from "ws";
 import { assertContainerMetricsServiceAccess } from "@/server/api/utils/monitoring-access";
 import { canAccessDockerOverWss } from "./authorize";
+import { verifyWebSocketOrigin } from "./origin";
 import { canAccessMonitoringWebSocket } from "./server-permission";
 
 type AppType = "application" | "stack" | "docker-compose";
@@ -66,6 +67,7 @@ export const setupDockerStatsMonitoringSocketServer = (
 ) => {
 	const wssTerm = new WebSocketServer({
 		noServer: true,
+		verifyClient: verifyWebSocketOrigin,
 		path: "/listen-docker-stats-monitoring",
 	});
 

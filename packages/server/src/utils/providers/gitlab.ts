@@ -173,14 +173,9 @@ const getGitlabProjectPathNamespace = (input: {
 }) =>
 	input.pathNamespace || [input.owner, input.repo].filter(Boolean).join("/");
 
-const getGitlabCloneUrl = (
-	gitlab: GitlabInfo,
-	baseUrl: string,
-	repoClone: string,
-) => {
+const getGitlabCloneUrl = (baseUrl: string, repoClone: string) => {
 	const isSecure = baseUrl.startsWith("https://");
-	const cloneUrl = `http${isSecure ? "s" : ""}://oauth2:${gitlab?.accessToken}@${repoClone}`;
-	return cloneUrl;
+	return `http${isSecure ? "s" : ""}://${repoClone}`;
 };
 
 interface CloneGitlabRepository {
@@ -192,6 +187,7 @@ interface CloneGitlabRepository {
 	serverId: string | null;
 	type?: "application" | "compose";
 	outputPathOverride?: string;
+	checkoutRevision?: string;
 }
 
 export const cloneGitlabRepository = async ({
@@ -207,6 +203,7 @@ export const cloneGitlabRepository = async ({
 		enableSubmodules,
 		serverId,
 		outputPathOverride,
+		checkoutRevision,
 	} = entity;
 	const { COMPOSE_PATH, APPLICATIONS_PATH } = paths(!!serverId);
 
@@ -237,13 +234,15 @@ export const cloneGitlabRepository = async ({
 	command += buildCreateDirectoryCommand(outputPath);
 	const baseUrl = await getGitlabProviderBaseUrl(gitlab);
 	const repoClone = getGitlabRepoClone(baseUrl, gitlabPathNamespace);
-	const cloneUrl = getGitlabCloneUrl(gitlab, baseUrl, repoClone);
+	const cloneUrl = getGitlabCloneUrl(baseUrl, repoClone);
 	command += buildProviderEchoCommand(
 		`Cloning Repo ${repoClone} to ${outputPath}: ✅`,
 	);
 	command += `${buildGitCloneCommand({
 		branch: gitlabBranch!,
+		checkoutRevision,
 		cloneUrl,
+		credentials: { username: "oauth2", password: gitlab.accessToken ?? "" },
 		enableSubmodules,
 		outputPath,
 	})};`;

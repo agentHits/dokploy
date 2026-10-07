@@ -1,3 +1,5 @@
+import { TRPCError } from "@trpc/server";
+
 export const REDACTED_SECRET_VALUE = "__DOKPLOY_REDACTED_SECRET__";
 const MCP_REDACTED_SECRET_VALUE = "[REDACTED]";
 
@@ -5,6 +7,11 @@ export type SecretRecord = Record<string, unknown>;
 
 const SENSITIVE_KEY_PATTERN =
 	"(?:access[_-]?key|api[_-]?key|authorization|credential|private[_-]?key|refresh[_-]?token|secret|token|password|passwd|pwd)";
+
+// shell-quote leaves values bare with backslash escapes (pa\&ss) or wraps them
+// in double quotes with escaped quotes, so a value ends at the first unescaped
+// separator, not at the first separator character.
+const SHELL_VALUE_PATTERN = String.raw`"(?:\\.|[^"\\])*"|'[^']*'|(?:\\.|[^\s;&|\\])+`;
 
 export const isRedactedSecretValue = (value: unknown) =>
 	value === REDACTED_SECRET_VALUE;
@@ -84,9 +91,38 @@ const NO_SHARED_ENV_READ_ACCESS: SharedEnvReadAccess = {
 	projectEnv: false,
 };
 
-// Service reads load environment.project for organization checks. The env of
-// those relations is shared by every service in them, so it is only returned to
-// callers with the matching environmentEnvVars/projectEnvVars read permission.
+// The env of an environment and its project is shared by every service in them,
+// so it is only returned to callers with the matching
+// environmentEnvVars/projectEnvVars read permission.
+export const redactEnvironmentSharedEnvFor = <
+	T extends SecretRecord | null | undefined,
+>(
+	environment: T,
+	access: SharedEnvReadAccess,
+) => {
+	if (!environment) {
+		return environment;
+	}
+
+	let redacted: SecretRecord = environment;
+	if (!access.environmentEnv) {
+		redacted = redactSecretFields(redacted, ["env"]);
+	}
+	if (
+		!access.projectEnv &&
+		redacted.project &&
+		typeof redacted.project === "object"
+	) {
+		redacted = {
+			...redacted,
+			project: redactSecretFields(redacted.project as SecretRecord, ["env"]),
+		};
+	}
+
+	return redacted as T;
+};
+
+// Service reads load environment.project for organization checks.
 const redactServiceSharedEnv = <T extends SecretRecord | null | undefined>(
 	record: T,
 	access: SharedEnvReadAccess,
@@ -95,22 +131,13 @@ const redactServiceSharedEnv = <T extends SecretRecord | null | undefined>(
 		return record;
 	}
 
-	let environment = record.environment as SecretRecord;
-	if (!access.environmentEnv) {
-		environment = redactSecretFields(environment, ["env"]);
-	}
-	if (
-		!access.projectEnv &&
-		environment.project &&
-		typeof environment.project === "object"
-	) {
-		environment = {
-			...environment,
-			project: redactSecretFields(environment.project as SecretRecord, ["env"]),
-		};
-	}
-
-	return { ...record, environment } as T;
+	return {
+		...record,
+		environment: redactEnvironmentSharedEnvFor(
+			record.environment as SecretRecord,
+			access,
+		),
+	} as T;
 };
 
 export const redactDeployableServiceSecrets = <
@@ -232,6 +259,56 @@ export const redactBackupMetadataSecrets = <T>(metadata: T): T => {
 	return redacted as T;
 };
 
+export const redactComposeServiceSecrets = <
+	T extends SecretRecord | null | undefined,
+>(
+	record: T,
+) =>
+	redactSecretFields(redactDeployableServiceSecrets(record), ["composeFile"]);
+
+// For records such as backups, volume backups and schedules that load the
+// service (and its environment/project) or server they are bound to.
+export const redactServiceRelationSecrets = <
+	T extends SecretRecord | null | undefined,
+>(
+	record: T,
+) => {
+	if (!record) {
+		return record;
+	}
+
+	const redacted: SecretRecord = { ...record };
+	if (redacted.application && typeof redacted.application === "object") {
+		redacted.application = redactDeployableServiceSecrets(
+			redacted.application as SecretRecord,
+		);
+	}
+	if (redacted.compose && typeof redacted.compose === "object") {
+		redacted.compose = redactComposeServiceSecrets(
+			redacted.compose as SecretRecord,
+		);
+	}
+	for (const key of [
+		"postgres",
+		"mysql",
+		"mariadb",
+		"mongo",
+		"redis",
+		"libsql",
+	]) {
+		if (redacted[key] && typeof redacted[key] === "object") {
+			redacted[key] = redactDatabaseServiceSecrets(
+				redacted[key] as SecretRecord,
+			);
+		}
+	}
+	if ("server" in redacted) {
+		redacted.server = redactNestedServerSecrets(redacted.server);
+	}
+
+	return redacted as T;
+};
+
 export const redactBackupScheduleSecrets = <
 	T extends SecretRecord | null | undefined,
 >(
@@ -241,20 +318,10 @@ export const redactBackupScheduleSecrets = <
 		return record;
 	}
 
-	const redacted = {
+	return redactServiceRelationSecrets({
 		...record,
 		metadata: redactBackupMetadataSecrets(record.metadata),
-	};
-
-	for (const key of ["postgres", "mysql", "mariadb", "mongo", "libsql"]) {
-		if (redacted[key] && typeof redacted[key] === "object") {
-			redacted[key] = redactDatabaseServiceSecrets(
-				redacted[key] as SecretRecord,
-			);
-		}
-	}
-
-	return redacted as T;
+	}) as T;
 };
 
 export const redactProjectNestedSecrets = <
@@ -325,23 +392,6 @@ export const redactProjectNestedSecrets = <
 	return redactedProject as T;
 };
 
-export const redactRollbackFullContextSecrets = <T>(fullContext: T): T => {
-	if (!fullContext || typeof fullContext !== "object") {
-		return fullContext;
-	}
-
-	const redacted = { ...(fullContext as SecretRecord) };
-	for (const key of ["registry", "buildRegistry", "rollbackRegistry"]) {
-		if (redacted[key] && typeof redacted[key] === "object") {
-			redacted[key] = redactSecretFields(redacted[key] as SecretRecord, [
-				"password",
-			]);
-		}
-	}
-
-	return redacted as T;
-};
-
 export function redactSensitiveText(value: string): string;
 export function redactSensitiveText(value: null): null;
 export function redactSensitiveText(value: undefined): undefined;
@@ -374,7 +424,7 @@ export function redactSensitiveText(value: string | null | undefined) {
 
 	redacted = redacted.replace(
 		new RegExp(
-			`(\\b[A-Z0-9_]*${SENSITIVE_KEY_PATTERN}[A-Z0-9_]*=)("[^"]*"|'[^']*'|[^\\s;&|]+)`,
+			`(\\b[A-Z0-9_]*${SENSITIVE_KEY_PATTERN}[A-Z0-9_]*=)(${SHELL_VALUE_PATTERN})`,
 			"gi",
 		),
 		`$1${REDACTED_SECRET_VALUE}`,
@@ -397,8 +447,19 @@ export function redactSensitiveText(value: string | null | undefined) {
 	// after them is a positional argument (the database name), not a secret.
 	redacted = redacted.replace(
 		new RegExp(
-			`(\\s(?!--?no-)--?[a-z0-9-]*${SENSITIVE_KEY_PATTERN}[a-z0-9-]*(?:=|\\s+))("[^"]*"|'[^']*'|[^\\s;&|]+)`,
+			`(\\s(?!--?no-)--?[a-z0-9-]*${SENSITIVE_KEY_PATTERN}[a-z0-9-]*(?:=|\\s+))(${SHELL_VALUE_PATTERN})`,
 			"gi",
+		),
+		`$1${REDACTED_SECRET_VALUE}`,
+	);
+
+	// mysql/mariadb clients take the password glued to -p. A separate word after
+	// -p is not a password, uppercase -P is the port, and -p of other tools
+	// (docker -p, ssh -p, compose -p) is a port or project name.
+	redacted = redacted.replace(
+		new RegExp(
+			String.raw`(\b(?:mysql|mariadb)[a-z-]*(?:\\.|[^\n;&|\\])*?\s-p)(${SHELL_VALUE_PATTERN})`,
+			"g",
 		),
 		`$1${REDACTED_SECRET_VALUE}`,
 	);
@@ -451,6 +512,39 @@ export const secretUpdateValue = (value: unknown) => {
 	}
 
 	return value;
+};
+
+type SecretTargetFields = Record<
+	string,
+	readonly [next: unknown, stored: unknown]
+>;
+
+const isUnsetSecretTargetValue = (value: unknown) =>
+	value === undefined || value === null || value === "";
+
+export const changedSecretTargetFields = (fields: SecretTargetFields) =>
+	Object.entries(fields)
+		.filter(([, [next, stored]]) =>
+			isUnsetSecretTargetValue(next) && isUnsetSecretTargetValue(stored)
+				? false
+				: next !== stored,
+		)
+		.map(([field]) => field);
+
+// A kept stored secret may only travel to the endpoint and identity it was
+// saved with. Otherwise a caller who can edit the record but not read the
+// secret could point it at a host they control and capture it.
+export const assertStoredSecretTargetUnchanged = (
+	secretLabel: string,
+	fields: SecretTargetFields,
+) => {
+	const changed = changedSecretTargetFields(fields);
+	if (changed.length > 0) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: `Re-enter the ${secretLabel} to change ${changed.join(", ")}`,
+		});
+	}
 };
 
 export const preserveSecretPlaceholderFields = <

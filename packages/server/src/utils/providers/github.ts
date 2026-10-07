@@ -192,6 +192,7 @@ interface CloneGithubRepository {
 	enableSubmodules: boolean;
 	serverId: string | null;
 	outputPathOverride?: string;
+	checkoutRevision?: string;
 }
 export const cloneGithubRepository = async ({
 	type = "application",
@@ -208,6 +209,7 @@ export const cloneGithubRepository = async ({
 		enableSubmodules,
 		serverId,
 		outputPathOverride,
+		checkoutRevision,
 	} = entity;
 	const { APPLICATIONS_PATH, COMPOSE_PATH } = paths(!!serverId);
 
@@ -238,14 +240,16 @@ export const cloneGithubRepository = async ({
 	const repoclone = `${cloneBase.host}/${owner}/${repository}.git`;
 	command += buildRemovePathCommand(outputPath);
 	command += buildCreateDirectoryCommand(outputPath);
-	const cloneUrl = `${cloneBase.protocol}//oauth2:${token}@${repoclone}`;
+	const cloneUrl = `${cloneBase.protocol}//${repoclone}`;
 
 	command += buildProviderEchoCommand(
 		`Cloning Repo ${repoclone} to ${outputPath}: ✅`,
 	);
 	command += `${buildGitCloneCommand({
 		branch: branch!,
+		checkoutRevision,
 		cloneUrl,
+		credentials: { username: "oauth2", password: token },
 		enableSubmodules,
 		outputPath,
 	})};`;

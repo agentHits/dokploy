@@ -9,7 +9,6 @@ import {
 	redactDeployableServiceSecrets,
 	redactDeployableServiceSecretsFor,
 	redactProjectNestedSecrets,
-	redactRollbackFullContextSecrets,
 	redactSecretFields,
 	redactSensitiveText,
 	secretUpdateValue,
@@ -326,20 +325,6 @@ describe("shared secret redaction helpers", () => {
 		});
 	});
 
-	it("redacts rollback registry credentials", () => {
-		const redacted = redactRollbackFullContextSecrets({
-			registry: { password: "registry-secret" },
-			buildRegistry: { password: "build-registry-secret" },
-			rollbackRegistry: { password: "rollback-registry-secret" },
-		});
-
-		expect(redacted).toMatchObject({
-			registry: { password: REDACTED_SECRET_VALUE },
-			buildRegistry: { password: REDACTED_SECRET_VALUE },
-			rollbackRegistry: { password: REDACTED_SECRET_VALUE },
-		});
-	});
-
 	it("redacts secrets embedded in command and provider error text", () => {
 		const message = [
 			"Command failed: git clone https://x-access-token:ghp_abcdefghijklmnopqrstuvwxyz@github.com/org/repo.git",
@@ -401,6 +386,35 @@ describe("shared secret redaction helpers", () => {
 
 			expect(redacted).not.toContain("hunter2");
 			expect(redacted).toContain(REDACTED_SECRET_VALUE);
+		}
+	});
+
+	it("masks passwords glued to mysql/mariadb -p and shell-escaped values", () => {
+		const messages = [
+			"docker exec -i $CONTAINER_ID sh -c 'mysql -u root -phunter2 appdb'",
+			"mariadb -u app -p'hunter2 x' appdb",
+			String.raw`mysqldump -u root -phunter2\&tail appdb`,
+			String.raw`mariadb-dump --user=app --password=hunter2\|tail appdb`,
+			String.raw`docker exec -e DOKPLOY_DB_PASSWORD=hunter2\&tail -i c sh`,
+			String.raw`MYSQL_PWD="hunter2\"tail" mysql -u root`,
+		];
+		for (const message of messages) {
+			const redacted = redactSensitiveText(message);
+
+			expect(redacted).not.toContain("hunter2");
+			expect(redacted).not.toContain("tail");
+			expect(redacted).toContain(REDACTED_SECRET_VALUE);
+		}
+
+		const untouched = [
+			"docker run -p 3306:3306 mysql:8",
+			"ssh -p 22 root@example.com 'mysql -u root -p appdb'",
+			"mysql -h db -P3306 -u root appdb",
+			"docker compose -p mysql-stack up -d",
+			"mkdir -p /var/lib/mysql",
+		];
+		for (const message of untouched) {
+			expect(redactSensitiveText(message)).toBe(message);
 		}
 	});
 

@@ -278,9 +278,11 @@ describe("database change-password command boundary", () => {
 		const mysqlSql =
 			"ALTER USER 'dokploy_user'@'%' IDENTIFIED BY 'safePassword123'; FLUSH PRIVILEGES;";
 		expect(command).toContain(
-			`mysql -u root ${quoteShellArg(`-p${databaseRootPassword}`)} -e`,
+			`docker exec -e DOKPLOY_DB_PASSWORD=${quoteShellArg(databaseRootPassword)} "$CONTAINER_ID" sh -c ${quoteShellArg(
+				`mysql -u root -p"$DOKPLOY_DB_PASSWORD" -e ${quoteShellArg(mysqlSql)}`,
+			)}`,
 		);
-		expect(command).toContain(quoteShellArg(mysqlSql));
+		expect(command).not.toContain(`-p${databaseRootPassword}`);
 		expect(command).not.toContain(`-p'${databaseRootPassword}'`);
 		expect(command).not.toContain(`ALTER USER '${databaseUser}'@'%'`);
 	});
@@ -307,9 +309,11 @@ describe("database change-password command boundary", () => {
 		const mariadbSql =
 			"ALTER USER 'dokploy_user'@'%' IDENTIFIED BY 'safePassword123'; FLUSH PRIVILEGES;";
 		expect(command).toContain(
-			`mariadb -u root ${quoteShellArg(`-p${databaseRootPassword}`)} -e`,
+			`docker exec -e DOKPLOY_DB_PASSWORD=${quoteShellArg(databaseRootPassword)} "$CONTAINER_ID" sh -c ${quoteShellArg(
+				`mariadb -u root -p"$DOKPLOY_DB_PASSWORD" -e ${quoteShellArg(mariadbSql)}`,
+			)}`,
 		);
-		expect(command).toContain(quoteShellArg(mariadbSql));
+		expect(command).not.toContain(`-p${databaseRootPassword}`);
 		expect(command).not.toContain(`-p'${databaseRootPassword}'`);
 		expect(command).not.toContain(`ALTER USER '${databaseUser}'@'%'`);
 	});

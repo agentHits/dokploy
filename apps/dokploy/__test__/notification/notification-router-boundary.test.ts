@@ -1,4 +1,5 @@
 import { REDACTED_NOTIFICATION_SECRET } from "@dokploy/server/utils/notifications/security";
+import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -258,6 +259,33 @@ describe("notification router secret and organization boundaries", () => {
 		});
 
 		expect(mocks.updateSlackNotification).not.toHaveBeenCalled();
+		expect(mocks.audit).not.toHaveBeenCalled();
+	});
+
+	it("returns the re-enter message when an email update would reuse the stored password", async () => {
+		mocks.findNotificationById.mockResolvedValue({
+			...notificationWithSecrets,
+			notificationType: "email",
+			emailId: "email-1",
+		});
+		mocks.updateEmailNotification.mockRejectedValue(
+			new TRPCError({
+				code: "BAD_REQUEST",
+				message: "Re-enter the SMTP password to change smtpServer",
+			}),
+		);
+
+		await expect(
+			createCaller().updateEmail({
+				notificationId: "notification-1",
+				emailId: "email-1",
+				smtpServer: "smtp.collector.example.net",
+				password: REDACTED_NOTIFICATION_SECRET,
+			}),
+		).rejects.toMatchObject({
+			code: "BAD_REQUEST",
+			message: "Re-enter the SMTP password to change smtpServer",
+		});
 		expect(mocks.audit).not.toHaveBeenCalled();
 	});
 
