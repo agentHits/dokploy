@@ -521,6 +521,102 @@ export const getDokployImages = async (): Promise<DokployImageInfo[]> => {
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 };
 
+/**
+ * Old Dokploy images that `removeOldDokployImages` deletes: all but the
+ * running one and the previous one. Images that other containers use stay.
+ */
+export const getRemovableDokployImages = (
+	images: DokployImageInfo[],
+	previousImage: string | null,
+) => {
+	const older = images.filter(
+		(image) => !image.isCurrent && image.id !== previousImage,
+	);
+	// Without a recorded previous build, the newest older image stands in for it.
+	return (previousImage ? older : older.slice(1)).filter(
+		(image) => image.otherContainers === 0,
+	);
+};
+
+/** Removes every old Dokploy image except the running and the previous one. */
+export const removeOldDokployImages = async () => {
+	await execAsync(getDokployImageCleanupCommand(0, getDokployPreviousImage()));
+};
+
+export interface UpdateDiskSpace {
+	availableBytes: number | null;
+	totalBytes: number | null;
+	/** Size of the running Dokploy image, about what an update downloads. */
+	requiredBytes: number | null;
+	oldImageCount: number;
+	oldImageBytes: number;
+	buildCacheBytes: number;
+}
+
+// Dokploy runs in a container without the host's /var/lib/docker mounted, but
+// the container's root is an overlay on that disk, so `df /` reports it.
+const getRootDiskSpace = async () => {
+	try {
+		const { stdout } = await execAsync("df -Pk /");
+		const [, total, , available] =
+			stdout.trim().split("\n").pop()?.split(/\s+/) ?? [];
+		const totalKb = Number(total);
+		const availableKb = Number(available);
+		if (!Number.isFinite(totalKb) || !Number.isFinite(availableKb)) {
+			return null;
+		}
+		return { totalBytes: totalKb * 1024, availableBytes: availableKb * 1024 };
+	} catch (error) {
+		console.error("Could not read free disk space", error);
+		return null;
+	}
+};
+
+const getReclaimableBuildCacheBytes = async () => {
+	try {
+		const { stdout } = await execAsync(
+			"docker system df --format '{{json .}}'",
+		);
+		for (const line of stdout.split("\n").filter(Boolean)) {
+			const row = JSON.parse(line) as { Type?: string; Reclaimable?: string };
+			if (row.Type === "Build Cache") {
+				// Images and volumes print "1.2GB (40%)"; drop the percentage.
+				return parseDockerHumanSize(row.Reclaimable?.split(" ")[0]) ?? 0;
+			}
+		}
+	} catch (error) {
+		console.error("Could not read Docker build cache size", error);
+	}
+	return 0;
+};
+
+export const getUpdateDiskSpace = async (): Promise<UpdateDiskSpace> => {
+	const [disk, images, buildCacheBytes] = await Promise.all([
+		getRootDiskSpace(),
+		getDokployImages().catch((error) => {
+			console.error("Could not list Dokploy images", error);
+			return [];
+		}),
+		getReclaimableBuildCacheBytes(),
+	]);
+	const removable = getRemovableDokployImages(
+		images,
+		getDokployPreviousImage(),
+	);
+
+	return {
+		availableBytes: disk?.availableBytes ?? null,
+		totalBytes: disk?.totalBytes ?? null,
+		requiredBytes: images.find((image) => image.isCurrent)?.sizeBytes ?? null,
+		oldImageCount: removable.length,
+		oldImageBytes: removable.reduce(
+			(sum, image) => sum + (image.uniqueSizeBytes ?? image.sizeBytes),
+			0,
+		),
+		buildCacheBytes,
+	};
+};
+
 export const getAgentHitsUpdateCommand = (
 	currentVersion: string,
 	forkVersion?: string | null,

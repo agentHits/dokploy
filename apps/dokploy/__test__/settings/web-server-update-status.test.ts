@@ -148,6 +148,31 @@ describe("web server update status", () => {
 		});
 	});
 
+	it("reports a pull that ran out of disk space", async () => {
+		const script = startFakeScript();
+
+		script.write("aaaaaaaaaaaa: Download complete\n");
+		script.write(
+			"write /var/lib/docker/tmp/GetImageBlob242728759: no space left on device\n",
+		);
+		await script.exit(1);
+
+		expect(getServerUpdateStatus()).toMatchObject({
+			phase: "failed",
+			error: "Not enough disk space to download the new image.",
+			diskFull: true,
+		});
+	});
+
+	it("does not call an ordinary failed pull a full disk", async () => {
+		const script = startFakeScript();
+
+		script.write("Error response from daemon: manifest unknown");
+		await script.exit(1);
+
+		expect(getServerUpdateStatus().diskFull).toBe(false);
+	});
+
 	it("reports a failed service update after the pull", async () => {
 		const script = startFakeScript();
 

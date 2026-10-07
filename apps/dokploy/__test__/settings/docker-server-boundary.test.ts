@@ -30,8 +30,10 @@ const mocks = vi.hoisted(() => ({
 	getDokployVersionData: vi.fn(),
 	getLogCleanupStatus: vi.fn(),
 	getUpdateData: vi.fn(),
+	getUpdateDiskSpace: vi.fn(),
 	getWebServerSettings: vi.fn(),
 	hasValidLicense: vi.fn(),
+	isServerUpdateRunning: vi.fn(),
 	parseRawConfig: vi.fn(),
 	paths: vi.fn(),
 	prepareEnvironmentVariables: vi.fn(),
@@ -45,6 +47,7 @@ const mocks = vi.hoisted(() => ({
 	readPorts: vi.fn(),
 	recreateDirectory: vi.fn(),
 	reloadDockerResource: vi.fn(),
+	removeOldDokployImages: vi.fn(),
 	removeJob: vi.fn(),
 	schedule: vi.fn(),
 	scheduleJob: vi.fn(),
@@ -99,7 +102,9 @@ vi.mock("@dokploy/server", async () => ({
 	getDokployVersionData: mocks.getDokployVersionData,
 	getLogCleanupStatus: mocks.getLogCleanupStatus,
 	getUpdateData: mocks.getUpdateData,
+	getUpdateDiskSpace: mocks.getUpdateDiskSpace,
 	getWebServerSettings: mocks.getWebServerSettings,
+	isServerUpdateRunning: mocks.isServerUpdateRunning,
 	parseRawConfig: mocks.parseRawConfig,
 	paths: mocks.paths,
 	prepareEnvironmentVariables: mocks.prepareEnvironmentVariables,
@@ -114,6 +119,7 @@ vi.mock("@dokploy/server", async () => ({
 	readPorts: mocks.readPorts,
 	recreateDirectory: mocks.recreateDirectory,
 	reloadDockerResource: mocks.reloadDockerResource,
+	removeOldDokployImages: mocks.removeOldDokployImages,
 	sendDockerCleanupNotifications: mocks.sendDockerCleanupNotifications,
 	setupGPUSupport: mocks.setupGPUSupport,
 	spawnAsync: mocks.spawnAsync,
@@ -415,6 +421,39 @@ describe("settings Docker server boundary", () => {
 		expect(mocks.cleanupAllBackground).toHaveBeenCalledWith("server-1");
 	});
 
+	it("frees disk space for an update without touching the build cache", async () => {
+		const space = { availableBytes: 1, oldImageCount: 0 };
+		mocks.isServerUpdateRunning.mockReturnValue(false);
+		mocks.getUpdateDiskSpace.mockResolvedValue(space);
+
+		await expect(
+			createCaller().freeUpdateDiskSpace({ buildCache: false }),
+		).resolves.toEqual(space);
+
+		expect(mocks.removeOldDokployImages).toHaveBeenCalledTimes(1);
+		expect(mocks.cleanupBuilders).not.toHaveBeenCalled();
+	});
+
+	it("clears the build cache only when asked", async () => {
+		mocks.isServerUpdateRunning.mockReturnValue(false);
+
+		await createCaller().freeUpdateDiskSpace({ buildCache: true });
+
+		expect(mocks.removeOldDokployImages).toHaveBeenCalledTimes(1);
+		expect(mocks.cleanupBuilders).toHaveBeenCalledWith();
+	});
+
+	it("does not free disk space while an update runs", async () => {
+		mocks.isServerUpdateRunning.mockReturnValue(true);
+
+		await expect(
+			createCaller().freeUpdateDiskSpace({ buildCache: true }),
+		).rejects.toMatchObject({ code: "CONFLICT" });
+
+		expect(mocks.removeOldDokployImages).not.toHaveBeenCalled();
+		expect(mocks.cleanupBuilders).not.toHaveBeenCalled();
+	});
+
 	it("updates AgentHits installs through the AgentHits update command", async () => {
 		mocks.getUpdateData.mockResolvedValue({
 			latestVersion: "off_v0.29.8/Fork_159+next",
@@ -528,6 +567,7 @@ describe("settings Docker server boundary", () => {
 			layersTotal: 3,
 			layersDownloaded: 1,
 			layersExtracted: 0,
+			diskFull: false,
 			output: [],
 		};
 		mocks.getServerUpdateStatus.mockReturnValue(status);

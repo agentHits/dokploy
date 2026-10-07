@@ -196,8 +196,9 @@ export const UpdateStatusPanel = ({
 								{progress.error ?? "The update failed."}
 							</span>
 							<span className="text-muted-foreground">
-								Check the Dokploy service logs, then close this dialog and try
-								again.
+								{progress.server?.diskFull
+									? "Free up disk space below, then try again."
+									: "Check the Dokploy service logs, then try again."}
 							</span>
 						</div>
 					</div>

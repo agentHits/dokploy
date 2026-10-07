@@ -28,8 +28,10 @@ import {
 	getOfficialUpdateCommand,
 	getServerUpdateStatus,
 	getUpdateData,
+	getUpdateDiskSpace,
 	getWebServerSettings,
 	IS_CLOUD,
+	isServerUpdateRunning,
 	parseRawConfig,
 	paths,
 	prepareEnvironmentVariables,
@@ -44,6 +46,7 @@ import {
 	recreateDirectory,
 	redactWebServerSettings,
 	reloadDockerResource,
+	removeOldDokployImages,
 	resolveDockerDiskUsageDetailLimit,
 	sendDockerCleanupNotifications,
 	setupGPUSupport,
@@ -680,6 +683,40 @@ export const settingsRouter = createTRPCRouter({
 	getServerUpdateStatus: adminProcedure.query(() => {
 		return getServerUpdateStatus();
 	}),
+
+	getUpdateDiskSpace: adminProcedure.query(async () => {
+		if (IS_CLOUD) {
+			return null;
+		}
+		return await getUpdateDiskSpace();
+	}),
+
+	freeUpdateDiskSpace: adminProcedure
+		.input(z.object({ buildCache: z.boolean() }))
+		.mutation(async ({ ctx, input }) => {
+			if (IS_CLOUD) {
+				return null;
+			}
+			// The update script holds the image it is pulling; let it finish first.
+			if (isServerUpdateRunning()) {
+				throw new TRPCError({
+					code: "CONFLICT",
+					message: "An update is running. Wait until it finishes.",
+				});
+			}
+			await removeOldDokployImages();
+			if (input.buildCache) {
+				await cleanupBuilders();
+			}
+			await audit(ctx, {
+				action: "delete",
+				resourceType: "settings",
+				resourceName: input.buildCache
+					? "free-update-disk-space-with-build-cache"
+					: "free-update-disk-space",
+			});
+			return await getUpdateDiskSpace();
+		}),
 
 	getDokployVersion: protectedProcedure.query(() => {
 		return packageInfo.version;

@@ -25,6 +25,7 @@ const serverStatus = (
 	layersTotal: 0,
 	layersDownloaded: 0,
 	layersExtracted: 0,
+	diskFull: false,
 	output: [],
 	...overrides,
 });

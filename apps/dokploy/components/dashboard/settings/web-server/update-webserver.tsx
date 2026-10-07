@@ -22,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { api } from "@/utils/api";
+import { FreeDiskSpace } from "./free-disk-space";
 import {
 	advanceUpdateProgress,
 	createUpdateProgress,
@@ -218,6 +219,10 @@ export const UpdateWebServer = ({
 	};
 
 	const updateFailed = progress?.phase === "failed";
+	const diskFull = updateFailed && !!progress?.server?.diskFull;
+	// Nothing changed on the server before the download finished, so it is safe
+	// to start over without closing the dialog.
+	const canRetry = updateFailed && progress?.failedStep === "downloading";
 
 	const handleClose = () => {
 		if (modalState !== "updating" || updateFailed) {
@@ -274,6 +279,12 @@ export const UpdateWebServer = ({
 								</span>
 							)}
 
+							{modalState === "idle" && (
+								<div className="mt-3">
+									<FreeDiskSpace />
+								</div>
+							)}
+
 							{modalState === "checking" && (
 								<span className="flex items-center gap-2">
 									<Loader2 className="animate-spin h-4 w-4" />
@@ -325,6 +336,12 @@ export const UpdateWebServer = ({
 							{modalState === "updating" && progress && (
 								<UpdateStatusPanel progress={progress} now={now} />
 							)}
+
+							{modalState === "updating" && diskFull && (
+								<div className="mt-3">
+									<FreeDiskSpace diskFull />
+								</div>
+							)}
 						</div>
 					</AlertDialogDescription>
 				</AlertDialogHeader>
@@ -343,6 +360,12 @@ export const UpdateWebServer = ({
 				{modalState === "updating" && updateFailed && (
 					<AlertDialogFooter>
 						<AlertDialogCancel onClick={handleClose}>Close</AlertDialogCancel>
+						{canRetry && (
+							<Button onClick={handleConfirm}>
+								<RefreshCw className="h-4 w-4" />
+								Try again
+							</Button>
+						)}
 					</AlertDialogFooter>
 				)}
 				{modalState === "results" && (
