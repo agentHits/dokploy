@@ -547,8 +547,8 @@ get_macos_lan_ip() {
 	return 1
 }
 
-# OrbStack shares /Users and /tmp with its machines, so the script file is
-# readable inside the machine at the same path.
+# The script goes in on stdin: when it was piped from curl its temp copy
+# lives under /var/folders, which OrbStack machines cannot see.
 run_in_orb_machine() {
 	local mode="$1"
 	shift
@@ -564,7 +564,7 @@ run_in_orb_machine() {
 		env_args+=("$@")
 	fi
 
-	in_orb_machine env ${env_args[@]+"${env_args[@]}"} bash "$script" "$mode"
+	in_orb_machine env ${env_args[@]+"${env_args[@]}"} bash -s "$mode" <"$script"
 }
 
 warn_if_firewall_blocks_orbstack() {
