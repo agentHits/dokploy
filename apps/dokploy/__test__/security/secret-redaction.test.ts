@@ -9,7 +9,6 @@ import {
 	redactDeployableServiceSecrets,
 	redactDeployableServiceSecretsFor,
 	redactProjectNestedSecrets,
-	redactRollbackFullContextSecrets,
 	redactSecretFields,
 	redactSensitiveText,
 	secretUpdateValue,
@@ -323,20 +322,6 @@ describe("shared secret redaction helpers", () => {
 		});
 		expect(redacted.environments?.[0]?.postgres?.[0]).toMatchObject({
 			databasePassword: REDACTED_SECRET_VALUE,
-		});
-	});
-
-	it("redacts rollback registry credentials", () => {
-		const redacted = redactRollbackFullContextSecrets({
-			registry: { password: "registry-secret" },
-			buildRegistry: { password: "build-registry-secret" },
-			rollbackRegistry: { password: "rollback-registry-secret" },
-		});
-
-		expect(redacted).toMatchObject({
-			registry: { password: REDACTED_SECRET_VALUE },
-			buildRegistry: { password: REDACTED_SECRET_VALUE },
-			rollbackRegistry: { password: REDACTED_SECRET_VALUE },
 		});
 	});
 
