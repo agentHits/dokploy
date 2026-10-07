@@ -13,27 +13,53 @@ export const buildRemovePathCommand = (targetPath: string) =>
 export const buildCreateDirectoryCommand = (targetPath: string) =>
 	`${quoteShellArgs(["mkdir", "-p", "--", targetPath])};`;
 
+export type GitHttpCredentials = {
+	username: string;
+	password: string;
+};
+
+// Credentials embedded in the clone URL end up in .git/config (and in every
+// submodule config resolved from it). `git -c` values are never persisted,
+// they still reach submodule clones, and the URL scope keeps the header away
+// from submodules hosted elsewhere.
+const buildGitHttpAuthArgs = (
+	cloneUrl: string,
+	credentials?: GitHttpCredentials,
+) => {
+	if (!credentials) {
+		return [];
+	}
+
+	const { origin } = new URL(cloneUrl);
+	const basic = Buffer.from(
+		`${credentials.username}:${credentials.password}`,
+	).toString("base64");
+
+	return ["-c", `http.${origin}/.extraHeader=Authorization: Basic ${basic}`];
+};
+
 export const buildGitCloneCommand = ({
 	branch,
+	checkoutRevision,
 	cloneUrl,
+	credentials,
 	enableSubmodules,
 	outputPath,
 }: {
 	branch: string;
+	checkoutRevision?: string;
 	cloneUrl: string;
+	credentials?: GitHttpCredentials;
 	enableSubmodules?: boolean;
 	outputPath: string;
 }) => {
-	const args = [
+	const gitArgs = [
 		"git",
 		"-c",
 		"http.followRedirects=false",
-		"clone",
-		"--branch",
-		branch,
-		"--depth",
-		"1",
+		...buildGitHttpAuthArgs(cloneUrl, credentials),
 	];
+	const args = [...gitArgs, "clone", "--branch", branch, "--depth", "1"];
 
 	if (enableSubmodules) {
 		args.push("--recurse-submodules");
@@ -41,7 +67,36 @@ export const buildGitCloneCommand = ({
 
 	args.push("--progress", "--", cloneUrl, outputPath);
 
-	return quoteShellArgs(args);
+	const cloneCommand = quoteShellArgs(args);
+
+	if (!checkoutRevision) {
+		return cloneCommand;
+	}
+
+	// The fetch needs the same per-invocation credentials because the stored
+	// remote has none. The subshell makes a failure anywhere in the chain fail
+	// the whole command under `set -e`.
+	return `(${[
+		cloneCommand,
+		quoteShellArgs([
+			...gitArgs,
+			"-C",
+			outputPath,
+			"fetch",
+			"--depth",
+			"1",
+			"origin",
+			checkoutRevision,
+		]),
+		quoteShellArgs([
+			"git",
+			"-C",
+			outputPath,
+			"checkout",
+			"--detach",
+			checkoutRevision,
+		]),
+	].join(" && ")})`;
 };
 
 export const buildKnownHostsCommand = ({
@@ -61,7 +116,7 @@ export const buildPrivateKeyWriteCommand = (
 ) => {
 	const encodedKey = Buffer.from(privateKey).toString("base64");
 
-	return `echo ${quoteShellArgument(encodedKey)} | base64 -d > ${quoteShellArgument(targetPath)};`;
+	return `(umask 077 && echo ${quoteShellArgument(encodedKey)} | base64 -d > ${quoteShellArgument(targetPath)});`;
 };
 
 export const buildGitSshEnvironmentCommand = ({

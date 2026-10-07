@@ -283,6 +283,29 @@ describe("deployCompose exact revision guard", () => {
 		expect(dbMocks.set).toHaveBeenCalledWith({ composeStatus: "error" });
 	});
 
+	it("fetches the exact revision inside the authenticated clone command", async () => {
+		await expect(
+			deployCompose({
+				composeId: "compose_1",
+				titleLog: "Exact deployment",
+				descriptionLog: "",
+				operationId: "operation-1",
+				expectedRevision: requestedRevision,
+			}),
+		).rejects.toMatchObject({ code: "CONFLICT" });
+
+		expect(exactMocks.cloneGitRepository).toHaveBeenCalledWith(
+			expect.objectContaining({ checkoutRevision: requestedRevision }),
+		);
+		const [, verifyCommand] = exactMocks.execAsync.mock.calls.map(([command]) =>
+			String(command),
+		);
+		// The stored remote carries no credentials, so a separate fetch would
+		// fail for private repositories.
+		expect(verifyCommand).not.toContain("fetch");
+		expect(verifyCommand).toContain("rev-parse");
+	});
+
 	it("keeps successful deployment state when terminal finalization is ambiguous", async () => {
 		vi.clearAllMocks();
 		exactMocks.execAsync.mockReset();
