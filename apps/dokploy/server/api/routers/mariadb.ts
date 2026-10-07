@@ -673,7 +673,10 @@ export const mariadbRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
-			await checkServiceAccess(ctx, input.mariadbId, "read");
+			await checkServicePermissionAndAccess(ctx, input.mariadbId, {
+				service: ["read"],
+				logs: ["read"],
+			});
 			const mariadb = await findMariadbById(input.mariadbId);
 			if (
 				mariadb.environment.project.organizationId !==

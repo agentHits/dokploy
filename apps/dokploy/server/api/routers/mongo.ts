@@ -673,7 +673,10 @@ export const mongoRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
-			await checkServiceAccess(ctx, input.mongoId, "read");
+			await checkServicePermissionAndAccess(ctx, input.mongoId, {
+				service: ["read"],
+				logs: ["read"],
+			});
 			const mongo = await findMongoById(input.mongoId);
 			if (
 				mongo.environment.project.organizationId !==

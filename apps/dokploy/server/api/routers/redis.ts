@@ -658,7 +658,10 @@ export const redisRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
-			await checkServiceAccess(ctx, input.redisId, "read");
+			await checkServicePermissionAndAccess(ctx, input.redisId, {
+				service: ["read"],
+				logs: ["read"],
+			});
 			const redis = await findRedisById(input.redisId);
 			if (
 				redis.environment.project.organizationId !==

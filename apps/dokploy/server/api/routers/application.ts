@@ -1579,7 +1579,10 @@ export const applicationRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
-			await checkServiceAccess(ctx, input.applicationId, "read");
+			await checkServicePermissionAndAccess(ctx, input.applicationId, {
+				service: ["read"],
+				logs: ["read"],
+			});
 			const application = await findApplicationById(input.applicationId);
 			if (
 				application.environment.project.organizationId !==

@@ -1552,7 +1552,10 @@ export const composeRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
-			await checkServiceAccess(ctx, input.composeId, "read");
+			await checkServicePermissionAndAccess(ctx, input.composeId, {
+				service: ["read"],
+				logs: ["read"],
+			});
 			const compose = await findComposeById(input.composeId);
 			if (
 				compose.environment.project.organizationId !==
