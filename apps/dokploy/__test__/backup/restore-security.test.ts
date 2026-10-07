@@ -1171,7 +1171,9 @@ describe("backup restore command safety", () => {
 			type: "mariadb",
 		});
 
-		expect(command).toContain("docker exec -i $CONTAINER_ID sh -c ");
+		expect(command).toContain(
+			"docker exec -e DOKPLOY_DB_PASSWORD=\\`id\\` -i $CONTAINER_ID sh -c ",
+		);
 		expect(command).not.toContain('sh -c "mariadb');
 		expect(command).toContain("\\$\\(id\\)");
 		expect(command).toContain("\\`id\\`");

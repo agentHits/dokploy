@@ -6,6 +6,11 @@ export type SecretRecord = Record<string, unknown>;
 const SENSITIVE_KEY_PATTERN =
 	"(?:access[_-]?key|api[_-]?key|authorization|credential|private[_-]?key|refresh[_-]?token|secret|token|password|passwd|pwd)";
 
+// shell-quote leaves values bare with backslash escapes (pa\&ss) or wraps them
+// in double quotes with escaped quotes, so a value ends at the first unescaped
+// separator, not at the first separator character.
+const SHELL_VALUE_PATTERN = String.raw`"(?:\\.|[^"\\])*"|'[^']*'|(?:\\.|[^\s;&|\\])+`;
+
 export const isRedactedSecretValue = (value: unknown) =>
 	value === REDACTED_SECRET_VALUE;
 
@@ -84,9 +89,38 @@ const NO_SHARED_ENV_READ_ACCESS: SharedEnvReadAccess = {
 	projectEnv: false,
 };
 
-// Service reads load environment.project for organization checks. The env of
-// those relations is shared by every service in them, so it is only returned to
-// callers with the matching environmentEnvVars/projectEnvVars read permission.
+// The env of an environment and its project is shared by every service in them,
+// so it is only returned to callers with the matching
+// environmentEnvVars/projectEnvVars read permission.
+export const redactEnvironmentSharedEnvFor = <
+	T extends SecretRecord | null | undefined,
+>(
+	environment: T,
+	access: SharedEnvReadAccess,
+) => {
+	if (!environment) {
+		return environment;
+	}
+
+	let redacted: SecretRecord = environment;
+	if (!access.environmentEnv) {
+		redacted = redactSecretFields(redacted, ["env"]);
+	}
+	if (
+		!access.projectEnv &&
+		redacted.project &&
+		typeof redacted.project === "object"
+	) {
+		redacted = {
+			...redacted,
+			project: redactSecretFields(redacted.project as SecretRecord, ["env"]),
+		};
+	}
+
+	return redacted as T;
+};
+
+// Service reads load environment.project for organization checks.
 const redactServiceSharedEnv = <T extends SecretRecord | null | undefined>(
 	record: T,
 	access: SharedEnvReadAccess,
@@ -95,22 +129,13 @@ const redactServiceSharedEnv = <T extends SecretRecord | null | undefined>(
 		return record;
 	}
 
-	let environment = record.environment as SecretRecord;
-	if (!access.environmentEnv) {
-		environment = redactSecretFields(environment, ["env"]);
-	}
-	if (
-		!access.projectEnv &&
-		environment.project &&
-		typeof environment.project === "object"
-	) {
-		environment = {
-			...environment,
-			project: redactSecretFields(environment.project as SecretRecord, ["env"]),
-		};
-	}
-
-	return { ...record, environment } as T;
+	return {
+		...record,
+		environment: redactEnvironmentSharedEnvFor(
+			record.environment as SecretRecord,
+			access,
+		),
+	} as T;
 };
 
 export const redactDeployableServiceSecrets = <
@@ -397,7 +422,7 @@ export function redactSensitiveText(value: string | null | undefined) {
 
 	redacted = redacted.replace(
 		new RegExp(
-			`(\\b[A-Z0-9_]*${SENSITIVE_KEY_PATTERN}[A-Z0-9_]*=)("[^"]*"|'[^']*'|[^\\s;&|]+)`,
+			`(\\b[A-Z0-9_]*${SENSITIVE_KEY_PATTERN}[A-Z0-9_]*=)(${SHELL_VALUE_PATTERN})`,
 			"gi",
 		),
 		`$1${REDACTED_SECRET_VALUE}`,
@@ -420,8 +445,19 @@ export function redactSensitiveText(value: string | null | undefined) {
 	// after them is a positional argument (the database name), not a secret.
 	redacted = redacted.replace(
 		new RegExp(
-			`(\\s(?!--?no-)--?[a-z0-9-]*${SENSITIVE_KEY_PATTERN}[a-z0-9-]*(?:=|\\s+))("[^"]*"|'[^']*'|[^\\s;&|]+)`,
+			`(\\s(?!--?no-)--?[a-z0-9-]*${SENSITIVE_KEY_PATTERN}[a-z0-9-]*(?:=|\\s+))(${SHELL_VALUE_PATTERN})`,
 			"gi",
+		),
+		`$1${REDACTED_SECRET_VALUE}`,
+	);
+
+	// mysql/mariadb clients take the password glued to -p. A separate word after
+	// -p is not a password, uppercase -P is the port, and -p of other tools
+	// (docker -p, ssh -p, compose -p) is a port or project name.
+	redacted = redacted.replace(
+		new RegExp(
+			String.raw`(\b(?:mysql|mariadb)[a-z-]*(?:\\.|[^\n;&|\\])*?\s-p)(${SHELL_VALUE_PATTERN})`,
+			"g",
 		),
 		`$1${REDACTED_SECRET_VALUE}`,
 	);
