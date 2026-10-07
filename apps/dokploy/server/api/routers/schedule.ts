@@ -162,6 +162,7 @@ export const scheduleRouter = createTRPCRouter({
 				}
 			} else {
 				await checkPermission(ctx, { schedule: ["create"] });
+				await assertHostScheduleAccess(ctx, scheduleType, input.serverId);
 
 				if (IS_CLOUD && input.scheduleType === "server" && input.serverId) {
 					await assertScheduledJobLimit(
