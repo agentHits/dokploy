@@ -761,12 +761,15 @@ update_agenthits_dokploy() {
 		return
 	fi
 
+	# Not a RETURN trap: it stays set after this function and fires again
+	# when main returns, where update_script is unbound under set -u.
 	local update_script=""
 	update_script="$(mktemp)"
-	trap 'rm -f "$update_script"' RETURN
-
 	curl -fsSL "$AGENTHITS_SCRIPT_BASE_URL/update.sh" -o "$update_script"
-	bash "$update_script"
+	local status=0
+	bash "$update_script" || status=$?
+	rm -f "$update_script"
+	return "$status"
 }
 
 main() {
