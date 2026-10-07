@@ -21,6 +21,9 @@ updates:
         update-types: ["version-update:semver-minor"]
       - dependency-name: "@better-auth/*"
         update-types: ["version-update:semver-minor"]
+      # Pinned in the root overrides so better-auth and better-call share one copy;
+      # a bump of the direct dependency alone does nothing.
+      - dependency-name: "@better-auth/utils"
       - dependency-name: "stripe"
       - dependency-name: "@stepperize/react"
       - dependency-name: "@dokploy/trpc-openapi"

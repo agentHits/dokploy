@@ -115,7 +115,7 @@ export const libsqlRelations = relations(libsql, ({ one, many }) => ({
 }));
 
 const createSchema = createInsertSchema(libsql, {
-	libsqlId: z.string(),
+	libsqlId: z.string().optional(),
 	name: z.string().min(1),
 	appName: z
 		.string()
@@ -123,41 +123,41 @@ const createSchema = createInsertSchema(libsql, {
 		.max(63)
 		.regex(APP_NAME_REGEX, APP_NAME_MESSAGE)
 		.optional(),
-	createdAt: z.string(),
+	createdAt: z.string().optional(),
 	databaseUser: z.string().min(1),
 	databasePassword: z.string().regex(DATABASE_PASSWORD_REGEX, {
 		message: DATABASE_PASSWORD_MESSAGE,
 	}),
-	sqldNode: z.enum(sqldNode.enumValues),
-	sqldPrimaryUrl: z.string().nullable(),
-	enableNamespaces: z.boolean().default(false),
+	sqldNode: z.enum(sqldNode.enumValues).optional(),
+	sqldPrimaryUrl: z.string().nullable().optional(),
+	enableNamespaces: z.boolean().default(false).optional(),
 	dockerImage: z
 		.string()
 		.default("ghcr.io/tursodatabase/libsql-server:v0.24.32"),
-	command: z.string().optional(),
-	env: z.string().optional(),
+	command: z.string().nullable().optional(),
+	env: z.string().nullable().optional(),
 	memoryReservation: z.string().nullable().optional(),
 	memoryLimit: z.string().nullable().optional(),
 	cpuReservation: z.string().nullable().optional(),
 	cpuLimit: z.string().nullable().optional(),
 	environmentId: z.string(),
-	applicationStatus: z.enum(["idle", "running", "done", "error"]),
+	applicationStatus: z.enum(["idle", "running", "done", "error"]).optional(),
 	externalPort: z.number().nullable().optional(),
 	externalGRPCPort: z.number().nullable().optional(),
 	externalAdminPort: z.number().nullable().optional(),
 	description: z.string().nullable().optional(),
 	serverId: z.string().nullable().optional(),
-	healthCheckSwarm: HealthCheckSwarmSchema.nullable(),
-	restartPolicySwarm: RestartPolicySwarmSchema.nullable(),
-	placementSwarm: PlacementSwarmSchema.nullable(),
-	updateConfigSwarm: UpdateConfigSwarmSchema.nullable(),
-	rollbackConfigSwarm: UpdateConfigSwarmSchema.nullable(),
-	modeSwarm: ServiceModeSwarmSchema.nullable(),
-	labelsSwarm: LabelsSwarmSchema.nullable(),
-	networkSwarm: NetworkSwarmSchema.nullable(),
-	stopGracePeriodSwarm: z.number().nullable(),
-	endpointSpecSwarm: EndpointSpecSwarmSchema.nullable(),
-	networkIds: z.array(z.string()).optional(),
+	healthCheckSwarm: HealthCheckSwarmSchema.nullable().optional(),
+	restartPolicySwarm: RestartPolicySwarmSchema.nullable().optional(),
+	placementSwarm: PlacementSwarmSchema.nullable().optional(),
+	updateConfigSwarm: UpdateConfigSwarmSchema.nullable().optional(),
+	rollbackConfigSwarm: UpdateConfigSwarmSchema.nullable().optional(),
+	modeSwarm: ServiceModeSwarmSchema.nullable().optional(),
+	labelsSwarm: LabelsSwarmSchema.nullable().optional(),
+	networkSwarm: NetworkSwarmSchema.nullable().optional(),
+	stopGracePeriodSwarm: z.number().nullable().optional(),
+	endpointSpecSwarm: EndpointSpecSwarmSchema.nullable().optional(),
+	networkIds: z.array(z.string()).nullable().optional(),
 	detachDokployNetwork: z.boolean().optional(),
 });
 

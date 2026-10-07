@@ -86,7 +86,9 @@ export const createScheduleSchema = createInsertSchema(schedules, {
 		.max(63)
 		.regex(APP_NAME_REGEX, APP_NAME_MESSAGE)
 		.optional(),
-	scheduleType: z.enum(["application", "compose", "server", "dokploy-server"]),
+	scheduleType: z
+		.enum(["application", "compose", "server", "dokploy-server"])
+		.optional(),
 });
 
 export const updateScheduleSchema = createScheduleSchema.extend({

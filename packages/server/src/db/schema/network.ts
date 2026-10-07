@@ -57,7 +57,7 @@ export const networkRelations = relations(network, ({ one }) => ({
 }));
 
 const createSchema = createInsertSchema(network, {
-	networkId: z.string().min(1),
+	networkId: z.string().min(1).optional(),
 	name: z.string().min(1),
 	driver: z.enum(["bridge", "overlay"]).optional(),
 	internal: z.boolean().optional(),
@@ -78,6 +78,7 @@ const createSchema = createInsertSchema(network, {
 				)
 				.optional(),
 		})
+		.nullable()
 		.optional(),
 	organizationId: z.string().min(1),
 	serverId: z.string().optional().nullable(),

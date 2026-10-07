@@ -181,19 +181,19 @@ const createSchema = createInsertSchema(compose, {
 		.regex(APP_NAME_REGEX, APP_NAME_MESSAGE)
 		.optional(),
 	description: z.string().nullable().optional(),
-	env: z.string().optional(),
+	env: z.string().nullable().optional(),
 	composeFile: z.string().optional(),
 	environmentId: z.string(),
 	customGitSSHKeyId: z.string().nullable().optional(),
 	command: z.string().optional(),
 	createEnvFile: z.boolean().optional(),
-	composePath: z.string().min(1),
+	composePath: z.string().min(1).optional(),
 	composeType: z.enum(["docker-compose", "stack"]).optional(),
-	watchPaths: z.array(z.string()).optional(),
+	watchPaths: z.array(z.string()).nullable().optional(),
 	sourceType: z
 		.enum(["git", "github", "gitlab", "bitbucket", "gitea", "raw"])
 		.optional(),
-	triggerType: z.enum(["push", "tag"]).optional(),
+	triggerType: z.enum(["push", "tag"]).nullable().optional(),
 	composeStatus: z.enum(["idle", "running", "done", "error"]).optional(),
 	icon: z
 		.string()
@@ -208,6 +208,7 @@ const createSchema = createInsertSchema(compose, {
 				detachDokployNetwork: z.boolean(),
 			}),
 		)
+		.nullable()
 		.optional(),
 });
 

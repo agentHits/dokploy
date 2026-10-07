@@ -31,10 +31,10 @@ export const portsRelations = relations(ports, ({ one }) => ({
 }));
 
 const createSchema = createInsertSchema(ports, {
-	portId: z.string().min(1),
+	portId: z.string().min(1).optional(),
 	applicationId: z.string().min(1),
 	publishedPort: z.number(),
-	publishMode: z.enum(["ingress", "host"]).default("ingress"),
+	publishMode: z.enum(["ingress", "host"]).default("ingress").optional(),
 	targetPort: z.number(),
 	protocol: z.enum(["tcp", "udp"]).default("tcp"),
 });

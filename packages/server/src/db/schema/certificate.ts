@@ -52,8 +52,8 @@ export const apiCreateCertificate = createInsertSchema(certificates, {
 			message: "Invalid certificate path",
 		})
 		.optional(),
-	autoRenew: z.boolean().optional(),
-	serverId: z.string().optional(),
+	autoRenew: z.boolean().nullable().optional(),
+	serverId: z.string().nullable().optional(),
 });
 
 export const apiFindCertificate = z.object({

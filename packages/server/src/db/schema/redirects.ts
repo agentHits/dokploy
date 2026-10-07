@@ -29,7 +29,7 @@ export const redirectRelations = relations(redirects, ({ one }) => ({
 	}),
 }));
 const createSchema = createInsertSchema(redirects, {
-	redirectId: z.string().min(1),
+	redirectId: z.string().min(1).optional(),
 	regex: z.string().min(1),
 	replacement: z.string().min(1),
 	permanent: z.boolean().optional(),
