@@ -325,23 +325,6 @@ export const redactProjectNestedSecrets = <
 	return redactedProject as T;
 };
 
-export const redactRollbackFullContextSecrets = <T>(fullContext: T): T => {
-	if (!fullContext || typeof fullContext !== "object") {
-		return fullContext;
-	}
-
-	const redacted = { ...(fullContext as SecretRecord) };
-	for (const key of ["registry", "buildRegistry", "rollbackRegistry"]) {
-		if (redacted[key] && typeof redacted[key] === "object") {
-			redacted[key] = redactSecretFields(redacted[key] as SecretRecord, [
-				"password",
-			]);
-		}
-	}
-
-	return redacted as T;
-};
-
 export function redactSensitiveText(value: string): string;
 export function redactSensitiveText(value: null): null;
 export function redactSensitiveText(value: undefined): undefined;
