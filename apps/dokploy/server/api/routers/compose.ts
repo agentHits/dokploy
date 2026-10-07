@@ -60,9 +60,9 @@ import { processTemplate } from "@dokploy/server/templates/processors";
 import { assertCustomGitUrlAllowed } from "@dokploy/server/utils/providers/git";
 import {
 	preserveSecretPlaceholderFields,
-	redactDeployableServiceSecrets,
+	redactDeployableServiceSecretsFor,
 	redactSecretFields,
-	redactSensitiveText,
+	type SharedEnvReadAccess,
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
@@ -102,46 +102,37 @@ import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { audit } from "../utils/audit";
 import { assertDeploySourceCredentialAccess } from "../utils/deploy-source-access";
 import { assertTargetEnvironmentAccess } from "../utils/placement-access";
-import { assertServiceEnvironmentReadAccess } from "../utils/service-environment";
+import {
+	assertServiceEnvironmentReadAccess,
+	getSharedEnvReadAccess,
+} from "../utils/service-environment";
 
 type SecretRecord = Record<string, unknown>;
 
-const redactCustomGitUrl = <T extends SecretRecord | null | undefined>(
-	record: T,
-) => {
-	if (!record) {
-		return record;
-	}
-
-	const redacted = { ...record };
-	if ("customGitUrl" in redacted) {
-		redacted.customGitUrl = redactSensitiveText(
-			redacted.customGitUrl as string | null | undefined,
-		);
-	}
-
-	return redacted as T;
-};
-
 const redactComposeSecrets = <T extends SecretRecord | null | undefined>(
 	record: T,
-	{ redactComposeFile = true }: { redactComposeFile?: boolean } = {},
+	{
+		redactComposeFile = true,
+		sharedEnvAccess,
+	}: {
+		redactComposeFile?: boolean;
+		sharedEnvAccess?: SharedEnvReadAccess;
+	} = {},
 ) => {
 	if (!record) {
 		return record;
 	}
 
-	const redacted = redactCustomGitUrl(
-		redactDeployableServiceSecrets(
-			redactGitProviderSecrets(
-				record as T & {
-					bitbucket?: object | null;
-					gitea?: object | null;
-					github?: object | null;
-					gitlab?: object | null;
-				},
-			),
+	const redacted = redactDeployableServiceSecretsFor(
+		redactGitProviderSecrets(
+			record as T & {
+				bitbucket?: object | null;
+				gitea?: object | null;
+				github?: object | null;
+				gitlab?: object | null;
+			},
 		),
+		sharedEnvAccess,
 	);
 
 	return redactComposeFile
@@ -360,11 +351,13 @@ export const composeRouter = createTRPCRouter({
 			}
 
 			const canReadEnvVars = await hasPermission(ctx, { envVars: ["read"] });
+			const sharedEnvAccess = await getSharedEnvReadAccess(ctx);
 
 			return {
 				// The compose file editor loads composeFile from this response.
 				...redactComposeSecrets(compose, {
 					redactComposeFile: !canReadEnvVars,
+					sharedEnvAccess,
 				}),
 				hasGitProviderAccess,
 				unauthorizedProvider,

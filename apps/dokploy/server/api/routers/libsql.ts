@@ -27,6 +27,7 @@ import {
 import {
 	preserveSecretPlaceholderFields,
 	redactDatabaseServiceSecrets,
+	redactDatabaseServiceSecretsFor,
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
@@ -34,7 +35,10 @@ import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
-import { assertServiceEnvironmentReadAccess } from "@/server/api/utils/service-environment";
+import {
+	assertServiceEnvironmentReadAccess,
+	getSharedEnvReadAccess,
+} from "@/server/api/utils/service-environment";
 import { db } from "@/server/db";
 import {
 	apiChangeLibsqlStatus,
@@ -125,7 +129,10 @@ export const libsqlRouter = createTRPCRouter({
 					message: "You are not authorized to access this Libsql",
 				});
 			}
-			return redactDatabaseServiceSecrets(libsql);
+			return redactDatabaseServiceSecretsFor(
+				libsql,
+				await getSharedEnvReadAccess(ctx),
+			);
 		}),
 
 	revealEnvironment: protectedProcedure
