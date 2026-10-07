@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { execAsync } = vi.hoisted(() => ({ execAsync: vi.fn() }));
@@ -20,6 +21,9 @@ const {
 	getDokployImages,
 	getOfficialUpdateCommand,
 } = await import("@dokploy/server/services/settings");
+const { UPDATE_IMAGE_PULLED_MARKER } = await import(
+	"@dokploy/server/services/web-server-update"
+);
 
 describe("Dokploy image cleanup", () => {
 	beforeEach(() => {
@@ -216,6 +220,15 @@ describe("Dokploy update commands", () => {
 		expect(command.indexOf(pull)).toBeLessThan(
 			command.indexOf("docker service update"),
 		);
+
+		const lines = command.split("\n");
+		const markerLine = lines.findIndex((line) => line.startsWith("echo "));
+		expect(lines[markerLine - 1]).toBe(`${pull} || exit 1`);
+		expect(
+			execFileSync("sh", ["-c", lines[markerLine] as string], {
+				encoding: "utf8",
+			}).trim(),
+		).toBe(UPDATE_IMAGE_PULLED_MARKER);
 	};
 
 	it("pulls the AgentHits image while the old container still runs", () => {

@@ -15,6 +15,7 @@ import {
 	initializeTraefikService,
 	type TraefikOptions,
 } from "../setup/traefik-setup";
+import { UPDATE_IMAGE_PULLED_MARKER } from "./web-server-update";
 export interface IUpdateData {
 	latestVersion: string | null;
 	updateAvailable: boolean;
@@ -496,6 +497,7 @@ export const getAgentHitsUpdateCommand = (
 	// stop-first, so a pull inside the update would happen with Dokploy down.
 	return `
 docker pull ${quoteShellArg(getAgentHitsUpdateImage())} || exit 1
+echo ${quoteShellArg(UPDATE_IMAGE_PULLED_MARKER)}
 fork_version_env_arg=""
 if docker service inspect dokploy --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' 2>/dev/null | grep -q '^DOKPLOY_FORK_VERSION='; then
 	fork_version_env_arg="--env-rm DOKPLOY_FORK_VERSION"
@@ -520,6 +522,7 @@ export const getOfficialUpdateCommand = (
 
 	return `
 docker pull ${image} || exit 1
+echo ${quoteShellArg(UPDATE_IMAGE_PULLED_MARKER)}
 docker service update --force --image ${image} ${keepImagesArg} dokploy
 `;
 };
