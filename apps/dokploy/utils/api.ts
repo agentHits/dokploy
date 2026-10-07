@@ -9,6 +9,7 @@ import { createTRPCNext } from "@trpc/next";
 import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
 import superjson from "superjson";
 import type { AppRouter } from "@/server/api/root";
+import { superSessionLink } from "@/utils/super-session-link";
 
 const getBaseUrl = () => {
 	if (typeof window !== "undefined") return "";
@@ -45,6 +46,7 @@ const wsClient = getOrCreateWSClient();
 const links =
 	typeof window !== "undefined"
 		? [
+				superSessionLink,
 				splitLink({
 					condition: (op) => op.type === "subscription",
 					true: wsLink({
