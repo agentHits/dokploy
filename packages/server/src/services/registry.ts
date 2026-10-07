@@ -4,7 +4,11 @@ import {
 	execAsync,
 	execAsyncRemote,
 } from "@dokploy/server/utils/process/execAsync";
-import { redactSecretFields } from "@dokploy/server/utils/security/redaction";
+import {
+	assertStoredSecretTargetUnchanged,
+	redactSecretFields,
+	secretUpdateValue,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import type { z } from "zod";
@@ -129,10 +133,22 @@ export const updateRegistry = async (
 ) => {
 	try {
 		assertCloudRegistryServer(registryData.serverId);
+		const password = secretUpdateValue(registryData.password);
+		if (password === undefined) {
+			const current = await findRegistryById(registryId);
+			assertStoredSecretTargetUnchanged("registry password", {
+				registryUrl: [
+					registryData.registryUrl ?? current.registryUrl,
+					current.registryUrl,
+				],
+				username: [registryData.username ?? current.username, current.username],
+			});
+		}
 		const rows = await db
 			.update(registry)
 			.set({
 				...registryData,
+				password,
 			})
 			.where(eq(registry.registryId, registryId))
 			.returning();

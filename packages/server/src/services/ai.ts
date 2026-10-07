@@ -5,7 +5,10 @@ import {
 	assertAIProviderApiUrlAllowed,
 	selectAIProvider,
 } from "@dokploy/server/utils/ai/select-ai-provider";
-import { secretUpdateValue } from "@dokploy/server/utils/security/redaction";
+import {
+	assertStoredSecretTargetUnchanged,
+	secretUpdateValue,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { generateText, Output } from "ai";
 import { desc, eq } from "drizzle-orm";
@@ -116,16 +119,16 @@ const normalizeApiUrl = (url: string) => url.trim().replace(/\/+$/, "");
 
 export const saveAiSettings = async (organizationId: string, settings: any) => {
 	const aiId = settings.aiId;
-	if (aiId) {
-		const existingAiSetting = await db.query.ai.findFirst({
-			where: eq(ai.aiId, aiId),
-		});
-		if (
-			existingAiSetting &&
-			existingAiSetting.organizationId !== organizationId
-		) {
-			throwAiSettingsNotFound();
-		}
+	const existingAiSetting = aiId
+		? await db.query.ai.findFirst({
+				where: eq(ai.aiId, aiId),
+			})
+		: undefined;
+	if (
+		existingAiSetting &&
+		existingAiSetting.organizationId !== organizationId
+	) {
+		throwAiSettingsNotFound();
 	}
 
 	const normalizedSettings = { ...settings };
@@ -141,6 +144,23 @@ export const saveAiSettings = async (organizationId: string, settings: any) => {
 		normalizedSettings.apiUrl = await assertAIProviderApiUrlAllowed(
 			normalizedSettings.apiUrl,
 		);
+	}
+	if (
+		existingAiSetting?.apiKey &&
+		normalizedSettings.apiKey === undefined &&
+		normalizedSettings.apiUrl
+	) {
+		const storedApiUrl = existingAiSetting.apiUrl;
+		const sameApiUrl =
+			settings.apiUrl === storedApiUrl ||
+			normalizeApiUrl(normalizedSettings.apiUrl) ===
+				normalizeApiUrl(storedApiUrl);
+		assertStoredSecretTargetUnchanged("API key", {
+			apiUrl: [
+				sameApiUrl ? storedApiUrl : normalizedSettings.apiUrl,
+				storedApiUrl,
+			],
+		});
 	}
 	if (normalizedSettings.apiUrl) {
 		const customProviders = await getCustomAiProviders(organizationId);
