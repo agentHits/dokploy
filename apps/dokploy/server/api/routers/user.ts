@@ -430,7 +430,12 @@ export const userRouter = createTRPCRouter({
 					with: {
 						backups: {
 							with: {
-								destination: true,
+								destination: {
+									columns: {
+										accessKey: false,
+										secretAccessKey: false,
+									},
+								},
 								deployments: true,
 							},
 						},
