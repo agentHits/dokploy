@@ -4,7 +4,9 @@ const mocks = vi.hoisted(() => ({
 	audit: vi.fn(),
 	assertLocalDockerContainerAccess: vi.fn(),
 	checkPermission: vi.fn(),
+	checkProtectedResourceAccess: vi.fn(),
 	deleteVolumeFile: vi.fn(),
+	isLocalSystemDockerVolume: vi.fn(),
 	findMemberByUserId: vi.fn(),
 	findServerById: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
@@ -41,6 +43,14 @@ vi.mock("@/server/api/utils/audit", () => ({
 
 vi.mock("@/server/api/utils/local-docker-access", () => ({
 	assertLocalDockerContainerAccess: mocks.assertLocalDockerContainerAccess,
+	isLocalSystemDockerVolume: mocks.isLocalSystemDockerVolume,
+}));
+
+vi.mock("@dokploy/server/services/super-password", async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import("@dokploy/server/services/super-password")
+	>()),
+	checkProtectedResourceAccess: mocks.checkProtectedResourceAccess,
 }));
 
 const { dockerVolumeRouter } = await import(
@@ -122,6 +132,10 @@ describe("docker volume router access boundary", () => {
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
 		mocks.listVolumeFiles.mockResolvedValue([]);
 		mocks.readVolumeFile.mockResolvedValue({ content: "" });
+		mocks.isLocalSystemDockerVolume.mockResolvedValue(false);
+		mocks.checkProtectedResourceAccess.mockResolvedValue(
+			"super-session-required",
+		);
 	});
 
 	it("denies non-admin volume file access and removal on the local host", async () => {
@@ -197,5 +211,43 @@ describe("docker volume router access boundary", () => {
 			activeOrganizationId: "org-1",
 		});
 		expect(mocks.listVolumeFiles).toHaveBeenCalledWith("data", "/", "server-1");
+	});
+
+	describe("panel system volumes", () => {
+		const fileCalls = () =>
+			volumeCalls().filter((call) => call.name !== "removeVolume");
+
+		beforeEach(() => {
+			mocks.isLocalSystemDockerVolume.mockResolvedValue(true);
+		});
+
+		it("denies local system volume files without an open super session", async () => {
+			for (const call of fileCalls()) {
+				await expect(call.run(), call.name).rejects.toMatchObject({
+					code: "FORBIDDEN",
+				});
+				expect(call.sideEffect, call.name).not.toHaveBeenCalled();
+			}
+			expect(mocks.isLocalSystemDockerVolume).toHaveBeenCalledWith("data");
+		});
+
+		it("opens local system volume files with an open super session", async () => {
+			mocks.checkProtectedResourceAccess.mockResolvedValue(null);
+
+			for (const call of fileCalls()) {
+				await call.run();
+				expect(call.sideEffect, call.name).toHaveBeenCalled();
+			}
+		});
+
+		it("does not inspect remote volumes for panel containers", async () => {
+			await createCaller().listVolumeFiles({
+				volumeName: "data",
+				path: "/",
+				serverId: "server-1",
+			});
+			expect(mocks.isLocalSystemDockerVolume).not.toHaveBeenCalled();
+			expect(mocks.listVolumeFiles).toHaveBeenCalled();
+		});
 	});
 });

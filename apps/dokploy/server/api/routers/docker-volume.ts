@@ -12,6 +12,8 @@ import {
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
+import { isLocalSystemDockerVolume } from "@/server/api/utils/local-docker-access";
+import { assertProtectedResourceAccess } from "@/server/api/utils/super-session";
 import { createTRPCRouter, withPermission } from "../trpc";
 import { assertDockerServerAccess } from "./docker";
 
@@ -25,6 +27,19 @@ const volumePathSchema = z
 		(path) => path.startsWith("/") && !path.includes("\0"),
 		"Path must be absolute.",
 	);
+
+const assertVolumeFileAccess = async (
+	ctx: Parameters<typeof assertDockerServerAccess>[0] &
+		Parameters<typeof assertProtectedResourceAccess>[0],
+	volumeName: string,
+	serverId?: string,
+) => {
+	await assertDockerServerAccess(ctx, serverId);
+	// Volumes of the panel's own containers hold its database and keys.
+	if (!serverId && (await isLocalSystemDockerVolume(volumeName))) {
+		await assertProtectedResourceAccess(ctx);
+	}
+};
 
 export const dockerVolumeRouter = createTRPCRouter({
 	getVolumes: withPermission("docker", "read")
@@ -71,7 +86,7 @@ export const dockerVolumeRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
-			await assertDockerServerAccess(ctx, input.serverId);
+			await assertVolumeFileAccess(ctx, input.volumeName, input.serverId);
 			return await listVolumeFiles(
 				input.volumeName,
 				input.path,
@@ -91,7 +106,7 @@ export const dockerVolumeRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
-			await assertDockerServerAccess(ctx, input.serverId);
+			await assertVolumeFileAccess(ctx, input.volumeName, input.serverId);
 			return await readVolumeFile(input.volumeName, input.path, input.serverId);
 		}),
 
@@ -108,7 +123,7 @@ export const dockerVolumeRouter = createTRPCRouter({
 			}),
 		)
 		.mutation(async ({ input, ctx }) => {
-			await assertDockerServerAccess(ctx, input.serverId);
+			await assertVolumeFileAccess(ctx, input.volumeName, input.serverId);
 			await writeVolumeFile(
 				input.volumeName,
 				input.path,
@@ -138,7 +153,7 @@ export const dockerVolumeRouter = createTRPCRouter({
 			}),
 		)
 		.mutation(async ({ input, ctx }) => {
-			await assertDockerServerAccess(ctx, input.serverId);
+			await assertVolumeFileAccess(ctx, input.volumeName, input.serverId);
 			await deleteVolumeFile(input.volumeName, input.path, input.serverId);
 			await audit(ctx, {
 				action: "delete",

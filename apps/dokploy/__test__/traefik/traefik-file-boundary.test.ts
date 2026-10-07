@@ -106,6 +106,33 @@ describe("Traefik file path boundary", () => {
 		},
 	);
 
+	it("opens TLS secret files only when the caller passed the super session check", async () => {
+		const acmePath = "/etc/dokploy/traefik/dynamic/acme.json";
+		mocks.execAsyncRemote.mockResolvedValue({ stdout: "{}" });
+
+		await expect(
+			readConfigInPath(acmePath, "server-1", { allowProtected: false }),
+		).rejects.toThrow("Access to this Traefik file is not allowed");
+		await expect(
+			readConfigInPath(acmePath, "server-1", { allowProtected: true }),
+		).resolves.toBe("{}");
+
+		await writeTraefikConfigInPath(acmePath, "{}", "server-1", {
+			allowProtected: true,
+		});
+		expect(mocks.writeFileRemote).toHaveBeenCalledWith(
+			"server-1",
+			acmePath,
+			"{}",
+		);
+
+		await expect(
+			readConfigInPath("/etc/dokploy/app/.env", "server-1", {
+				allowProtected: true,
+			}),
+		).rejects.toThrow("Invalid Traefik config path");
+	});
+
 	it("hides TLS secret files from Traefik directory listings", () => {
 		const root = "/etc/dokploy/traefik";
 		const listing = [

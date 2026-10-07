@@ -29,8 +29,10 @@ import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
 import {
 	assertLocalDockerContainerAccess,
+	assertLocalDockerContainerOrSystemAccess,
 	type LocalDockerPermission,
 } from "@/server/api/utils/local-docker-access";
+import { assertProtectedResourceAccess } from "@/server/api/utils/super-session";
 import { uploadFileToContainerSchema } from "@/utils/schema";
 import { createTRPCRouter, protectedProcedure, withPermission } from "../trpc";
 
@@ -90,6 +92,28 @@ const resolveAuthorizedContainerId = async (
 		ctx,
 		containerId,
 		permission,
+	);
+
+	return config?.Id || containerId;
+};
+
+// The file manager may also open the panel's own containers (dokploy, its
+// postgres and redis, traefik), but only with an open super session.
+const resolveAuthorizedFileContainerId = async (
+	ctx: Parameters<typeof assertProtectedResourceAccess>[0],
+	containerId: string,
+	serverId: string | undefined,
+	permission: LocalDockerPermission,
+) => {
+	if (serverId) {
+		return containerId;
+	}
+
+	const config = await assertLocalDockerContainerOrSystemAccess(
+		ctx,
+		containerId,
+		permission,
+		() => assertProtectedResourceAccess(ctx),
 	);
 
 	return config?.Id || containerId;
@@ -401,7 +425,7 @@ export const dockerRouter = createTRPCRouter({
 		)
 		.query(async ({ input, ctx }) => {
 			await assertDockerServerAccess(ctx, input.serverId);
-			const containerId = await resolveAuthorizedContainerId(
+			const containerId = await resolveAuthorizedFileContainerId(
 				ctx,
 				input.containerId,
 				input.serverId,
@@ -423,7 +447,7 @@ export const dockerRouter = createTRPCRouter({
 		)
 		.query(async ({ input, ctx }) => {
 			await assertDockerServerAccess(ctx, input.serverId);
-			const containerId = await resolveAuthorizedContainerId(
+			const containerId = await resolveAuthorizedFileContainerId(
 				ctx,
 				input.containerId,
 				input.serverId,
@@ -446,7 +470,7 @@ export const dockerRouter = createTRPCRouter({
 		)
 		.mutation(async ({ input, ctx }) => {
 			await assertDockerServerAccess(ctx, input.serverId);
-			const containerId = await resolveAuthorizedContainerId(
+			const containerId = await resolveAuthorizedFileContainerId(
 				ctx,
 				input.containerId,
 				input.serverId,
@@ -482,7 +506,7 @@ export const dockerRouter = createTRPCRouter({
 		)
 		.mutation(async ({ input, ctx }) => {
 			await assertDockerServerAccess(ctx, input.serverId);
-			const containerId = await resolveAuthorizedContainerId(
+			const containerId = await resolveAuthorizedFileContainerId(
 				ctx,
 				input.containerId,
 				input.serverId,

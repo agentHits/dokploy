@@ -196,8 +196,9 @@ export const readMonitoringConfig = async (readAll = false) => {
 	return null;
 };
 
-// ACME storage and uploaded certificates hold TLS private keys, so they stay
-// out of the generic Traefik file editor.
+// ACME storage and uploaded certificates hold TLS private keys, so the generic
+// Traefik file editor only opens them when the caller passed the super session
+// check (allowProtected).
 export const isProtectedTraefikPath = (
 	configPath: string,
 	serverId?: string,
@@ -232,9 +233,12 @@ export const filterProtectedTraefikEntries = <
 				: entry,
 		);
 
+type TraefikFileAccessOptions = { allowProtected?: boolean };
+
 export const resolveTraefikConfigPath = (
 	pathFile: string,
 	serverId?: string,
+	options: TraefikFileAccessOptions = {},
 ) => {
 	if (
 		typeof pathFile !== "string" ||
@@ -255,15 +259,19 @@ export const resolveTraefikConfigPath = (
 		throw new Error("Invalid Traefik config path");
 	}
 
-	if (isProtectedTraefikPath(configPath, serverId)) {
+	if (!options.allowProtected && isProtectedTraefikPath(configPath, serverId)) {
 		throw new Error("Access to this Traefik file is not allowed");
 	}
 
 	return configPath;
 };
 
-export const readConfigInPath = async (pathFile: string, serverId?: string) => {
-	const configPath = resolveTraefikConfigPath(pathFile, serverId);
+export const readConfigInPath = async (
+	pathFile: string,
+	serverId?: string,
+	options?: TraefikFileAccessOptions,
+) => {
+	const configPath = resolveTraefikConfigPath(pathFile, serverId, options);
 
 	if (serverId) {
 		const { stdout } = await execAsyncRemote(
@@ -308,8 +316,9 @@ export const writeTraefikConfigInPath = async (
 	pathFile: string,
 	traefikConfig: string,
 	serverId?: string,
+	options?: TraefikFileAccessOptions,
 ) => {
-	const configPath = resolveTraefikConfigPath(pathFile, serverId);
+	const configPath = resolveTraefikConfigPath(pathFile, serverId, options);
 
 	try {
 		if (serverId) {
