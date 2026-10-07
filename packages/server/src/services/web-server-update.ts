@@ -19,6 +19,8 @@ export interface ServerUpdateStatus {
 	layersTotal: number;
 	layersDownloaded: number;
 	layersExtracted: number;
+	/** Docker reported "no space left on device" while the update ran. */
+	diskFull: boolean;
 	/** Last lines of the update script output: image refs and layer ids only. */
 	output: string[];
 }
@@ -35,6 +37,7 @@ const createIdleStatus = (): ServerUpdateStatus => ({
 	layersTotal: 0,
 	layersDownloaded: 0,
 	layersExtracted: 0,
+	diskFull: false,
 	output: [],
 });
 
@@ -81,6 +84,10 @@ const handleOutputLine = (rawLine: string) => {
 			status.pulledAt = Date.now();
 		}
 		return;
+	}
+
+	if (/no space left on device/i.test(line)) {
+		status.diskFull = true;
 	}
 
 	const layer = line.match(LAYER_LINE);
@@ -147,7 +154,11 @@ export const startServerUpdate = (command: string) => {
 			if (spawnFailed) {
 				finish("Could not start the update script.");
 			} else if (status.phase === "pulling") {
-				finish("Downloading the new image failed.");
+				finish(
+					status.diskFull
+						? "Not enough disk space to download the new image."
+						: "Downloading the new image failed.",
+				);
 			} else {
 				finish("docker service update failed.");
 			}
