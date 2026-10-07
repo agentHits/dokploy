@@ -6,6 +6,7 @@ import type { Compose } from "@dokploy/server/services/compose";
 import type { ContainerInfo, ResourceRequirements } from "dockerode";
 import { parse } from "dotenv";
 import { quote } from "shell-quote";
+import { z } from "zod";
 import type { ApplicationNested } from "../builders";
 import type { LibsqlNested } from "../databases/libsql";
 import type { MariadbNested } from "../databases/mariadb";
@@ -310,6 +311,15 @@ export interface DockerDiskUsageVerboseDetails {
 }
 
 export type DockerDiskUsageDetailLimit = 5 | 10 | 15 | null;
+
+// The OpenAPI generator rejects numeric literals in query inputs, which takes
+// down the whole /swagger document; a coerced number piped into the literals
+// passes its check and also accepts "?detailLimit=5" from REST callers.
+export const dockerDiskUsageDetailLimitSchema = z.coerce
+	.number()
+	.pipe(z.union([z.literal(5), z.literal(10), z.literal(15)]))
+	.nullable()
+	.optional();
 
 export const resolveDockerDiskUsageDetailLimit = (
 	detailLimit?: DockerDiskUsageDetailLimit,

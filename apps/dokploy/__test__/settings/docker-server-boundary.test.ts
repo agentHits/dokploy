@@ -67,9 +67,10 @@ const mocks = vi.hoisted(() => ({
 
 const redactWebServerSettings = <T>(settings: T) => settings;
 
-vi.mock("@dokploy/server", () => ({
+vi.mock("@dokploy/server", async () => ({
 	CLEANUP_CRON_JOB: "0 0 * * *",
 	DEFAULT_UPDATE_DATA: {},
+	dockerDiskUsageDetailLimitSchema: (await import("zod")).z.any(),
 	DOKPLOY_KEEP_IMAGES_MAX: 5,
 	DOKPLOY_KEEP_IMAGES_MIN: 3,
 	getDokployImageKeepCount: vi.fn(),

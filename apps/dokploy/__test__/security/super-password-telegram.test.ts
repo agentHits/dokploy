@@ -42,6 +42,10 @@ const telegramBodies = () =>
 
 describe("super password alerts over the Telegram Bot API", () => {
 	beforeEach(() => {
+		// "Time left" is floored to minutes, so a real clock ticking between
+		// building expiresAt and formatting it renders 23 h 59 min.
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date("2026-10-07T12:00:00Z"));
 		fake.reset();
 		mocks.fetch.mockReset();
 		mocks.fetch.mockResolvedValue(new Response("{}", { status: 200 }));
@@ -71,6 +75,7 @@ describe("super password alerts over the Telegram Bot API", () => {
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.unstubAllGlobals();
 	});
 
