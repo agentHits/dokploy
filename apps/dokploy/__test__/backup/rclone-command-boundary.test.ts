@@ -195,19 +195,36 @@ describe("destination rclone command boundary", () => {
 				additionalFlags: dangerousDestination.additionalFlags,
 				serverId: "none",
 			}),
-		).resolves.toBeUndefined();
+		).resolves.toEqual({
+			read: { ok: true },
+			write: { ok: true },
+			delete: { ok: true },
+		});
 
-		const command = mocks.execAsync.mock.calls[0]?.[0] as string;
-		const args = parseShellArgs(command);
-		const rcloneIndex = args.indexOf("rclone");
-
-		expect(args.slice(rcloneIndex, rcloneIndex + 2)).toEqual(["rclone", "ls"]);
-		expectS3CredentialsAsEnvironment(command, args);
-		expect(args).toContain(`dokploys3:${dangerousDestination.bucket}`);
-		expect(command).not.toContain(
-			'--s3-access-key-id="AKIA; touch /tmp/access"',
+		const commands = mocks.execAsync.mock.calls.map(
+			([command]) => command as string,
 		);
-		expect(command).not.toContain('":s3:bucket$(id);touch"');
+		expect(commands).toHaveLength(3);
+		for (const [index, operation] of ["ls", "rcat", "deletefile"].entries()) {
+			const command = commands[index] ?? "";
+			const args = parseShellArgs(command);
+			const rcloneIndex = args.indexOf("rclone");
+
+			expect(args.slice(rcloneIndex, rcloneIndex + 2)).toEqual([
+				"rclone",
+				operation,
+			]);
+			expectS3CredentialsAsEnvironment(command, args);
+			expect(args.at(-1)).toMatch(
+				operation === "ls"
+					? `dokploys3:${dangerousDestination.bucket}`
+					: `dokploys3:${dangerousDestination.bucket}/dokploy-connection-test/`,
+			);
+			expect(command).not.toContain(
+				'--s3-access-key-id="AKIA; touch /tmp/access"',
+			);
+			expect(command).not.toContain('":s3:bucket$(id);touch"');
+		}
 	});
 
 	it("quotes destination fields in scheduled backup upload rclone commands", async () => {
