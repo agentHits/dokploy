@@ -16,6 +16,7 @@ import {
 	buildGitCloneCommand,
 	buildProviderEchoCommand,
 	buildRemovePathCommand,
+	type GitHttpCredentials,
 } from "./commands";
 
 export type ApplicationWithBitbucket = InferResultType<
@@ -28,7 +29,7 @@ export type ComposeWithBitbucket = InferResultType<
 	{ bitbucket: true }
 >;
 
-export const getBitbucketCloneUrl = (
+export const getBitbucketCloneCredentials = (
 	bitbucketProvider: {
 		apiToken?: string | null;
 		bitbucketUsername?: string | null;
@@ -36,14 +37,16 @@ export const getBitbucketCloneUrl = (
 		bitbucketEmail?: string | null;
 		bitbucketWorkspaceName?: string | null;
 	} | null,
-	repoClone: string,
-) => {
+): GitHttpCredentials => {
 	if (!bitbucketProvider) {
 		throw new Error("Bitbucket provider is required");
 	}
 
 	if (bitbucketProvider.apiToken) {
-		return `https://x-bitbucket-api-token-auth:${bitbucketProvider.apiToken}@${repoClone}`;
+		return {
+			username: "x-bitbucket-api-token-auth",
+			password: bitbucketProvider.apiToken,
+		};
 	}
 
 	// For app passwords, use username:app_password format
@@ -52,7 +55,10 @@ export const getBitbucketCloneUrl = (
 			"Username and app password are required when not using API token",
 		);
 	}
-	return `https://${bitbucketProvider.bitbucketUsername}:${bitbucketProvider.appPassword}@${repoClone}`;
+	return {
+		username: bitbucketProvider.bitbucketUsername,
+		password: bitbucketProvider.appPassword,
+	};
 };
 
 export const getBitbucketHeaders = (bitbucketProvider: Bitbucket) => {
@@ -116,6 +122,7 @@ interface CloneBitbucketRepository {
 	serverId: string | null;
 	type?: "application" | "compose";
 	outputPathOverride?: string;
+	checkoutRevision?: string;
 }
 
 export const cloneBitbucketRepository = async ({
@@ -132,6 +139,7 @@ export const cloneBitbucketRepository = async ({
 		enableSubmodules,
 		serverId,
 		outputPathOverride,
+		checkoutRevision,
 	} = entity;
 	const { COMPOSE_PATH, APPLICATIONS_PATH } = paths(!!serverId);
 
@@ -152,13 +160,15 @@ export const cloneBitbucketRepository = async ({
 	command += buildCreateDirectoryCommand(outputPath);
 	const repoToUse = entity.bitbucketRepositorySlug || bitbucketRepository;
 	const repoclone = `bitbucket.org/${bitbucketOwner}/${repoToUse}.git`;
-	const cloneUrl = getBitbucketCloneUrl(bitbucket, repoclone);
+	const credentials = getBitbucketCloneCredentials(bitbucket);
 	command += buildProviderEchoCommand(
 		`Cloning Repo ${repoclone} to ${outputPath}: ✅`,
 	);
 	command += `${buildGitCloneCommand({
 		branch: bitbucketBranch!,
-		cloneUrl,
+		checkoutRevision,
+		cloneUrl: `https://${repoclone}`,
+		credentials,
 		enableSubmodules,
 		outputPath,
 	})};`;

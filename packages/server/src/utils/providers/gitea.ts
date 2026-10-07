@@ -135,15 +135,13 @@ export const refreshGiteaToken = async (giteaProviderId: string) => {
 
 const buildGiteaCloneUrl = (
 	giteaUrl: string,
-	accessToken: string,
 	owner: string,
 	repository: string,
 ) => {
 	const protocol = giteaUrl.startsWith("http://") ? "http" : "https";
 	const baseUrl = giteaUrl.replace(/^https?:\/\//, "");
 	const repoClone = `${owner}/${repository}.git`;
-	const cloneUrl = `${protocol}://oauth2:${accessToken}@${baseUrl}/${repoClone}`;
-	return cloneUrl;
+	return `${protocol}://${baseUrl}/${repoClone}`;
 };
 
 export type ApplicationWithGitea = InferResultType<
@@ -168,6 +166,7 @@ interface CloneGiteaRepository {
 	serverId: string | null;
 	type?: "application" | "compose";
 	outputPathOverride?: string;
+	checkoutRevision?: string;
 }
 
 export const cloneGiteaRepository = async ({
@@ -184,6 +183,7 @@ export const cloneGiteaRepository = async ({
 		enableSubmodules,
 		serverId,
 		outputPathOverride,
+		checkoutRevision,
 	} = entity;
 	const { APPLICATIONS_PATH, COMPOSE_PATH } = paths(!!serverId);
 
@@ -208,19 +208,19 @@ export const cloneGiteaRepository = async ({
 
 	const repoClone = `${giteaOwner}/${giteaRepository}.git`;
 	const baseUrl = await getGiteaProviderBaseUrl(giteaProvider);
-	const cloneUrl = buildGiteaCloneUrl(
-		baseUrl,
-		giteaProvider.accessToken!,
-		giteaOwner!,
-		giteaRepository!,
-	);
+	const cloneUrl = buildGiteaCloneUrl(baseUrl, giteaOwner!, giteaRepository!);
 
 	command += buildProviderEchoCommand(
 		`Cloning Repo ${repoClone} to ${outputPath}: ✅`,
 	);
 	command += `${buildGitCloneCommand({
 		branch: giteaBranch!,
+		checkoutRevision,
 		cloneUrl,
+		credentials: {
+			username: "oauth2",
+			password: giteaProvider.accessToken ?? "",
+		},
 		enableSubmodules,
 		outputPath,
 	})};`;
