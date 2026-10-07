@@ -60,6 +60,7 @@ import { processTemplate } from "@dokploy/server/templates/processors";
 import { assertCustomGitUrlAllowed } from "@dokploy/server/utils/providers/git";
 import {
 	preserveSecretPlaceholderFields,
+	redactBackupScheduleSecrets,
 	redactDeployableServiceSecretsFor,
 	redactSecretFields,
 	type SharedEnvReadAccess,
@@ -134,10 +135,18 @@ const redactComposeSecrets = <T extends SecretRecord | null | undefined>(
 		),
 		sharedEnvAccess,
 	);
+	const withBackups = Array.isArray(record.backups)
+		? ({
+				...redacted,
+				backups: record.backups.map((backup) =>
+					redactBackupScheduleSecrets(backup),
+				),
+			} as typeof redacted)
+		: redacted;
 
 	return redactComposeFile
-		? redactSecretFields(redacted, ["composeFile"])
-		: redacted;
+		? redactSecretFields(withBackups, ["composeFile"])
+		: withBackups;
 };
 
 const composeSourceUpdateFields = [

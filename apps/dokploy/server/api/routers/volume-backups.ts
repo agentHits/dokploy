@@ -26,6 +26,7 @@ import {
 	execAsyncStream,
 } from "@dokploy/server/utils/process/execAsync";
 import { signScheduledQueueJob } from "@dokploy/server/utils/schedules/signed-job";
+import { redactServiceRelationSecrets } from "@dokploy/server/utils/security/redaction";
 import {
 	normalizeDockerVolumeName,
 	normalizeVolumeBackupServiceName,
@@ -417,7 +418,7 @@ export const volumeBackupsRouter = createTRPCRouter({
 		.query(async ({ input, ctx }) => {
 			const vb = await findVolumeBackupById(input.volumeBackupId);
 			await assertVolumeBackupServiceAccess(ctx, vb, "read");
-			return vb;
+			return redactServiceRelationSecrets(vb);
 		}),
 	delete: protectedProcedure
 		.input(

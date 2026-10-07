@@ -232,6 +232,56 @@ export const redactBackupMetadataSecrets = <T>(metadata: T): T => {
 	return redacted as T;
 };
 
+export const redactComposeServiceSecrets = <
+	T extends SecretRecord | null | undefined,
+>(
+	record: T,
+) =>
+	redactSecretFields(redactDeployableServiceSecrets(record), ["composeFile"]);
+
+// For records such as backups, volume backups and schedules that load the
+// service (and its environment/project) or server they are bound to.
+export const redactServiceRelationSecrets = <
+	T extends SecretRecord | null | undefined,
+>(
+	record: T,
+) => {
+	if (!record) {
+		return record;
+	}
+
+	const redacted: SecretRecord = { ...record };
+	if (redacted.application && typeof redacted.application === "object") {
+		redacted.application = redactDeployableServiceSecrets(
+			redacted.application as SecretRecord,
+		);
+	}
+	if (redacted.compose && typeof redacted.compose === "object") {
+		redacted.compose = redactComposeServiceSecrets(
+			redacted.compose as SecretRecord,
+		);
+	}
+	for (const key of [
+		"postgres",
+		"mysql",
+		"mariadb",
+		"mongo",
+		"redis",
+		"libsql",
+	]) {
+		if (redacted[key] && typeof redacted[key] === "object") {
+			redacted[key] = redactDatabaseServiceSecrets(
+				redacted[key] as SecretRecord,
+			);
+		}
+	}
+	if ("server" in redacted) {
+		redacted.server = redactNestedServerSecrets(redacted.server);
+	}
+
+	return redacted as T;
+};
+
 export const redactBackupScheduleSecrets = <
 	T extends SecretRecord | null | undefined,
 >(
@@ -241,20 +291,10 @@ export const redactBackupScheduleSecrets = <
 		return record;
 	}
 
-	const redacted = {
+	return redactServiceRelationSecrets({
 		...record,
 		metadata: redactBackupMetadataSecrets(record.metadata),
-	};
-
-	for (const key of ["postgres", "mysql", "mariadb", "mongo", "libsql"]) {
-		if (redacted[key] && typeof redacted[key] === "object") {
-			redacted[key] = redactDatabaseServiceSecrets(
-				redacted[key] as SecretRecord,
-			);
-		}
-	}
-
-	return redacted as T;
+	}) as T;
 };
 
 export const redactProjectNestedSecrets = <

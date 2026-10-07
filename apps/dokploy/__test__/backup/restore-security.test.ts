@@ -1,3 +1,4 @@
+import { REDACTED_SECRET_VALUE } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { parse } from "shell-quote";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -1223,5 +1224,61 @@ describe("backup restore command safety", () => {
 		expect(copyToCommand).not.toMatch(
 			/\/dokploy-restore-[^/\s]+\/dokploy\/prefix\/webserver-backup-2026-06-22\.zip/,
 		);
+	});
+});
+
+describe("backup read redaction", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.checkServicePermissionAndAccess.mockResolvedValue(undefined);
+	});
+
+	it("redacts the bound compose service and metadata passwords in one", async () => {
+		mocks.findBackupById.mockResolvedValue({
+			backupId: "backup-1",
+			backupType: "compose",
+			databaseType: "mariadb",
+			destinationId: "destination-1",
+			composeId: "compose-1",
+			serviceName: "db",
+			metadata: {
+				mariadb: {
+					databaseUser: "app",
+					databasePassword: "metadata-password",
+				},
+			},
+			compose: {
+				composeId: "compose-1",
+				appName: "compose-one",
+				env: "COMPOSE_SECRET=compose-env-secret",
+				composeFile:
+					"services:\n  db:\n    environment:\n      PASS: file-secret",
+				customGitUrl: "https://repo-user:repo-token@example.com/org/repo.git",
+				refreshToken: "compose-refresh-token",
+			},
+		});
+
+		const backup = await createCaller().one({ backupId: "backup-1" });
+
+		expect(backup.compose).toMatchObject({
+			appName: "compose-one",
+			env: REDACTED_SECRET_VALUE,
+			composeFile: REDACTED_SECRET_VALUE,
+			customGitUrl: `https://${REDACTED_SECRET_VALUE}@example.com/org/repo.git`,
+			refreshToken: REDACTED_SECRET_VALUE,
+		});
+		expect(backup.metadata).toEqual({
+			mariadb: { databaseUser: "app", databasePassword: REDACTED_SECRET_VALUE },
+		});
+		const serialized = JSON.stringify(backup);
+		for (const secret of [
+			"compose-env-secret",
+			"file-secret",
+			"repo-token",
+			"compose-refresh-token",
+			"metadata-password",
+		]) {
+			expect(serialized).not.toContain(secret);
+		}
 	});
 });
