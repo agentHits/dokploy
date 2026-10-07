@@ -196,6 +196,42 @@ export const readMonitoringConfig = async (readAll = false) => {
 	return null;
 };
 
+// ACME storage and uploaded certificates hold TLS private keys, so they stay
+// out of the generic Traefik file editor.
+export const isProtectedTraefikPath = (
+	configPath: string,
+	serverId?: string,
+) => {
+	const { CERTIFICATES_PATH } = paths(!!serverId);
+	const certificatesPath = path.resolve(CERTIFICATES_PATH);
+	const resolvedPath = path.resolve(configPath);
+	const fileName = path.basename(resolvedPath).toLowerCase();
+
+	return (
+		fileName === "acme.json" ||
+		fileName.endsWith(".key") ||
+		resolvedPath === certificatesPath ||
+		resolvedPath.startsWith(`${certificatesPath}${path.sep}`)
+	);
+};
+
+export const filterProtectedTraefikEntries = <
+	T extends { id: string; children?: T[] },
+>(
+	entries: T[],
+	serverId?: string,
+): T[] =>
+	entries
+		.filter((entry) => !isProtectedTraefikPath(entry.id, serverId))
+		.map((entry) =>
+			entry.children
+				? {
+						...entry,
+						children: filterProtectedTraefikEntries(entry.children, serverId),
+					}
+				: entry,
+		);
+
 export const resolveTraefikConfigPath = (
 	pathFile: string,
 	serverId?: string,
@@ -217,6 +253,10 @@ export const resolveTraefikConfigPath = (
 		!configPath.startsWith(`${rootPath}${path.sep}`)
 	) {
 		throw new Error("Invalid Traefik config path");
+	}
+
+	if (isProtectedTraefikPath(configPath, serverId)) {
+		throw new Error("Access to this Traefik file is not allowed");
 	}
 
 	return configPath;

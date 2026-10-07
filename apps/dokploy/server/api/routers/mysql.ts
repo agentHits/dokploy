@@ -687,7 +687,10 @@ export const mysqlRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
-			await checkServiceAccess(ctx, input.mysqlId, "read");
+			await checkServicePermissionAndAccess(ctx, input.mysqlId, {
+				service: ["read"],
+				logs: ["read"],
+			});
 			const mysql = await findMySqlById(input.mysqlId);
 			if (
 				mysql.environment.project.organizationId !==

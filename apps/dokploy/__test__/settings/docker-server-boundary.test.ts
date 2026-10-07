@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+	assertLocalHostAccess: vi.fn(),
 	audit: vi.fn(),
 	checkGPUStatus: vi.fn(),
 	checkPermission: vi.fn(),
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 	cleanupSystem: vi.fn(),
 	cleanupVolumes: vi.fn(),
 	execAsync: vi.fn(),
+	filterProtectedTraefikEntries: vi.fn(),
 	findServerById: vi.fn(),
 	generateOpenApiDocument: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
@@ -78,6 +80,7 @@ vi.mock("@dokploy/server", () => ({
 	cleanupSystem: mocks.cleanupSystem,
 	cleanupVolumes: mocks.cleanupVolumes,
 	execAsync: mocks.execAsync,
+	filterProtectedTraefikEntries: mocks.filterProtectedTraefikEntries,
 	findServerById: mocks.findServerById,
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
 	getAgentHitsUpdateCommand: mocks.getAgentHitsUpdateCommand,
@@ -139,6 +142,10 @@ vi.mock("node-schedule", () => ({
 
 vi.mock("@/server/api/utils/audit", () => ({
 	audit: mocks.audit,
+}));
+
+vi.mock("@/server/api/utils/local-host-access", () => ({
+	assertLocalHostAccess: mocks.assertLocalHostAccess,
 }));
 
 vi.mock("@/server/queues/concurrency", () => ({
@@ -491,5 +498,71 @@ describe("settings Docker server boundary", () => {
 		expect(mocks.updateWebServerSettings).toHaveBeenCalledWith({
 			remoteServersOnly: true,
 		});
+	});
+});
+
+describe("settings Traefik file access", () => {
+	const localTraefikPath = "/etc/dokploy/traefik";
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.assertLocalHostAccess.mockResolvedValue(undefined);
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
+		mocks.paths.mockReturnValue({
+			MAIN_TRAEFIK_PATH: localTraefikPath,
+		});
+		mocks.readConfigInPath.mockResolvedValue("http: {}");
+		mocks.readDirectory.mockResolvedValue([]);
+		mocks.filterProtectedTraefikEntries.mockImplementation(
+			(entries: unknown[]) => entries,
+		);
+	});
+
+	it("requires local host access for local Traefik files", async () => {
+		mocks.assertLocalHostAccess.mockRejectedValue(
+			Object.assign(new Error("Local host operations require owner or admin"), {
+				code: "UNAUTHORIZED",
+			}),
+		);
+		const caller = createCaller("member");
+
+		await expect(caller.readDirectories({})).rejects.toThrow(
+			"Local host operations require owner or admin",
+		);
+		await expect(
+			caller.readTraefikFile({
+				path: `${process.cwd()}/.docker/traefik/dynamic/app.yml`,
+			}),
+		).rejects.toThrow("Local host operations require owner or admin");
+		await expect(
+			caller.updateTraefikFile({
+				path: `${localTraefikPath}/dynamic/app.yml`,
+				traefikConfig: "http: {}",
+			}),
+		).rejects.toThrow("Local host operations require owner or admin");
+
+		expect(mocks.assertLocalHostAccess).toHaveBeenCalledTimes(3);
+		expect(mocks.readDirectory).not.toHaveBeenCalled();
+		expect(mocks.readConfigInPath).not.toHaveBeenCalled();
+		expect(mocks.writeTraefikConfigInPath).not.toHaveBeenCalled();
+	});
+
+	it("hides protected entries from remote Traefik directory listings", async () => {
+		const listing = [
+			{ id: `${localTraefikPath}/dynamic/acme.json`, name: "acme.json" },
+		];
+		mocks.readDirectory.mockResolvedValue(listing);
+		mocks.filterProtectedTraefikEntries.mockReturnValue([]);
+
+		await expect(
+			createCaller().readDirectories({ serverId: "server-1" }),
+		).resolves.toEqual([]);
+
+		expect(mocks.filterProtectedTraefikEntries).toHaveBeenCalledWith(
+			listing,
+			"server-1",
+		);
+		expect(mocks.assertLocalHostAccess).not.toHaveBeenCalled();
 	});
 });

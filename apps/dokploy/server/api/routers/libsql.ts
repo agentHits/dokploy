@@ -531,7 +531,10 @@ export const libsqlRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
-			await checkServiceAccess(ctx, input.libsqlId, "read");
+			await checkServicePermissionAndAccess(ctx, input.libsqlId, {
+				service: ["read"],
+				logs: ["read"],
+			});
 			const libsql = await findLibsqlById(input.libsqlId);
 			if (
 				libsql.environment.project.organizationId !==
