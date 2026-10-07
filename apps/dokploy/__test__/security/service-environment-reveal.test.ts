@@ -225,8 +225,11 @@ const application = (organizationId = "org-1") => ({
 	env: "APP_SECRET=secret",
 	buildArgs: "BUILD_ARG_SECRET=secret",
 	buildSecrets: "BUILD_SECRET=secret",
+	customGitUrl: "https://app-token@example.com/org/private.git",
 	environment: {
+		env: "ENVIRONMENT_SHARED=secret",
 		project: {
+			env: "PROJECT_SHARED=secret",
 			organizationId,
 		},
 	},
@@ -242,13 +245,28 @@ const compose = (organizationId = "org-1") => ({
 		"services:\n  api:\n    environment:\n      TOKEN: compose-secret",
 	customGitUrl: "https://compose-token@example.com/org/private.git",
 	environment: {
+		env: "ENVIRONMENT_SHARED=secret",
 		project: {
+			env: "PROJECT_SHARED=secret",
 			organizationId,
 		},
 	},
 });
 
 const redactedCustomGitUrl = `https://${REDACTED_SECRET_VALUE}@example.com/org/private.git`;
+
+const redactedSharedEnvironment = {
+	env: REDACTED_SECRET_VALUE,
+	project: {
+		env: REDACTED_SECRET_VALUE,
+		organizationId: "org-1",
+	},
+};
+
+const canReadSharedEnv = async (
+	_ctx: unknown,
+	permissions: Record<string, string[]>,
+) => "environmentEnvVars" in permissions || "projectEnvVars" in permissions;
 
 describe("service environment reveal boundary", () => {
 	beforeEach(() => {
@@ -344,6 +362,71 @@ describe("service environment reveal boundary", () => {
 			env: REDACTED_SECRET_VALUE,
 			composeFile: REDACTED_SECRET_VALUE,
 			customGitUrl: redactedCustomGitUrl,
+		});
+	});
+
+	it("hides shared env and git url credentials in application reads", async () => {
+		const normalRead = await applicationRouter
+			.createCaller(createContext())
+			.one({ applicationId: "app-1" });
+
+		expect(normalRead).toMatchObject({
+			customGitUrl: redactedCustomGitUrl,
+			environment: redactedSharedEnvironment,
+		});
+		expect(permissionMocks.hasPermission).toHaveBeenCalledWith(
+			expect.anything(),
+			{ environmentEnvVars: ["read"] },
+		);
+		expect(permissionMocks.hasPermission).toHaveBeenCalledWith(
+			expect.anything(),
+			{ projectEnvVars: ["read"] },
+		);
+	});
+
+	it("keeps shared env in application and compose reads for callers that can read it", async () => {
+		permissionMocks.hasPermission.mockImplementation(canReadSharedEnv);
+
+		const applicationRead = await applicationRouter
+			.createCaller(createContext())
+			.one({ applicationId: "app-1" });
+		const composeRead = await composeRouter
+			.createCaller(createContext())
+			.one({ composeId: "compose-1" });
+
+		for (const read of [applicationRead, composeRead]) {
+			expect(read).toMatchObject({
+				env: REDACTED_SECRET_VALUE,
+				customGitUrl: redactedCustomGitUrl,
+				environment: {
+					env: "ENVIRONMENT_SHARED=secret",
+					project: { env: "PROJECT_SHARED=secret" },
+				},
+			});
+		}
+	});
+
+	it("hides shared env in compose reads", async () => {
+		const normalRead = await composeRouter
+			.createCaller(createContext())
+			.one({ composeId: "compose-1" });
+
+		expect(normalRead).toMatchObject({
+			environment: redactedSharedEnvironment,
+		});
+	});
+
+	it("hides shared env and git url credentials in application action responses", async () => {
+		permissionMocks.hasPermission.mockImplementation(canReadSharedEnv);
+
+		const stopped = await applicationRouter
+			.createCaller(createContext())
+			.stop({ applicationId: "app-1" });
+
+		expect(stopped).toMatchObject({
+			env: REDACTED_SECRET_VALUE,
+			customGitUrl: redactedCustomGitUrl,
+			environment: redactedSharedEnvironment,
 		});
 	});
 

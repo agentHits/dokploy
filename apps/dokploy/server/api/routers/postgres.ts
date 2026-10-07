@@ -32,6 +32,7 @@ import { getServiceContainerCommand } from "@dokploy/server/utils/backups/utils"
 import {
 	preserveSecretPlaceholderFields,
 	redactDatabaseServiceSecrets,
+	redactDatabaseServiceSecretsFor,
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
@@ -40,7 +41,10 @@ import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { buildPostgresPasswordChangeCommand } from "@/server/api/utils/database-password";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
-import { assertServiceEnvironmentReadAccess } from "@/server/api/utils/service-environment";
+import {
+	assertServiceEnvironmentReadAccess,
+	getSharedEnvReadAccess,
+} from "@/server/api/utils/service-environment";
 import {
 	apiChangePostgresStatus,
 	apiCreatePostgres,
@@ -148,7 +152,10 @@ export const postgresRouter = createTRPCRouter({
 					message: "You are not authorized to access this Postgres",
 				});
 			}
-			return redactDatabaseServiceSecrets(postgres);
+			return redactDatabaseServiceSecretsFor(
+				postgres,
+				await getSharedEnvReadAccess(ctx),
+			);
 		}),
 
 	revealEnvironment: protectedProcedure
