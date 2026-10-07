@@ -8,6 +8,7 @@ import NextTopLoader from "nextjs-toploader";
 import type { ReactElement, ReactNode } from "react";
 import { SearchCommand } from "@/components/dashboard/search-command";
 import { Analytics } from "@/components/shared/analytics";
+import { SuperPasswordUnlockDialog } from "@/components/shared/super-password-unlock-dialog";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { api } from "@/utils/api";
@@ -50,6 +51,7 @@ const MyApp = ({
 					<Analytics />
 					<Toaster richColors />
 					<SearchCommand />
+					<SuperPasswordUnlockDialog />
 					{getLayout(<Component {...pageProps} />)}
 				</ThemeProvider>
 			</TooltipProvider>

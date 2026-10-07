@@ -196,9 +196,49 @@ export const readMonitoringConfig = async (readAll = false) => {
 	return null;
 };
 
+// ACME storage and uploaded certificates hold TLS private keys, so the generic
+// Traefik file editor only opens them when the caller passed the super session
+// check (allowProtected).
+export const isProtectedTraefikPath = (
+	configPath: string,
+	serverId?: string,
+) => {
+	const { CERTIFICATES_PATH } = paths(!!serverId);
+	const certificatesPath = path.resolve(CERTIFICATES_PATH);
+	const resolvedPath = path.resolve(configPath);
+	const fileName = path.basename(resolvedPath).toLowerCase();
+
+	return (
+		fileName === "acme.json" ||
+		fileName.endsWith(".key") ||
+		resolvedPath === certificatesPath ||
+		resolvedPath.startsWith(`${certificatesPath}${path.sep}`)
+	);
+};
+
+export const filterProtectedTraefikEntries = <
+	T extends { id: string; children?: T[] },
+>(
+	entries: T[],
+	serverId?: string,
+): T[] =>
+	entries
+		.filter((entry) => !isProtectedTraefikPath(entry.id, serverId))
+		.map((entry) =>
+			entry.children
+				? {
+						...entry,
+						children: filterProtectedTraefikEntries(entry.children, serverId),
+					}
+				: entry,
+		);
+
+type TraefikFileAccessOptions = { allowProtected?: boolean };
+
 export const resolveTraefikConfigPath = (
 	pathFile: string,
 	serverId?: string,
+	options: TraefikFileAccessOptions = {},
 ) => {
 	if (
 		typeof pathFile !== "string" ||
@@ -219,11 +259,19 @@ export const resolveTraefikConfigPath = (
 		throw new Error("Invalid Traefik config path");
 	}
 
+	if (!options.allowProtected && isProtectedTraefikPath(configPath, serverId)) {
+		throw new Error("Access to this Traefik file is not allowed");
+	}
+
 	return configPath;
 };
 
-export const readConfigInPath = async (pathFile: string, serverId?: string) => {
-	const configPath = resolveTraefikConfigPath(pathFile, serverId);
+export const readConfigInPath = async (
+	pathFile: string,
+	serverId?: string,
+	options?: TraefikFileAccessOptions,
+) => {
+	const configPath = resolveTraefikConfigPath(pathFile, serverId, options);
 
 	if (serverId) {
 		const { stdout } = await execAsyncRemote(
@@ -268,8 +316,9 @@ export const writeTraefikConfigInPath = async (
 	pathFile: string,
 	traefikConfig: string,
 	serverId?: string,
+	options?: TraefikFileAccessOptions,
 ) => {
-	const configPath = resolveTraefikConfigPath(pathFile, serverId);
+	const configPath = resolveTraefikConfigPath(pathFile, serverId, options);
 
 	try {
 		if (serverId) {

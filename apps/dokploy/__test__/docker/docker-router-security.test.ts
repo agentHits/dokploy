@@ -4,12 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
 	audit: vi.fn(),
 	assertLocalDockerContainerAccess: vi.fn(),
+	assertLocalDockerContainerOrSystemAccess: vi.fn(),
 	checkPermission: vi.fn(),
+	checkProtectedResourceAccess: vi.fn(),
 	containerKill: vi.fn(),
 	containerRemove: vi.fn(),
 	containerRestart: vi.fn(),
 	containerStart: vi.fn(),
 	containerStop: vi.fn(),
+	deleteContainerFile: vi.fn(),
 	findMemberByUserId: vi.fn(),
 	findServerById: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
@@ -17,9 +20,13 @@ const mocks = vi.hoisted(() => ({
 	getContainers: vi.fn(),
 	getContainersByAppLabel: vi.fn(),
 	getContainersByAppNameMatch: vi.fn(),
+	getDockerEvents: vi.fn(),
 	getServiceContainersByAppName: vi.fn(),
 	getStackContainersByAppName: vi.fn(),
+	listContainerFiles: vi.fn(),
+	readContainerFile: vi.fn(),
 	uploadFileToContainer: vi.fn(),
+	writeContainerFile: vi.fn(),
 }));
 
 vi.mock("@dokploy/server", () => ({
@@ -28,15 +35,20 @@ vi.mock("@dokploy/server", () => ({
 	containerRestart: mocks.containerRestart,
 	containerStart: mocks.containerStart,
 	containerStop: mocks.containerStop,
+	deleteContainerFile: mocks.deleteContainerFile,
 	findServerById: mocks.findServerById,
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
 	getConfig: mocks.getConfig,
 	getContainers: mocks.getContainers,
 	getContainersByAppLabel: mocks.getContainersByAppLabel,
 	getContainersByAppNameMatch: mocks.getContainersByAppNameMatch,
+	getDockerEvents: mocks.getDockerEvents,
 	getServiceContainersByAppName: mocks.getServiceContainersByAppName,
 	getStackContainersByAppName: mocks.getStackContainersByAppName,
+	listContainerFiles: mocks.listContainerFiles,
+	readContainerFile: mocks.readContainerFile,
 	uploadFileToContainer: mocks.uploadFileToContainer,
+	writeContainerFile: mocks.writeContainerFile,
 }));
 
 vi.mock("@dokploy/server/services/permission", () => ({
@@ -50,11 +62,23 @@ vi.mock("@/server/api/utils/audit", () => ({
 
 vi.mock("@/server/api/utils/local-docker-access", () => ({
 	assertLocalDockerContainerAccess: mocks.assertLocalDockerContainerAccess,
+	assertLocalDockerContainerOrSystemAccess:
+		mocks.assertLocalDockerContainerOrSystemAccess,
+}));
+
+vi.mock("@dokploy/server/services/super-password", async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import("@dokploy/server/services/super-password")
+	>()),
+	checkProtectedResourceAccess: mocks.checkProtectedResourceAccess,
 }));
 
 const { dockerRouter } = await import("../../server/api/routers/docker");
+const { getSuperSessionDenial } = await import(
+	"@dokploy/server/services/super-password"
+);
 
-const createCaller = () =>
+const createCaller = (authMethod: "session" | "api-key" = "session") =>
 	dockerRouter.createCaller({
 		db: {},
 		req: {},
@@ -62,6 +86,7 @@ const createCaller = () =>
 		session: {
 			userId: "user-1",
 			activeOrganizationId: "org-1",
+			...(authMethod === "api-key" ? { authMethod } : {}),
 		},
 		user: {
 			id: "user-1",
@@ -239,5 +264,300 @@ describe("docker router assigned-server boundary", () => {
 			"/tmp/config.txt",
 			null,
 		);
+	});
+});
+
+describe("docker router container file and event boundary", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.findMemberByUserId.mockResolvedValue({ role: "admin" });
+		mocks.findServerById.mockResolvedValue({
+			serverId: "server-1",
+			organizationId: "org-1",
+		});
+		mocks.assertLocalDockerContainerAccess.mockResolvedValue({
+			Id: "resolved-container-1",
+			Config: {
+				Labels: {
+					"com.docker.swarm.service.name": "app-1",
+				},
+			},
+		});
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
+		mocks.listContainerFiles.mockResolvedValue([]);
+		mocks.readContainerFile.mockResolvedValue({ content: "" });
+		mocks.getDockerEvents.mockResolvedValue([]);
+		mocks.assertLocalDockerContainerOrSystemAccess.mockImplementation(
+			(ctx, containerId, permission) =>
+				mocks.assertLocalDockerContainerAccess(ctx, containerId, permission),
+		);
+		mocks.checkProtectedResourceAccess.mockResolvedValue(
+			"super-session-required",
+		);
+	});
+
+	const fileCalls = (
+		caller: ReturnType<typeof createCaller>,
+		serverId?: string,
+	) => [
+		{
+			name: "listContainerFiles",
+			run: () =>
+				caller.listContainerFiles({
+					containerId: "container-1",
+					path: "/",
+					serverId,
+				}),
+			sideEffect: mocks.listContainerFiles,
+		},
+		{
+			name: "readContainerFile",
+			run: () =>
+				caller.readContainerFile({
+					containerId: "container-1",
+					path: "/etc/app.env",
+					serverId,
+				}),
+			sideEffect: mocks.readContainerFile,
+		},
+		{
+			name: "writeContainerFile",
+			run: () =>
+				caller.writeContainerFile({
+					containerId: "container-1",
+					path: "/etc/app.env",
+					content: "KEY=value",
+					serverId,
+				}),
+			sideEffect: mocks.writeContainerFile,
+		},
+		{
+			name: "deleteContainerFile",
+			run: () =>
+				caller.deleteContainerFile({
+					containerId: "container-1",
+					path: "/etc/app.env",
+					serverId,
+				}),
+			sideEffect: mocks.deleteContainerFile,
+		},
+	];
+
+	it("denies non-admin container file access before Docker side effects", async () => {
+		mocks.findMemberByUserId.mockResolvedValue({ role: "member" });
+
+		for (const call of fileCalls(createCaller())) {
+			await expect(call.run(), call.name).rejects.toMatchObject({
+				code: "UNAUTHORIZED",
+			});
+			expect(call.sideEffect, call.name).not.toHaveBeenCalled();
+		}
+		expect(mocks.audit).not.toHaveBeenCalled();
+	});
+
+	it("denies container file access on inaccessible servers", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		for (const call of fileCalls(createCaller(), "server-1")) {
+			await expect(call.run(), call.name).rejects.toMatchObject({
+				code: "UNAUTHORIZED",
+			});
+			expect(call.sideEffect, call.name).not.toHaveBeenCalled();
+		}
+		expect(mocks.audit).not.toHaveBeenCalled();
+	});
+
+	it("denies local container file access for containers outside the caller's services", async () => {
+		mocks.assertLocalDockerContainerAccess.mockRejectedValue(
+			new TRPCError({ code: "UNAUTHORIZED" }),
+		);
+
+		for (const call of fileCalls(createCaller())) {
+			await expect(call.run(), call.name).rejects.toMatchObject({
+				code: "UNAUTHORIZED",
+			});
+			expect(call.sideEffect, call.name).not.toHaveBeenCalled();
+		}
+		expect(mocks.audit).not.toHaveBeenCalled();
+	});
+
+	it("binds local container file reads to the authorized container", async () => {
+		const caller = createCaller();
+
+		await caller.listContainerFiles({ containerId: "container-1", path: "/" });
+		await caller.readContainerFile({
+			containerId: "container-1",
+			path: "/etc/app.env",
+		});
+
+		expect(mocks.assertLocalDockerContainerAccess).toHaveBeenCalledWith(
+			expect.anything(),
+			"container-1",
+			"read",
+		);
+		expect(mocks.listContainerFiles).toHaveBeenCalledWith(
+			"resolved-container-1",
+			"/",
+			undefined,
+		);
+		expect(mocks.readContainerFile).toHaveBeenCalledWith(
+			"resolved-container-1",
+			"/etc/app.env",
+			undefined,
+		);
+	});
+
+	it("requires docker.write for container file writes", async () => {
+		await createCaller().writeContainerFile({
+			containerId: "container-1",
+			path: "/etc/app.env",
+			content: "KEY=value",
+		});
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			docker: ["write"],
+		});
+		expect(mocks.assertLocalDockerContainerAccess).toHaveBeenCalledWith(
+			expect.anything(),
+			"container-1",
+			"write",
+		);
+		expect(mocks.writeContainerFile).toHaveBeenCalledWith(
+			"resolved-container-1",
+			"/etc/app.env",
+			"KEY=value",
+			undefined,
+		);
+	});
+
+	it("requires docker.delete for container file deletes", async () => {
+		await createCaller().deleteContainerFile({
+			containerId: "container-1",
+			path: "/etc/app.env",
+		});
+
+		expect(mocks.checkPermission).toHaveBeenCalledWith(expect.anything(), {
+			docker: ["delete"],
+		});
+		expect(mocks.assertLocalDockerContainerAccess).toHaveBeenCalledWith(
+			expect.anything(),
+			"container-1",
+			"delete",
+		);
+		expect(mocks.deleteContainerFile).toHaveBeenCalledWith(
+			"resolved-container-1",
+			"/etc/app.env",
+			undefined,
+		);
+	});
+
+	describe("panel system containers", () => {
+		const systemContainer = {
+			Id: "system-container-1",
+			Config: { Labels: {} },
+		};
+
+		beforeEach(() => {
+			mocks.assertLocalDockerContainerOrSystemAccess.mockImplementation(
+				async (_ctx, _containerId, _permission, assertSystemAccess) => {
+					await assertSystemAccess();
+					return systemContainer;
+				},
+			);
+		});
+
+		it("denies system container files without an open super session", async () => {
+			for (const call of fileCalls(createCaller())) {
+				const error = await call.run().then(
+					() => null,
+					(caught: unknown) => caught,
+				);
+				expect(error, call.name).toMatchObject({ code: "FORBIDDEN" });
+				expect(getSuperSessionDenial(error), call.name).toBe(
+					"super-session-required",
+				);
+				expect(call.sideEffect, call.name).not.toHaveBeenCalled();
+			}
+			expect(mocks.checkProtectedResourceAccess).toHaveBeenCalledWith({
+				userId: "user-1",
+				viaApiKey: false,
+			});
+			expect(mocks.audit).not.toHaveBeenCalled();
+		});
+
+		it("opens system container files for owners and admins with an open super session", async () => {
+			mocks.checkProtectedResourceAccess.mockResolvedValue(null);
+
+			for (const call of fileCalls(createCaller())) {
+				await call.run();
+				expect(call.sideEffect, call.name).toHaveBeenCalledWith(
+					"system-container-1",
+					expect.anything(),
+					...(call.name === "writeContainerFile"
+						? [expect.anything(), undefined]
+						: [undefined]),
+				);
+			}
+		});
+
+		it("keeps members out even with an open super session", async () => {
+			mocks.checkProtectedResourceAccess.mockResolvedValue(null);
+			mocks.findMemberByUserId.mockResolvedValue({ role: "member" });
+
+			for (const call of fileCalls(createCaller())) {
+				await expect(call.run(), call.name).rejects.toMatchObject({
+					code: "UNAUTHORIZED",
+				});
+				expect(call.sideEffect, call.name).not.toHaveBeenCalled();
+			}
+		});
+
+		it("never opens system container files through an API key", async () => {
+			mocks.checkProtectedResourceAccess.mockImplementation(
+				async ({ viaApiKey }: { viaApiKey: boolean }) =>
+					viaApiKey ? "browser-session-required" : null,
+			);
+
+			for (const call of fileCalls(createCaller("api-key"))) {
+				await expect(call.run(), call.name).rejects.toMatchObject({
+					code: "FORBIDDEN",
+				});
+				expect(call.sideEffect, call.name).not.toHaveBeenCalled();
+			}
+		});
+	});
+
+	it("denies non-admin Docker event reads", async () => {
+		mocks.findMemberByUserId.mockResolvedValue({ role: "member" });
+
+		await expect(createCaller().getEvents({})).rejects.toMatchObject({
+			code: "UNAUTHORIZED",
+		});
+
+		expect(mocks.getDockerEvents).not.toHaveBeenCalled();
+	});
+
+	it("denies Docker event reads on inaccessible servers", async () => {
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
+
+		await expect(
+			createCaller().getEvents({ serverId: "server-1" }),
+		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+		expect(mocks.getDockerEvents).not.toHaveBeenCalled();
+	});
+
+	it("checks admin role and server access before reading Docker events", async () => {
+		await expect(
+			createCaller().getEvents({ serverId: "server-1", minutes: 5 }),
+		).resolves.toEqual([]);
+
+		expect(mocks.findMemberByUserId).toHaveBeenCalledWith("user-1", "org-1");
+		expect(mocks.getAccessibleServerIds).toHaveBeenCalledWith({
+			userId: "user-1",
+			activeOrganizationId: "org-1",
+		});
+		expect(mocks.getDockerEvents).toHaveBeenCalledWith("server-1", 5);
 	});
 });

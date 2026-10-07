@@ -32,6 +32,7 @@ import {
 import { getPublicIpWithFallback } from "../wss/utils";
 import { ac, adminRole, memberRole, ownerRole } from "./access-control";
 import { betterAuthSecret, scimCredentialHashSecret } from "./auth-secret";
+import { enforceSuperSessionForAuthEndpoint } from "./super-session-auth";
 
 export const isEmailPasswordSignInPath = (path: string | undefined) =>
 	path === "/sign-in/email" || path?.endsWith("/sign-in/email");
@@ -189,6 +190,7 @@ const { handler, api } = betterAuth({
 						"Email and password sign-in is disabled while SSO is enforced",
 				});
 			}
+			await enforceSuperSessionForAuthEndpoint(ctx);
 		}),
 	},
 	async trustedOrigins(request) {
@@ -694,6 +696,8 @@ export const validateRequest = async (request: IncomingMessage) => {
 				session: {
 					userId: apiKeyRecord.user.id,
 					activeOrganizationId: organizationId || "",
+					authMethod: "api-key" as const,
+					apiKeyId: apiKeyRecord.id,
 				},
 				user: {
 					id: userFromDb.id,
@@ -758,6 +762,7 @@ export const validateRequest = async (request: IncomingMessage) => {
 		session: {
 			...session.session,
 			activeOrganizationId: member?.organization.id || "",
+			authMethod: "session" as const,
 		},
 		user: {
 			...session.user,

@@ -7,6 +7,7 @@ import { WebSocketServer } from "ws";
 import { canAccessDockerOverWss } from "./authorize";
 import { canAccessDockerTerminalWebSocket } from "./docker-permission";
 import { verifyWebSocketOrigin } from "./origin";
+import { rejectTerminalWithoutSuperSession } from "./super-session";
 import {
 	isValidContainerId,
 	isValidShell,
@@ -88,6 +89,10 @@ export const setupDockerContainerTerminalWebSocketServer = (
 
 		if (!(await canAccessDockerOverWss(user, session, serverId, serviceId))) {
 			ws.close(4003, "Not authorized");
+			return;
+		}
+
+		if (await rejectTerminalWithoutSuperSession(ws, user, session)) {
 			return;
 		}
 		try {

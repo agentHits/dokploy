@@ -43,6 +43,7 @@ import {
 	resolvePermissions,
 } from "@dokploy/server/services/permission";
 import { hasValidLicense } from "@dokploy/server/services/proprietary/license-key";
+import { matchesSuperPassword } from "@dokploy/server/services/super-password";
 import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
 import { TRPCError } from "@trpc/server";
 import * as bcrypt from "bcrypt";
@@ -499,6 +500,13 @@ export const userRouter = createTRPCRouter({
 					throw new TRPCError({
 						code: "BAD_REQUEST",
 						message: "New password is required",
+					});
+				}
+
+				if (await matchesSuperPassword(ctx.user.id, password)) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "The login password must differ from your super password",
 					});
 				}
 				await db

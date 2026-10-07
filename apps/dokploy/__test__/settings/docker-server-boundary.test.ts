@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+	assertLocalHostAccess: vi.fn(),
 	audit: vi.fn(),
 	checkGPUStatus: vi.fn(),
 	checkPermission: vi.fn(),
 	checkPortInUse: vi.fn(),
+	checkProtectedResourceAccess: vi.fn(),
 	checkPostgresHealth: vi.fn(),
 	checkRedisHealth: vi.fn(),
 	checkTraefikHealth: vi.fn(),
@@ -17,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 	cleanupSystem: vi.fn(),
 	cleanupVolumes: vi.fn(),
 	execAsync: vi.fn(),
+	filterProtectedTraefikEntries: vi.fn(),
 	findServerById: vi.fn(),
 	generateOpenApiDocument: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
@@ -78,6 +81,7 @@ vi.mock("@dokploy/server", () => ({
 	cleanupSystem: mocks.cleanupSystem,
 	cleanupVolumes: mocks.cleanupVolumes,
 	execAsync: mocks.execAsync,
+	filterProtectedTraefikEntries: mocks.filterProtectedTraefikEntries,
 	findServerById: mocks.findServerById,
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
 	getAgentHitsUpdateCommand: mocks.getAgentHitsUpdateCommand,
@@ -124,6 +128,13 @@ vi.mock("@dokploy/server/services/permission", () => ({
 	checkPermission: mocks.checkPermission,
 }));
 
+vi.mock("@dokploy/server/services/super-password", async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import("@dokploy/server/services/super-password")
+	>()),
+	checkProtectedResourceAccess: mocks.checkProtectedResourceAccess,
+}));
+
 vi.mock("@dokploy/server/services/proprietary/license-key", () => ({
 	hasValidLicense: mocks.hasValidLicense,
 }));
@@ -139,6 +150,10 @@ vi.mock("node-schedule", () => ({
 
 vi.mock("@/server/api/utils/audit", () => ({
 	audit: mocks.audit,
+}));
+
+vi.mock("@/server/api/utils/local-host-access", () => ({
+	assertLocalHostAccess: mocks.assertLocalHostAccess,
 }));
 
 vi.mock("@/server/queues/concurrency", () => ({
@@ -159,8 +174,14 @@ vi.mock("../../server/api/root", () => ({
 }));
 
 const { settingsRouter } = await import("../../server/api/routers/settings");
+const { getSuperSessionDenial } = await import(
+	"@dokploy/server/services/super-password"
+);
 
-const createCaller = (role: "owner" | "admin" | "member" = "admin") =>
+const createCaller = (
+	role: "owner" | "admin" | "member" = "admin",
+	authMethod?: "api-key",
+) =>
 	settingsRouter.createCaller({
 		db: {},
 		req: {
@@ -173,6 +194,7 @@ const createCaller = (role: "owner" | "admin" | "member" = "admin") =>
 		session: {
 			userId: "user-1",
 			activeOrganizationId: "org-1",
+			...(authMethod ? { authMethod } : {}),
 		},
 		user: {
 			id: "user-1",
@@ -490,6 +512,160 @@ describe("settings Docker server boundary", () => {
 		expect(mocks.hasValidLicense).toHaveBeenCalledWith("org-1");
 		expect(mocks.updateWebServerSettings).toHaveBeenCalledWith({
 			remoteServersOnly: true,
+		});
+	});
+});
+
+describe("settings Traefik file access", () => {
+	const localTraefikPath = "/etc/dokploy/traefik";
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.checkPermission.mockResolvedValue(undefined);
+		mocks.assertLocalHostAccess.mockResolvedValue(undefined);
+		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-1"]));
+		mocks.paths.mockReturnValue({
+			MAIN_TRAEFIK_PATH: localTraefikPath,
+		});
+		mocks.readConfigInPath.mockResolvedValue("http: {}");
+		mocks.readDirectory.mockResolvedValue([]);
+		mocks.filterProtectedTraefikEntries.mockImplementation(
+			(entries: unknown[]) => entries,
+		);
+		mocks.checkProtectedResourceAccess.mockResolvedValue(
+			"super-session-required",
+		);
+	});
+
+	it("requires local host access for local Traefik files", async () => {
+		mocks.assertLocalHostAccess.mockRejectedValue(
+			Object.assign(new Error("Local host operations require owner or admin"), {
+				code: "UNAUTHORIZED",
+			}),
+		);
+		const caller = createCaller("member");
+
+		await expect(caller.readDirectories({})).rejects.toThrow(
+			"Local host operations require owner or admin",
+		);
+		await expect(
+			caller.readTraefikFile({
+				path: `${process.cwd()}/.docker/traefik/dynamic/app.yml`,
+			}),
+		).rejects.toThrow("Local host operations require owner or admin");
+		await expect(
+			caller.updateTraefikFile({
+				path: `${localTraefikPath}/dynamic/app.yml`,
+				traefikConfig: "http: {}",
+			}),
+		).rejects.toThrow("Local host operations require owner or admin");
+
+		expect(mocks.assertLocalHostAccess).toHaveBeenCalledTimes(3);
+		expect(mocks.readDirectory).not.toHaveBeenCalled();
+		expect(mocks.readConfigInPath).not.toHaveBeenCalled();
+		expect(mocks.writeTraefikConfigInPath).not.toHaveBeenCalled();
+	});
+
+	it("hides protected entries from remote Traefik directory listings", async () => {
+		const listing = [
+			{ id: `${localTraefikPath}/dynamic/acme.json`, name: "acme.json" },
+		];
+		mocks.readDirectory.mockResolvedValue(listing);
+		mocks.filterProtectedTraefikEntries.mockReturnValue([]);
+
+		await expect(
+			createCaller().readDirectories({ serverId: "server-1" }),
+		).resolves.toEqual([]);
+
+		expect(mocks.filterProtectedTraefikEntries).toHaveBeenCalledWith(
+			listing,
+			"server-1",
+		);
+		expect(mocks.assertLocalHostAccess).not.toHaveBeenCalled();
+	});
+
+	describe("TLS files behind the super session", () => {
+		const acmePath = `${process.cwd()}/.docker/traefik/dynamic/acme.json`;
+		const keyPath = `${process.cwd()}/.docker/traefik/dynamic/certificates/site/key.key`;
+
+		it("denies TLS files while the super session is closed", async () => {
+			const caller = createCaller("owner");
+
+			for (const run of [
+				() => caller.readTraefikFile({ path: acmePath }),
+				() => caller.updateTraefikFile({ path: keyPath, traefikConfig: "x" }),
+			]) {
+				const error = await run().then(
+					() => null,
+					(caught: unknown) => caught,
+				);
+				expect(error).toMatchObject({ code: "FORBIDDEN" });
+				expect(getSuperSessionDenial(error)).toBe("super-session-required");
+			}
+			expect(mocks.readConfigInPath).not.toHaveBeenCalled();
+			expect(mocks.writeTraefikConfigInPath).not.toHaveBeenCalled();
+		});
+
+		it("opens TLS files for owners and admins while the super session is open", async () => {
+			mocks.checkProtectedResourceAccess.mockResolvedValue(null);
+			const caller = createCaller("owner");
+
+			await caller.readTraefikFile({ path: acmePath });
+			expect(mocks.readConfigInPath).toHaveBeenCalledWith(acmePath, undefined, {
+				allowProtected: true,
+			});
+
+			await caller.updateTraefikFile({ path: keyPath, traefikConfig: "x" });
+			expect(mocks.writeTraefikConfigInPath).toHaveBeenCalledWith(
+				keyPath,
+				"x",
+				undefined,
+				{ allowProtected: true },
+			);
+			expect(mocks.checkProtectedResourceAccess).toHaveBeenCalledWith({
+				userId: "user-1",
+				viaApiKey: false,
+			});
+		});
+
+		it("never opens TLS files through an API key", async () => {
+			mocks.checkProtectedResourceAccess.mockImplementation(
+				async ({ viaApiKey }: { viaApiKey: boolean }) =>
+					viaApiKey ? "browser-session-required" : null,
+			);
+
+			await expect(
+				createCaller("owner", "api-key").readTraefikFile({ path: acmePath }),
+			).rejects.toMatchObject({ code: "FORBIDDEN" });
+			expect(mocks.readConfigInPath).not.toHaveBeenCalled();
+		});
+
+		it("does not involve the super session for regular Traefik files", async () => {
+			const appPath = `${process.cwd()}/.docker/traefik/dynamic/app.yml`;
+
+			await createCaller("owner").readTraefikFile({ path: appPath });
+
+			expect(mocks.checkProtectedResourceAccess).not.toHaveBeenCalled();
+			expect(mocks.readConfigInPath).toHaveBeenCalledWith(appPath, undefined, {
+				allowProtected: false,
+			});
+		});
+
+		it("lists TLS files only while the super session is open", async () => {
+			const listing = [{ id: acmePath, name: "acme.json" }];
+			mocks.readDirectory.mockResolvedValue(listing);
+			mocks.filterProtectedTraefikEntries.mockReturnValue([]);
+
+			await expect(createCaller("owner").readDirectories({})).resolves.toEqual(
+				[],
+			);
+
+			mocks.checkProtectedResourceAccess.mockResolvedValue(null);
+			mocks.filterProtectedTraefikEntries.mockClear();
+			await expect(createCaller("owner").readDirectories({})).resolves.toEqual(
+				listing,
+			);
+			expect(mocks.filterProtectedTraefikEntries).not.toHaveBeenCalled();
 		});
 	});
 });

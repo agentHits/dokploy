@@ -1,4 +1,4 @@
-import { getConfig } from "@dokploy/server";
+import { execAsync, getConfig } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
 import {
 	applications,
@@ -14,6 +14,7 @@ import {
 import { checkServicePermissionAndAccess } from "@dokploy/server/services/permission";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
+import { quote } from "shell-quote";
 
 type LocalDockerAccessCtx = {
 	user: { id: string };
@@ -242,4 +243,56 @@ export const assertLocalDockerContainerAccess = async (
 	await assertLocalDockerServiceAccess(ctx, appName, permission);
 
 	return config;
+};
+
+// Containers that no Dokploy service owns are the panel's own (dokploy, its
+// postgres and redis, traefik) or were started by hand on the host.
+// assertSystemAccess decides whether the caller may open them.
+export const assertLocalDockerContainerOrSystemAccess = async (
+	ctx: LocalDockerAccessCtx,
+	containerId: string,
+	permission: LocalDockerPermission,
+	assertSystemAccess: () => Promise<void>,
+) => {
+	assertDockerIdentifier(containerId);
+
+	const config = await getConfig(containerId, null);
+	const appName = getLocalDockerAppName(config);
+	const service = appName ? await findServiceByAppName(appName) : null;
+
+	if (!service) {
+		await assertSystemAccess();
+		return config;
+	}
+	if (service.serverId) {
+		throw unauthorizedLocalDockerTarget();
+	}
+
+	await checkServicePermissionAndAccess(ctx, service.id, {
+		docker: [permission],
+	});
+	return config;
+};
+
+export const isLocalSystemDockerContainer = async (containerId: string) => {
+	assertDockerIdentifier(containerId);
+	const config = await getConfig(containerId, null);
+	const appName = getLocalDockerAppName(config);
+	return !appName || !(await findServiceByAppName(appName));
+};
+
+export const isLocalSystemDockerVolume = async (volumeName: string) => {
+	assertDockerIdentifier(volumeName);
+	const { stdout } = await execAsync(
+		`docker ps -a --no-trunc --filter ${quote([`volume=${volumeName}`])} --format '{{.ID}}'`,
+	);
+	for (const containerId of stdout.split("\n")) {
+		if (
+			containerId.trim() &&
+			(await isLocalSystemDockerContainer(containerId.trim()))
+		) {
+			return true;
+		}
+	}
+	return false;
 };

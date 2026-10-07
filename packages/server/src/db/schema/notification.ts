@@ -41,6 +41,7 @@ export const notifications = pgTable("notification", {
 	dokployBackup: boolean("dokployBackup").notNull().default(false),
 	dockerCleanup: boolean("dockerCleanup").notNull().default(false),
 	serverThreshold: boolean("serverThreshold").notNull().default(false),
+	superPassword: boolean("superPassword").notNull().default(false),
 	notificationType: notificationType("notificationType").notNull(),
 	createdAt: text("createdAt")
 		.notNull()
@@ -281,7 +282,8 @@ export const apiCreateSlack = notificationsSchema
 		webhookUrl: z.string().min(1),
 		channel: z.string(),
 	})
-	.required();
+	.required()
+	.extend({ superPassword: z.boolean().optional() });
 
 export const apiUpdateSlack = apiCreateSlack.partial().extend({
 	notificationId: z.string().min(1),
@@ -312,7 +314,8 @@ export const apiCreateTelegram = notificationsSchema
 		chatId: z.string().min(1),
 		messageThreadId: z.string(),
 	})
-	.required();
+	.required()
+	.extend({ superPassword: z.boolean().optional() });
 
 export const apiUpdateTelegram = apiCreateTelegram.partial().extend({
 	notificationId: z.string().min(1),
@@ -343,7 +346,8 @@ export const apiCreateDiscord = notificationsSchema
 		webhookUrl: z.string().min(1),
 		decoration: z.boolean(),
 	})
-	.required();
+	.required()
+	.extend({ superPassword: z.boolean().optional() });
 
 export const apiUpdateDiscord = apiCreateDiscord.partial().extend({
 	notificationId: z.string().min(1),
@@ -380,7 +384,8 @@ export const apiCreateEmail = notificationsSchema
 		fromAddress: z.string().min(1),
 		toAddresses: z.array(z.string()).min(1),
 	})
-	.required();
+	.required()
+	.extend({ superPassword: z.boolean().optional() });
 
 export const apiUpdateEmail = apiCreateEmail.partial().extend({
 	notificationId: z.string().min(1),
@@ -415,7 +420,8 @@ export const apiCreateResend = notificationsSchema
 		fromAddress: z.string().min(1),
 		toAddresses: z.array(z.string()).min(1),
 	})
-	.required();
+	.required()
+	.extend({ superPassword: z.boolean().optional() });
 
 export const apiUpdateResend = apiCreateResend.partial().extend({
 	notificationId: z.string().min(1),
@@ -448,7 +454,8 @@ export const apiCreateGotify = notificationsSchema
 		priority: z.number().min(1),
 		decoration: z.boolean(),
 	})
-	.required();
+	.required()
+	.extend({ superPassword: z.boolean().optional() });
 
 export const apiUpdateGotify = apiCreateGotify.partial().extend({
 	notificationId: z.string().min(1),
@@ -485,7 +492,8 @@ export const apiCreateNtfy = notificationsSchema
 		accessToken: z.string().optional(),
 		priority: z.number().min(1),
 	})
-	.required();
+	.required()
+	.extend({ superPassword: z.boolean().optional() });
 
 export const apiUpdateNtfy = apiCreateNtfy.partial().extend({
 	notificationId: z.string().min(1),
@@ -513,6 +521,7 @@ export const apiCreateMattermost = notificationsSchema
 		serverThreshold: true,
 	})
 	.extend({
+		superPassword: z.boolean().optional(),
 		webhookUrl: z.string().url(),
 		channel: z.string().optional(),
 		username: z.string().optional(),
@@ -565,6 +574,7 @@ export const apiCreateCustom = notificationsSchema
 		serverThreshold: true,
 	})
 	.extend({
+		superPassword: z.boolean().optional(),
 		endpoint: z.string().min(1),
 		headers: z.record(z.string(), z.string()).optional(),
 	});
@@ -596,7 +606,8 @@ export const apiCreateLark = notificationsSchema
 	.extend({
 		webhookUrl: z.string().min(1),
 	})
-	.required();
+	.required()
+	.extend({ superPassword: z.boolean().optional() });
 
 export const apiUpdateLark = apiCreateLark.partial().extend({
 	notificationId: z.string().min(1),
@@ -624,7 +635,8 @@ export const apiCreateTeams = notificationsSchema
 	.extend({
 		webhookUrl: z.string().min(1),
 	})
-	.required();
+	.required()
+	.extend({ superPassword: z.boolean().optional() });
 
 export const apiUpdateTeams = apiCreateTeams.partial().extend({
 	notificationId: z.string().min(1),
@@ -650,6 +662,7 @@ export const apiCreatePushover = notificationsSchema
 		serverThreshold: true,
 	})
 	.extend({
+		superPassword: z.boolean().optional(),
 		userKey: z.string().min(1),
 		apiToken: z.string().min(1),
 		priority: z.number().min(-2).max(2).default(0),
@@ -683,6 +696,7 @@ export const apiUpdatePushover = z.object({
 	appDeploy: z.boolean().optional(),
 	dockerCleanup: z.boolean().optional(),
 	serverThreshold: z.boolean().optional(),
+	superPassword: z.boolean().optional(),
 });
 
 export const apiTestPushoverConnection = z

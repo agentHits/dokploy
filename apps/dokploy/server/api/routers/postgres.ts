@@ -685,7 +685,10 @@ export const postgresRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
-			await checkServiceAccess(ctx, input.postgresId, "read");
+			await checkServicePermissionAndAccess(ctx, input.postgresId, {
+				service: ["read"],
+				logs: ["read"],
+			});
 			const postgres = await findPostgresById(input.postgresId);
 			if (
 				postgres.environment.project.organizationId !==

@@ -12,7 +12,10 @@ import {
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
+import { isLocalSystemDockerVolume } from "@/server/api/utils/local-docker-access";
+import { assertProtectedResourceAccess } from "@/server/api/utils/super-session";
 import { createTRPCRouter, withPermission } from "../trpc";
+import { assertDockerServerAccess } from "./docker";
 
 export const volumeNameRegex = /^[a-zA-Z0-9.\-_]+$/;
 
@@ -24,6 +27,19 @@ const volumePathSchema = z
 		(path) => path.startsWith("/") && !path.includes("\0"),
 		"Path must be absolute.",
 	);
+
+const assertVolumeFileAccess = async (
+	ctx: Parameters<typeof assertDockerServerAccess>[0] &
+		Parameters<typeof assertProtectedResourceAccess>[0],
+	volumeName: string,
+	serverId?: string,
+) => {
+	await assertDockerServerAccess(ctx, serverId);
+	// Volumes of the panel's own containers hold its database and keys.
+	if (!serverId && (await isLocalSystemDockerVolume(volumeName))) {
+		await assertProtectedResourceAccess(ctx);
+	}
+};
 
 export const dockerVolumeRouter = createTRPCRouter({
 	getVolumes: withPermission("docker", "read")
@@ -70,12 +86,7 @@ export const dockerVolumeRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
-			if (input.serverId) {
-				const server = await findServerById(input.serverId);
-				if (server.organizationId !== ctx.session?.activeOrganizationId) {
-					throw new TRPCError({ code: "UNAUTHORIZED" });
-				}
-			}
+			await assertVolumeFileAccess(ctx, input.volumeName, input.serverId);
 			return await listVolumeFiles(
 				input.volumeName,
 				input.path,
@@ -95,16 +106,11 @@ export const dockerVolumeRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input, ctx }) => {
-			if (input.serverId) {
-				const server = await findServerById(input.serverId);
-				if (server.organizationId !== ctx.session?.activeOrganizationId) {
-					throw new TRPCError({ code: "UNAUTHORIZED" });
-				}
-			}
+			await assertVolumeFileAccess(ctx, input.volumeName, input.serverId);
 			return await readVolumeFile(input.volumeName, input.path, input.serverId);
 		}),
 
-	writeVolumeFile: withPermission("docker", "read")
+	writeVolumeFile: withPermission("docker", "write")
 		.input(
 			z.object({
 				volumeName: z
@@ -117,12 +123,7 @@ export const dockerVolumeRouter = createTRPCRouter({
 			}),
 		)
 		.mutation(async ({ input, ctx }) => {
-			if (input.serverId) {
-				const server = await findServerById(input.serverId);
-				if (server.organizationId !== ctx.session?.activeOrganizationId) {
-					throw new TRPCError({ code: "UNAUTHORIZED" });
-				}
-			}
+			await assertVolumeFileAccess(ctx, input.volumeName, input.serverId);
 			await writeVolumeFile(
 				input.volumeName,
 				input.path,
@@ -137,7 +138,7 @@ export const dockerVolumeRouter = createTRPCRouter({
 			});
 		}),
 
-	deleteVolumeFile: withPermission("docker", "read")
+	deleteVolumeFile: withPermission("docker", "delete")
 		.input(
 			z.object({
 				volumeName: z
@@ -152,12 +153,7 @@ export const dockerVolumeRouter = createTRPCRouter({
 			}),
 		)
 		.mutation(async ({ input, ctx }) => {
-			if (input.serverId) {
-				const server = await findServerById(input.serverId);
-				if (server.organizationId !== ctx.session?.activeOrganizationId) {
-					throw new TRPCError({ code: "UNAUTHORIZED" });
-				}
-			}
+			await assertVolumeFileAccess(ctx, input.volumeName, input.serverId);
 			await deleteVolumeFile(input.volumeName, input.path, input.serverId);
 			await audit(ctx, {
 				action: "delete",
@@ -187,7 +183,7 @@ export const dockerVolumeRouter = createTRPCRouter({
 			return await getVolumeConfig(input.volumeName, input.serverId);
 		}),
 
-	removeVolume: withPermission("docker", "read")
+	removeVolume: withPermission("docker", "delete")
 		.input(
 			z.object({
 				volumeName: z
@@ -198,12 +194,7 @@ export const dockerVolumeRouter = createTRPCRouter({
 			}),
 		)
 		.mutation(async ({ input, ctx }) => {
-			if (input.serverId) {
-				const server = await findServerById(input.serverId);
-				if (server.organizationId !== ctx.session?.activeOrganizationId) {
-					throw new TRPCError({ code: "UNAUTHORIZED" });
-				}
-			}
+			await assertDockerServerAccess(ctx, input.serverId);
 			await removeVolume(input.volumeName, input.serverId);
 			await audit(ctx, {
 				action: "delete",

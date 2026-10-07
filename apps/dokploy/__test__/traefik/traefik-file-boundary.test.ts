@@ -17,13 +17,20 @@ vi.mock("@dokploy/server/utils/process/execAsync", () => ({
 	writeFileRemote: mocks.writeFileRemote,
 }));
 
-const { readConfigInPath, writeTraefikConfigInPath, writeTraefikConfigRemote } =
-	await import("@dokploy/server/utils/traefik/application");
+const {
+	filterProtectedTraefikEntries,
+	readConfigInPath,
+	writeTraefikConfigInPath,
+	writeTraefikConfigRemote,
+} = await import("@dokploy/server/utils/traefik/application");
 
 describe("Traefik file path boundary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mocks.paths.mockImplementation((remote?: boolean) => ({
+			CERTIFICATES_PATH: remote
+				? "/etc/dokploy/traefik/dynamic/certificates"
+				: "/var/lib/dokploy/traefik/dynamic/certificates",
 			DYNAMIC_TRAEFIK_PATH: remote
 				? "/etc/dokploy/traefik/dynamic"
 				: "/var/lib/dokploy/traefik/dynamic",
@@ -67,6 +74,109 @@ describe("Traefik file path boundary", () => {
 		).rejects.toThrow("Invalid Traefik config path");
 
 		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["/var/lib/dokploy/traefik/dynamic/acme.json", undefined],
+		["/var/lib/dokploy/traefik/dynamic/certificates", undefined],
+		[
+			"/var/lib/dokploy/traefik/dynamic/certificates/cert-1/chain.crt",
+			undefined,
+		],
+		["/var/lib/dokploy/traefik/dynamic/custom/privkey.key", undefined],
+		[
+			"/var/lib/dokploy/traefik/dynamic/./certificates/../certificates/cert-1/privkey.key",
+			undefined,
+		],
+		["/etc/dokploy/traefik/dynamic/acme.json", "server-1"],
+		["/etc/dokploy/traefik/dynamic/certificates/cert-1/chain.crt", "server-1"],
+		["/etc/dokploy/traefik/tls/site.KEY", "server-1"],
+	])(
+		"rejects reads and writes of TLS secret file %s",
+		async (filePath, serverId) => {
+			await expect(readConfigInPath(filePath, serverId)).rejects.toThrow(
+				"Access to this Traefik file is not allowed",
+			);
+			await expect(
+				writeTraefikConfigInPath(filePath, "{}", serverId),
+			).rejects.toThrow("Access to this Traefik file is not allowed");
+
+			expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+			expect(mocks.writeFileRemote).not.toHaveBeenCalled();
+		},
+	);
+
+	it("opens TLS secret files only when the caller passed the super session check", async () => {
+		const acmePath = "/etc/dokploy/traefik/dynamic/acme.json";
+		mocks.execAsyncRemote.mockResolvedValue({ stdout: "{}" });
+
+		await expect(
+			readConfigInPath(acmePath, "server-1", { allowProtected: false }),
+		).rejects.toThrow("Access to this Traefik file is not allowed");
+		await expect(
+			readConfigInPath(acmePath, "server-1", { allowProtected: true }),
+		).resolves.toBe("{}");
+
+		await writeTraefikConfigInPath(acmePath, "{}", "server-1", {
+			allowProtected: true,
+		});
+		expect(mocks.writeFileRemote).toHaveBeenCalledWith(
+			"server-1",
+			acmePath,
+			"{}",
+		);
+
+		await expect(
+			readConfigInPath("/etc/dokploy/app/.env", "server-1", {
+				allowProtected: true,
+			}),
+		).rejects.toThrow("Invalid Traefik config path");
+	});
+
+	it("hides TLS secret files from Traefik directory listings", () => {
+		const root = "/etc/dokploy/traefik";
+		const listing = [
+			{ id: `${root}/traefik.yml`, name: "traefik.yml", type: "file" },
+			{
+				id: `${root}/dynamic`,
+				name: "dynamic",
+				type: "directory",
+				children: [
+					{ id: `${root}/dynamic/acme.json`, name: "acme.json", type: "file" },
+					{ id: `${root}/dynamic/app.yml`, name: "app.yml", type: "file" },
+					{
+						id: `${root}/dynamic/certificates`,
+						name: "certificates",
+						type: "directory",
+						children: [
+							{
+								id: `${root}/dynamic/certificates/cert-1`,
+								name: "cert-1",
+								type: "directory",
+								children: [],
+							},
+						],
+					},
+					{
+						id: `${root}/dynamic/custom.key`,
+						name: "custom.key",
+						type: "file",
+					},
+				],
+			},
+		];
+
+		expect(filterProtectedTraefikEntries(listing, "server-1")).toEqual([
+			{ id: `${root}/traefik.yml`, name: "traefik.yml", type: "file" },
+			{
+				id: `${root}/dynamic`,
+				name: "dynamic",
+				type: "directory",
+				children: [
+					{ id: `${root}/dynamic/app.yml`, name: "app.yml", type: "file" },
+				],
+			},
+		]);
 	});
 
 	it("quotes remote Traefik file paths before shell execution", async () => {

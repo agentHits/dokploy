@@ -12,6 +12,7 @@ import {
 	cleanupSystem,
 	cleanupVolumes,
 	DEFAULT_UPDATE_DATA,
+	filterProtectedTraefikEntries,
 	findServerById,
 	getAccessibleServerIds,
 	getAgentHitsUpdateCommand,
@@ -53,6 +54,7 @@ import {
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
 import { checkPermission } from "@dokploy/server/services/permission";
+import { isProtectedTraefikPath } from "@dokploy/server/utils/traefik/application";
 import { generateOpenApiDocument } from "@dokploy/trpc-openapi";
 import { TRPCError } from "@trpc/server";
 import { eq, sql } from "drizzle-orm";
@@ -60,6 +62,11 @@ import { scheduledJobs, scheduleJob } from "node-schedule";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
+import { assertLocalHostAccess } from "@/server/api/utils/local-host-access";
+import {
+	assertProtectedResourceAccess,
+	hasProtectedResourceAccess,
+} from "@/server/api/utils/super-session";
 import {
 	apiAssignDomain,
 	apiEnableDashboard,
@@ -106,6 +113,24 @@ const assertSettingsServerAccess = async (
 			message: "You are not authorized to access this server",
 		});
 	}
+};
+
+const assertTraefikFilesHostAccess = async (
+	ctx: {
+		user: { id: string };
+		session: {
+			userId: string;
+			activeOrganizationId: string;
+		};
+	},
+	serverId?: string,
+) => {
+	if (!serverId) {
+		await assertLocalHostAccess(ctx);
+		return;
+	}
+
+	await assertSettingsServerAccess(ctx, serverId);
 };
 
 export const settingsRouter = createTRPCRouter({
@@ -657,10 +682,13 @@ export const settingsRouter = createTRPCRouter({
 		.query(async ({ ctx, input }) => {
 			try {
 				await checkPermission(ctx, { traefikFiles: ["read"] });
-				await assertSettingsServerAccess(ctx, input?.serverId);
+				await assertTraefikFilesHostAccess(ctx, input?.serverId);
 				const { MAIN_TRAEFIK_PATH } = paths(!!input?.serverId);
 				const result = await readDirectory(MAIN_TRAEFIK_PATH, input?.serverId);
-				return result || [];
+				if (await hasProtectedResourceAccess(ctx)) {
+					return result || [];
+				}
+				return filterProtectedTraefikEntries(result || [], input?.serverId);
 			} catch (error) {
 				throw error;
 			}
@@ -670,11 +698,19 @@ export const settingsRouter = createTRPCRouter({
 		.input(apiModifyTraefikConfig)
 		.mutation(async ({ input, ctx }) => {
 			await checkPermission(ctx, { traefikFiles: ["write"] });
-			await assertSettingsServerAccess(ctx, input?.serverId);
+			await assertTraefikFilesHostAccess(ctx, input?.serverId);
+			const allowProtected = isProtectedTraefikPath(
+				input.path,
+				input?.serverId,
+			);
+			if (allowProtected) {
+				await assertProtectedResourceAccess(ctx);
+			}
 			await writeTraefikConfigInPath(
 				input.path,
 				input.traefikConfig,
 				input?.serverId,
+				{ allowProtected },
 			);
 			await audit(ctx, {
 				action: "update",
@@ -688,9 +724,13 @@ export const settingsRouter = createTRPCRouter({
 		.input(apiReadTraefikConfig)
 		.query(async ({ input, ctx }) => {
 			await checkPermission(ctx, { traefikFiles: ["read"] });
-			await assertSettingsServerAccess(ctx, input.serverId);
+			await assertTraefikFilesHostAccess(ctx, input.serverId);
+			const allowProtected = isProtectedTraefikPath(input.path, input.serverId);
+			if (allowProtected) {
+				await assertProtectedResourceAccess(ctx);
+			}
 
-			return readConfigInPath(input.path, input.serverId);
+			return readConfigInPath(input.path, input.serverId, { allowProtected });
 		}),
 	getIp: protectedProcedure.query(async () => {
 		if (IS_CLOUD) {
