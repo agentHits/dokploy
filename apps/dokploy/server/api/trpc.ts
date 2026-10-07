@@ -13,12 +13,14 @@ import type { statements } from "@dokploy/server/lib/access-control";
 import { validateRequest } from "@dokploy/server/lib/auth";
 import { checkPermission } from "@dokploy/server/services/permission";
 import { hasValidLicense } from "@dokploy/server/services/proprietary/license-key";
+import { getSuperSessionDenial } from "@dokploy/server/services/super-password";
 import type { OpenApiMeta } from "@dokploy/trpc-openapi";
 import { initTRPC, TRPCError } from "@trpc/server";
 import type { CreateNextContextOptions } from "@trpc/server/adapters/next";
 import type { Session, User } from "better-auth";
 import superjson from "superjson";
 import { ZodError } from "zod";
+import { enforceProcedureSuperSession } from "@/server/api/utils/super-session";
 
 type Resource = keyof typeof statements;
 type ActionOf<R extends Resource> = (typeof statements)[R][number];
@@ -41,7 +43,12 @@ interface CreateContextOptions {
 		  })
 		| null;
 	session:
-		| (Session & { activeOrganizationId: string; impersonatedBy?: string })
+		| (Session & {
+				activeOrganizationId: string;
+				impersonatedBy?: string;
+				authMethod?: "session" | "api-key";
+				apiKeyId?: string;
+		  })
 		| null;
 	req: CreateNextContextOptions["req"];
 	res: CreateNextContextOptions["res"];
@@ -120,6 +127,7 @@ const t = initTRPC
 					...shape.data,
 					zodError:
 						error.cause instanceof ZodError ? error.cause.flatten() : null,
+					superSession: getSuperSessionDenial(error),
 				},
 			};
 		},
@@ -139,6 +147,22 @@ const t = initTRPC
  */
 export const createTRPCRouter = t.router;
 
+const superSessionGuard = t.middleware(
+	async ({ ctx, path, type, getRawInput, next }) => {
+		if (ctx.user && ctx.session) {
+			await enforceProcedureSuperSession({
+				ctx: { user: ctx.user, session: ctx.session },
+				path,
+				type,
+				getRawInput,
+			});
+		}
+		return next();
+	},
+);
+
+const baseProcedure = t.procedure.use(superSessionGuard);
+
 /**
  * Public (unauthenticated) procedure
  *
@@ -146,7 +170,7 @@ export const createTRPCRouter = t.router;
  * guarantee that a user querying is authorized, but you can still access user session data if they
  * are logged in.
  */
-export const publicProcedure = t.procedure;
+export const publicProcedure = baseProcedure;
 
 /**
  * Protected (authenticated) procedure
@@ -156,7 +180,7 @@ export const publicProcedure = t.procedure;
  *
  * @see https://trpc.io/docs/procedures
  */
-export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
+export const protectedProcedure = baseProcedure.use(({ ctx, next }) => {
 	if (!ctx.session || !ctx.user) {
 		throw new TRPCError({ code: "UNAUTHORIZED" });
 	}
@@ -170,7 +194,7 @@ export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
 	});
 });
 
-export const cliProcedure = t.procedure.use(({ ctx, next }) => {
+export const cliProcedure = baseProcedure.use(({ ctx, next }) => {
 	if (
 		!ctx.session ||
 		!ctx.user ||
@@ -188,7 +212,7 @@ export const cliProcedure = t.procedure.use(({ ctx, next }) => {
 	});
 });
 
-export const adminProcedure = t.procedure.use(({ ctx, next }) => {
+export const adminProcedure = baseProcedure.use(({ ctx, next }) => {
 	if (
 		!ctx.session ||
 		!ctx.user ||
@@ -206,7 +230,7 @@ export const adminProcedure = t.procedure.use(({ ctx, next }) => {
 	});
 });
 
-export const ownerProcedure = t.procedure.use(({ ctx, next }) => {
+export const ownerProcedure = baseProcedure.use(({ ctx, next }) => {
 	if (!ctx.session || !ctx.user || ctx.user.role !== "owner") {
 		throw new TRPCError({ code: "UNAUTHORIZED" });
 	}
@@ -223,7 +247,7 @@ export const ownerProcedure = t.procedure.use(({ ctx, next }) => {
  * Does NOT call the license server on every request; full validation (haveValidLicenseKey)
  * is used in the UI gate and when activating/validating keys.
  */
-export const enterpriseProcedure = t.procedure.use(async ({ ctx, next }) => {
+export const enterpriseProcedure = baseProcedure.use(async ({ ctx, next }) => {
 	if (
 		!ctx.session ||
 		!ctx.user ||
@@ -255,7 +279,7 @@ export const enterpriseProcedure = t.procedure.use(async ({ ctx, next }) => {
  * Requires owner role AND enterprise enabled with a license key in DB.
  * Use for instance-wide policy settings that the UI exposes only to owners.
  */
-export const enterpriseOwnerProcedure = t.procedure.use(
+export const enterpriseOwnerProcedure = baseProcedure.use(
 	async ({ ctx, next }) => {
 		if (!ctx.session || !ctx.user || ctx.user.role !== "owner") {
 			throw new TRPCError({ code: "UNAUTHORIZED" });

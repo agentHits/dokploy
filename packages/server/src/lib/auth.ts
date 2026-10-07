@@ -694,6 +694,8 @@ export const validateRequest = async (request: IncomingMessage) => {
 				session: {
 					userId: apiKeyRecord.user.id,
 					activeOrganizationId: organizationId || "",
+					authMethod: "api-key" as const,
+					apiKeyId: apiKeyRecord.id,
 				},
 				user: {
 					id: userFromDb.id,
@@ -758,6 +760,7 @@ export const validateRequest = async (request: IncomingMessage) => {
 		session: {
 			...session.session,
 			activeOrganizationId: member?.organization.id || "",
+			authMethod: "session" as const,
 		},
 		user: {
 			...session.user,
