@@ -14,6 +14,10 @@ on:
       - "packages/**"
       - "package.json"
       - "bun.lock"
+      # Tests and docs never reach an image; rebuilding all four images for
+      # them only delays the PR by ~6 minutes. Negations must come last.
+      - "!apps/dokploy/__test__/**"
+      - "!**/*.md"
 
 permissions:
   contents: read
