@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { ApplicationNested } from "@dokploy/server";
@@ -7,6 +8,21 @@ import { format } from "date-fns";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const REAL_TEST_TIMEOUT = 180000; // 3 minutes
+
+// nixpacks keys its build cache on the source path, so a fresh app name per run
+// rebuilds from scratch (~50 s). A name fixed per checkout keeps the cache warm
+// on persistent runners, and still differs between runners sharing one Docker.
+const NIXPACKS_APP_NAME = `real-nixpacks-${createHash("sha256")
+	.update(process.cwd())
+	.digest("hex")
+	.slice(0, 8)}`;
+
+// Tests that exercise cloning rather than a builder use the small Dockerfile app.
+const DOCKERFILE_BUILD = {
+	buildType: "dockerfile",
+	customGitBuildPath: "/deno",
+	dockerfile: "Dockerfile",
+} as const;
 
 // Mock ONLY database and notifications
 vi.mock("@dokploy/server/db", () => {
@@ -146,6 +162,7 @@ const createMockDeployment = async (appName: string) => {
 
 async function cleanupDocker(appName: string) {
 	try {
+		await execAsync(`docker service rm ${appName} 2>/dev/null || true`);
 		await execAsync(`docker stop ${appName} 2>/dev/null || true`);
 		await execAsync(`docker rm ${appName} 2>/dev/null || true`);
 		await execAsync(`docker rmi ${appName} 2>/dev/null || true`);
@@ -240,6 +257,19 @@ describe(
 		it(
 			"should REALLY clone git repo and build with nixpacks",
 			async () => {
+				const nixpacksApp = createMockApplication({
+					appName: NIXPACKS_APP_NAME,
+				});
+				currentAppName = NIXPACKS_APP_NAME;
+				allTestAppNames.push(NIXPACKS_APP_NAME);
+
+				vi.mocked(db.query.applications.findFirst).mockResolvedValue(
+					nixpacksApp as any,
+				);
+				vi.mocked(applicationService.findApplicationById).mockResolvedValue(
+					nixpacksApp as any,
+				);
+
 				console.log(`\n🚀 Testing real deployment with app: ${currentAppName}`);
 
 				const result = await deployApplication({
@@ -370,6 +400,7 @@ describe(
 			async () => {
 				const submodulesAppName = `real-submodules-${Date.now()}`;
 				const submodulesApp = createMockApplication({
+					...DOCKERFILE_BUILD,
 					appName: submodulesAppName,
 					enableSubmodules: true,
 				});
@@ -413,6 +444,17 @@ describe(
 		it(
 			"should verify REAL commit info extraction",
 			async () => {
+				const commitApp = createMockApplication({
+					...DOCKERFILE_BUILD,
+					appName: currentAppName,
+				});
+				vi.mocked(db.query.applications.findFirst).mockResolvedValue(
+					commitApp as any,
+				);
+				vi.mocked(applicationService.findApplicationById).mockResolvedValue(
+					commitApp as any,
+				);
+
 				console.log(`\n🚀 Testing real commit info: ${currentAppName}`);
 
 				await deployApplication({
@@ -443,10 +485,8 @@ describe(
 			async () => {
 				const dockerfileAppName = `real-dockerfile-${Date.now()}`;
 				const dockerfileApp = createMockApplication({
+					...DOCKERFILE_BUILD,
 					appName: dockerfileAppName,
-					buildType: "dockerfile",
-					customGitBuildPath: "/deno",
-					dockerfile: "Dockerfile",
 				});
 				currentAppName = dockerfileAppName;
 				allTestAppNames.push(dockerfileAppName);

@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   audit:
+    name: audit and typecheck
     # Only the owner's own PRs reach the Mac mini runners. A fork PR could rewrite
     # this line, so the repo also requires approval for every outside contributor.
     runs-on: ${{ (github.event.pull_request.user.login == github.repository_owner && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "dokploy-ci"]') || 'ubuntu-latest' }}
@@ -26,6 +27,16 @@ jobs:
           bun-version: 1.4.2
       # GHSA-vfj7-8cjw-p6xm: braces 3.0.3 (via micromatch) has no patched release yet.
       - run: bun audit --audit-level=moderate --ignore GHSA-vfj7-8cjw-p6xm
+      - uses: actions/setup-node@v7
+        if: ${{ !cancelled() }}
+        with:
+          node-version: 24.4.0
+      - run: bun install --frozen-lockfile
+        if: ${{ !cancelled() }}
+      - run: bun run server:build
+        if: ${{ !cancelled() }}
+      - run: bun run typecheck
+        if: ${{ !cancelled() }}
 
   pr-check:
     runs-on: ${{ (github.event.pull_request.user.login == github.repository_owner && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "dokploy-ci"]') || 'ubuntu-latest' }}
@@ -33,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        job: [build, test, typecheck]
+        job: [build, test]
     steps:
       - uses: actions/checkout@v7
         with:
