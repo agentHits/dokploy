@@ -74,10 +74,56 @@ const redactNestedServerSecrets = <T>(server: T): T => {
 	return redacted as T;
 };
 
+export type SharedEnvReadAccess = {
+	environmentEnv: boolean;
+	projectEnv: boolean;
+};
+
+const NO_SHARED_ENV_READ_ACCESS: SharedEnvReadAccess = {
+	environmentEnv: false,
+	projectEnv: false,
+};
+
+// Service reads load environment.project for organization checks. The env of
+// those relations is shared by every service in them, so it is only returned to
+// callers with the matching environmentEnvVars/projectEnvVars read permission.
+const redactServiceSharedEnv = <T extends SecretRecord | null | undefined>(
+	record: T,
+	access: SharedEnvReadAccess,
+) => {
+	if (!record?.environment || typeof record.environment !== "object") {
+		return record;
+	}
+
+	let environment = record.environment as SecretRecord;
+	if (!access.environmentEnv) {
+		environment = redactSecretFields(environment, ["env"]);
+	}
+	if (
+		!access.projectEnv &&
+		environment.project &&
+		typeof environment.project === "object"
+	) {
+		environment = {
+			...environment,
+			project: redactSecretFields(environment.project as SecretRecord, ["env"]),
+		};
+	}
+
+	return { ...record, environment } as T;
+};
+
 export const redactDeployableServiceSecrets = <
 	T extends SecretRecord | null | undefined,
 >(
 	record: T,
+) => redactDeployableServiceSecretsFor(record);
+
+export const redactDeployableServiceSecretsFor = <
+	T extends SecretRecord | null | undefined,
+>(
+	record: T,
+	sharedEnvAccess: SharedEnvReadAccess = NO_SHARED_ENV_READ_ACCESS,
 ) => {
 	const redacted = redactSecretFields(record, [
 		"env",
@@ -94,6 +140,11 @@ export const redactDeployableServiceSecrets = <
 	}
 
 	const withRelations = { ...redacted };
+	if ("customGitUrl" in withRelations) {
+		withRelations.customGitUrl = redactSensitiveText(
+			withRelations.customGitUrl as string | null | undefined,
+		);
+	}
 	if (withRelations.security && typeof withRelations.security === "object") {
 		withRelations.security = Array.isArray(withRelations.security)
 			? withRelations.security.map(redactSecuritySecrets)
@@ -104,13 +155,20 @@ export const redactDeployableServiceSecrets = <
 			withRelations[key] = redactNestedServerSecrets(withRelations[key]);
 		}
 	}
-	return withRelations as T;
+	return redactServiceSharedEnv(withRelations as T, sharedEnvAccess);
 };
 
 export const redactDatabaseServiceSecrets = <
 	T extends SecretRecord | null | undefined,
 >(
 	record: T,
+) => redactDatabaseServiceSecretsFor(record);
+
+export const redactDatabaseServiceSecretsFor = <
+	T extends SecretRecord | null | undefined,
+>(
+	record: T,
+	sharedEnvAccess: SharedEnvReadAccess = NO_SHARED_ENV_READ_ACCESS,
 ) => {
 	const redacted = redactSecretFields(record, [
 		"env",
@@ -125,7 +183,7 @@ export const redactDatabaseServiceSecrets = <
 	if ("server" in withRelations) {
 		withRelations.server = redactNestedServerSecrets(withRelations.server);
 	}
-	return withRelations as T;
+	return redactServiceSharedEnv(withRelations as T, sharedEnvAccess);
 };
 
 export const redactAiSettingsSecrets = <

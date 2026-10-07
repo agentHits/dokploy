@@ -133,12 +133,20 @@ fi
 	};
 };
 
+const expectBackupCalls = (calls: string[], after: string[] = []) => {
+	expect(calls).toHaveLength(3 + after.length);
+	expect(calls[0]).toBe("docker ps");
+	// Both sides of the dump | upload pipeline start concurrently, so their order varies.
+	expect(calls.slice(1, 3).sort()).toEqual(["docker exec", "rclone rcat"]);
+	expect(calls.slice(3)).toEqual(after);
+};
+
 describe("backup script", () => {
 	it("dumps the database and uploads it once", () => {
 		const { calls, log, result } = runBackupScript(0);
 
 		expect(result.status).toBe(0);
-		expect(calls).toEqual(["docker ps", "docker exec", "rclone rcat"]);
+		expectBackupCalls(calls);
 		expect(log).toContain("✅ Backup uploaded to S3 successfully");
 		expect(log).toContain("Backup done ✅");
 	});
@@ -147,12 +155,7 @@ describe("backup script", () => {
 		const { calls, log, result } = runBackupScript(1);
 
 		expect(result.status).toBe(1);
-		expect(calls).toEqual([
-			"docker ps",
-			"docker exec",
-			"rclone rcat",
-			"rclone deletefile",
-		]);
+		expectBackupCalls(calls, ["rclone deletefile"]);
 		expect(log).toContain("❌ Error: Backup failed");
 		expect(log).not.toContain("SignatureDoesNotMatch");
 		expect(log).not.toContain("leaked-secret");

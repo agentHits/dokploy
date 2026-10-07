@@ -23,7 +23,6 @@ import {
 	redactDatabaseServiceSecrets,
 	redactDeployableServiceSecrets,
 	redactSecretFields,
-	redactSensitiveText,
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
@@ -44,24 +43,6 @@ import {
 
 type SecretRecord = Record<string, unknown>;
 
-const redactCustomGitUrl = <T extends SecretRecord | null | undefined>(
-	record: T,
-) => {
-	if (!record) {
-		return record;
-	}
-
-	const redacted = { ...record };
-
-	if ("customGitUrl" in redacted) {
-		redacted.customGitUrl = redactSensitiveText(
-			redacted.customGitUrl as string | null | undefined,
-		);
-	}
-
-	return redacted as T;
-};
-
 const redactDeployableEnvironmentServiceSecrets = <
 	T extends SecretRecord | null | undefined,
 >(
@@ -71,16 +52,14 @@ const redactDeployableEnvironmentServiceSecrets = <
 		return record;
 	}
 
-	return redactCustomGitUrl(
-		redactDeployableServiceSecrets(
-			redactGitProviderSecrets(
-				record as T & {
-					bitbucket?: object | null;
-					gitea?: object | null;
-					github?: object | null;
-					gitlab?: object | null;
-				},
-			),
+	return redactDeployableServiceSecrets(
+		redactGitProviderSecrets(
+			record as T & {
+				bitbucket?: object | null;
+				gitea?: object | null;
+				github?: object | null;
+				gitlab?: object | null;
+			},
 		),
 	);
 };
