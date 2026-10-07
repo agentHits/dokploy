@@ -9,8 +9,8 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { DokployImagesInfo } from "./dokploy-images-info";
 
-const IMAGE_KEEP_OPTIONS = [3, 4, 5];
-const DEFAULT_IMAGE_KEEP_COUNT = 3;
+const IMAGE_KEEP_OPTIONS = [0, 1, 2, 3, 4, 5];
+const DEFAULT_IMAGE_KEEP_COUNT = 1;
 
 interface Props {
 	keepImages: number | null;
@@ -41,7 +41,7 @@ export const ToggleImageCleanup = ({
 					disabled={disabled}
 				/>
 				<Label className="text-primary" htmlFor="imageCleanupToggle">
-					Remove old images, keep the last
+					Remove old images, also keep
 				</Label>
 				<Select
 					value={String(keepImages ?? DEFAULT_IMAGE_KEEP_COUNT)}
@@ -59,11 +59,14 @@ export const ToggleImageCleanup = ({
 						))}
 					</SelectContent>
 				</Select>
+				<span className="text-sm text-primary">older</span>
 			</div>
 			<div className="flex flex-col items-start gap-2 pl-[52px]">
 				<p className="text-xs text-muted-foreground">
-					Saved with the next update. After restarting, Dokploy deletes older
-					images and the stopped containers that keep them.
+					The new build and the one installed now always stay and are not
+					counted. Saved with the next update; after restarting, Dokploy deletes
+					the older images beyond this number and the stopped containers that
+					keep them.
 				</p>
 				<DokployImagesInfo
 					keepImages={keepImages}

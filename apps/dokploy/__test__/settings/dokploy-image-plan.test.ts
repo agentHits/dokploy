@@ -34,7 +34,7 @@ describe("planDokployImageCleanup", () => {
 		const plan = planDokployImageCleanup(images, null, "v5");
 		expect(actions(plan)).toEqual([
 			"v5:new",
-			"v4:keep",
+			"v4:current",
 			"v3:keep",
 			"v2:keep",
 			"v1:keep",
@@ -42,40 +42,63 @@ describe("planDokployImageCleanup", () => {
 		expect(plan.removeCount).toBe(0);
 	});
 
-	it("counts the pending build as one of the kept images", () => {
-		const plan = planDokployImageCleanup(images, 3, "v5");
+	it("counts only the images older than the new and the installed build", () => {
+		const plan = planDokployImageCleanup(images, 1, "v5");
 		expect(actions(plan)).toEqual([
 			"v5:new",
-			"v4:keep",
+			"v4:current",
 			"v3:keep",
 			"v2:remove",
 			"v1:remove",
 		]);
+		expect(plan.rows.map((row) => row.position)).toEqual([null, null, 1, 2, 3]);
 		expect(plan.freedBytes).toBe(8_200_000_000);
 		expect(plan.removedContainers).toBe(1);
 	});
 
-	it("does not add a pending row when the new build is already pulled", () => {
-		const plan = planDokployImageCleanup(images, 3, "v4");
+	it("can delete every older image while the new and installed builds stay", () => {
+		const plan = planDokployImageCleanup(images, 0, "v5");
 		expect(actions(plan)).toEqual([
-			"v4:keep",
-			"v3:keep",
-			"v2:keep",
+			"v5:new",
+			"v4:current",
+			"v3:remove",
+			"v2:remove",
 			"v1:remove",
 		]);
 	});
 
-	it("never plans to delete images that other containers or the running server use", () => {
+	it("protects an already pulled new build without adding a pending row", () => {
+		const plan = planDokployImageCleanup([image("v5"), ...images], 0, "v5");
+		expect(actions(plan)).toEqual([
+			"v5:new",
+			"v4:current",
+			"v3:remove",
+			"v2:remove",
+			"v1:remove",
+		]);
+	});
+
+	it("does not protect an extra image when the new build is the installed one", () => {
+		const plan = planDokployImageCleanup(images, 1, "v4");
+		expect(actions(plan)).toEqual([
+			"v4:current",
+			"v3:keep",
+			"v2:remove",
+			"v1:remove",
+		]);
+	});
+
+	it("never plans to delete images that other containers use", () => {
 		const plan = planDokployImageCleanup(
 			[
-				image("v3"),
-				image("v2", { otherContainers: 1 }),
-				image("v1", { isCurrent: true }),
+				image("v3", { isCurrent: true }),
+				image("v2"),
+				image("v1", { otherContainers: 1 }),
 			],
-			1,
+			0,
 			null,
 		);
-		expect(actions(plan)).toEqual(["v3:keep", "v2:blocked", "v1:blocked"]);
-		expect(plan.removeCount).toBe(0);
+		expect(actions(plan)).toEqual(["v3:current", "v2:remove", "v1:blocked"]);
+		expect(plan.removeCount).toBe(1);
 	});
 });

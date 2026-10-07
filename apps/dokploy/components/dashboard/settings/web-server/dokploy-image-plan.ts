@@ -1,12 +1,19 @@
 import type { DokployImageInfo } from "@dokploy/server/index";
 
-export type DokployImageAction = "new" | "keep" | "remove" | "blocked";
+export type DokployImageAction =
+	| "new"
+	| "current"
+	| "keep"
+	| "remove"
+	| "blocked";
 
 export interface PlannedDokployImage {
 	key: string;
 	version: string;
 	image: DokployImageInfo | null;
 	action: DokployImageAction;
+	/** Position among the images the keep count applies to; null for protected ones. */
+	position: number | null;
 }
 
 export interface DokployImagePlan {
@@ -28,45 +35,54 @@ const isImageOfVersion = (image: DokployImageInfo, version: string) =>
 	image.tags.some((tag) => tag.endsWith(`:${version}`));
 
 /**
- * Mirrors getDokployImageCleanupCommand: the newest `keep` images stay, older
- * ones go unless another container still uses them. A pending update counts
- * as the newest image because the cleanup runs after it is pulled.
+ * Mirrors getDokployImageCleanupCommand: the new build and the build running
+ * now always stay (after the update the latter is the rollback target), and
+ * the keep count applies only to the older images behind them.
  */
 export const planDokployImageCleanup = (
 	images: DokployImageInfo[],
 	keep: number | null,
 	pendingVersion: string | null,
 ): DokployImagePlan => {
-	const hasPending =
-		!!pendingVersion &&
-		!images.some((image) => isImageOfVersion(image, pendingVersion));
-	const ordered: (DokployImageInfo | null)[] = [
-		...(hasPending ? [null] : []),
-		...images,
-	];
+	const pendingImage = pendingVersion
+		? images.find((image) => isImageOfVersion(image, pendingVersion))
+		: undefined;
+	const rows: PlannedDokployImage[] = [];
 
-	const rows = ordered.map((image, index): PlannedDokployImage => {
-		if (!image) {
-			return {
-				key: "pending",
-				version: pendingVersion ?? "",
-				image: null,
-				action: "new",
-			};
+	if (pendingVersion && !pendingImage) {
+		rows.push({
+			key: "pending",
+			version: pendingVersion,
+			image: null,
+			action: "new",
+			position: null,
+		});
+	}
+
+	let position = 0;
+	for (const image of images) {
+		let action: DokployImageAction;
+		let rowPosition: number | null = null;
+		if (image.isCurrent) {
+			action = "current";
+		} else if (image === pendingImage) {
+			action = "new";
+		} else {
+			rowPosition = ++position;
+			if (keep === null || rowPosition <= keep) {
+				action = "keep";
+			} else {
+				action = image.otherContainers > 0 ? "blocked" : "remove";
+			}
 		}
-		let action: DokployImageAction = "keep";
-		if (keep !== null && index >= keep) {
-			// Without an update the current container keeps running, so its image stays.
-			const stillRunning = image.isCurrent && !pendingVersion;
-			action = image.otherContainers > 0 || stillRunning ? "blocked" : "remove";
-		}
-		return {
+		rows.push({
 			key: image.id,
 			version: getDokployImageVersion(image),
 			image,
 			action,
-		};
-	});
+			position: rowPosition,
+		});
+	}
 
 	const removed = rows.filter((row) => row.action === "remove");
 	return {

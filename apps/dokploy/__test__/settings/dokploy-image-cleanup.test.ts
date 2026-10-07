@@ -1,4 +1,13 @@
 import { execFileSync } from "node:child_process";
+import {
+	chmodSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { execAsync } = vi.hoisted(() => ({ execAsync: vi.fn() }));
@@ -25,10 +34,13 @@ const { UPDATE_IMAGE_PULLED_MARKER } = await import(
 	"@dokploy/server/services/web-server-update"
 );
 
+const PREVIOUS = `sha256:${"a".repeat(64)}`;
+
 describe("Dokploy image cleanup", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.stubEnv("DOKPLOY_KEEP_IMAGES", undefined);
+		vi.stubEnv("DOKPLOY_KEEP_OLD_IMAGES", undefined);
+		vi.stubEnv("DOKPLOY_PREVIOUS_IMAGE", undefined);
 		vi.stubEnv("DOKPLOY_AGENTHITS_UPDATE_IMAGE", undefined);
 		vi.stubEnv("DOKPLOY_AGENTHITS_UPDATE_TAG", undefined);
 	});
@@ -39,16 +51,23 @@ describe("Dokploy image cleanup", () => {
 
 	it.each([
 		[undefined, null],
-		["0", null],
-		["2", null],
-		["3", 3],
+		["", null],
+		["off", null],
+		["0", 0],
+		["1", 1],
 		["5", 5],
 		["6", null],
+		["-1", null],
 		["3.5", null],
 		["abc", null],
 	])("reads keep count %s as %s", (value, expected) => {
-		vi.stubEnv("DOKPLOY_KEEP_IMAGES", value);
+		vi.stubEnv("DOKPLOY_KEEP_OLD_IMAGES", value);
 		expect(getDokployImageKeepCount()).toBe(expected);
+	});
+
+	it("ignores the old keep setting, whose 0 meant off", () => {
+		vi.stubEnv("DOKPLOY_KEEP_IMAGES", "0");
+		expect(getDokployImageKeepCount()).toBeNull();
 	});
 
 	it("targets the fork and official image repositories without tags", () => {
@@ -68,7 +87,7 @@ describe("Dokploy image cleanup", () => {
 	});
 
 	it("keeps the newest images and only removes exited dokploy task containers", () => {
-		const command = getDokployImageCleanupCommand(4);
+		const command = getDokployImageCleanupCommand(4, PREVIOUS);
 
 		expect(command).toContain(
 			"--filter reference\\=ghcr.io/agenthits/dokploy --filter reference\\=dokploy/dokploy",
@@ -81,22 +100,87 @@ describe("Dokploy image cleanup", () => {
 		expect(command).not.toMatch(/\brm (-f|--force)\b/);
 	});
 
+	it("skips one more image when the previous build was not recorded", () => {
+		expect(getDokployImageCleanupCommand(0, null)).toContain("tail -n +2");
+		expect(getDokployImageCleanupCommand(0, PREVIOUS)).toContain("tail -n +1");
+	});
+
+	it.each([
+		[1, "sha256:cur", ["sha256:old2", "sha256:old3"]],
+		[0, "sha256:cur", ["sha256:old1", "sha256:old2", "sha256:old3"]],
+		[0, null, ["sha256:old1", "sha256:old2", "sha256:old3"]],
+		[3, "sha256:cur", []],
+	])(
+		"with keep %s and previous %s, removes %j and never the running or previous image",
+		(keep, previous, expectedRemoved) => {
+			const dir = mkdtempSync(join(tmpdir(), "dokploy-cleanup-"));
+			const log = join(dir, "log");
+			try {
+				writeFileSync(
+					join(dir, "docker"),
+					`#!/bin/sh
+echo "$*" >> "${log}"
+case "$*" in
+	"image ls"*) printf 'sha256:new\nsha256:cur\nsha256:old1\nsha256:old2\nsha256:old3\n' ;;
+	"ps -q"*) echo task1 ;;
+	"inspect --format {{.Image}} task1") echo sha256:new ;;
+	"image inspect --format {{.Created}} {{.Id}}"*) printf '2026-10-07T05 sha256:new\n2026-10-07T04 sha256:cur\n2026-10-07T03 sha256:old1\n2026-10-07T02 sha256:old2\n2026-10-07T01 sha256:old3\n' ;;
+esac
+`,
+				);
+				chmodSync(join(dir, "docker"), 0o755);
+				writeFileSync(log, "");
+
+				execFileSync(
+					"sh",
+					["-c", getDokployImageCleanupCommand(keep, previous)],
+					{
+						env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+					},
+				);
+
+				const removed = readFileSync(log, "utf8")
+					.split("\n")
+					.filter((line) => line.startsWith("image rm "))
+					.map((line) => line.slice("image rm ".length));
+				expect(removed).toEqual(expectedRemoved);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		},
+	);
+
 	it("does nothing at startup when the cleanup is off", async () => {
 		await cleanupOldDokployImages();
 		expect(execAsync).not.toHaveBeenCalled();
 	});
 
 	it("runs the cleanup at startup when a keep count is set", async () => {
-		vi.stubEnv("DOKPLOY_KEEP_IMAGES", "3");
+		vi.stubEnv("DOKPLOY_KEEP_OLD_IMAGES", "0");
+		vi.stubEnv("DOKPLOY_PREVIOUS_IMAGE", PREVIOUS);
 		execAsync.mockResolvedValue({ stdout: "", stderr: "" });
 
 		await cleanupOldDokployImages();
 
-		expect(execAsync).toHaveBeenCalledWith(getDokployImageCleanupCommand(3));
+		expect(execAsync).toHaveBeenCalledWith(
+			getDokployImageCleanupCommand(0, PREVIOUS),
+		);
+	});
+
+	it("does not trust a malformed previous image id", async () => {
+		vi.stubEnv("DOKPLOY_KEEP_OLD_IMAGES", "1");
+		vi.stubEnv("DOKPLOY_PREVIOUS_IMAGE", "sha256:abc; rm -rf /");
+		execAsync.mockResolvedValue({ stdout: "", stderr: "" });
+
+		await cleanupOldDokployImages();
+
+		expect(execAsync).toHaveBeenCalledWith(
+			getDokployImageCleanupCommand(1, null),
+		);
 	});
 
 	it("does not throw when the cleanup fails", async () => {
-		vi.stubEnv("DOKPLOY_KEEP_IMAGES", "3");
+		vi.stubEnv("DOKPLOY_KEEP_OLD_IMAGES", "3");
 		execAsync.mockRejectedValue(new Error("docker unavailable"));
 		vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -105,14 +189,28 @@ describe("Dokploy image cleanup", () => {
 
 	it("stores the keep count on the service only when it is given", () => {
 		expect(getAgentHitsUpdateCommand("v0.30.6")).not.toContain(
-			"DOKPLOY_KEEP_IMAGES",
+			"DOKPLOY_KEEP_OLD_IMAGES",
 		);
-		expect(getAgentHitsUpdateCommand("v0.30.6", null, null, 3)).toContain(
-			"--env-add DOKPLOY_KEEP_IMAGES\\=3 \\\n\tdokploy",
+		expect(getAgentHitsUpdateCommand("v0.30.6", null, null, 0)).toContain(
+			"--env-add DOKPLOY_KEEP_OLD_IMAGES\\=0 \\\n",
 		);
 		expect(getAgentHitsUpdateCommand("v0.30.6", null, null, null)).toContain(
-			"--env-add DOKPLOY_KEEP_IMAGES\\=0",
+			"--env-add DOKPLOY_KEEP_OLD_IMAGES\\=off",
 		);
+	});
+
+	it("records the running image before replacing it", () => {
+		for (const command of [
+			getAgentHitsUpdateCommand("v0.30.6"),
+			getOfficialUpdateCommand("v0.30.7"),
+		]) {
+			const recordAt = command.indexOf("previous_image=$(docker inspect");
+			expect(recordAt).toBeGreaterThan(-1);
+			expect(recordAt).toBeLessThan(command.indexOf("docker service update"));
+			expect(command).toContain(
+				'--env-add "DOKPLOY_PREVIOUS_IMAGE=$previous_image"',
+			);
+		}
 	});
 });
 
@@ -243,10 +341,10 @@ describe("Dokploy update commands", () => {
 
 		expectPullBeforeUpdate(command, "docker pull dokploy/dokploy\\:v0.30.7");
 		expect(command).toContain(
-			"--image dokploy/dokploy\\:v0.30.7 --env-add DOKPLOY_KEEP_IMAGES\\=3 dokploy",
+			"--image dokploy/dokploy\\:v0.30.7 --env-add DOKPLOY_KEEP_OLD_IMAGES\\=3 ",
 		);
 		expect(getOfficialUpdateCommand("v0.30.7")).not.toContain(
-			"DOKPLOY_KEEP_IMAGES",
+			"DOKPLOY_KEEP_OLD_IMAGES",
 		);
 	});
 
@@ -256,6 +354,8 @@ describe("Dokploy update commands", () => {
 		await getDokployImages();
 
 		expect(execAsync.mock.calls[0]?.[0]).toMatch(/^docker image ls -a -q /);
-		expect(getDokployImageCleanupCommand(3)).toContain("docker image ls -a -q");
+		expect(getDokployImageCleanupCommand(3, null)).toContain(
+			"docker image ls -a -q",
+		);
 	});
 });
