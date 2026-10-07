@@ -111,6 +111,49 @@ describe("AI settings organization boundary", () => {
 		);
 	});
 
+	it("rejects a new API URL while keeping the stored API key", async () => {
+		mocks.aiFindFirst.mockResolvedValue({
+			...aiSettings,
+			organizationId: "org-1",
+		});
+
+		for (const apiKey of ["__DOKPLOY_REDACTED_SECRET__", "", undefined]) {
+			await expect(
+				saveAiSettings("org-1", {
+					aiId: "ai-1",
+					apiKey,
+					apiUrl: "https://collector.example.net/v1",
+					model: "gpt-4o-mini",
+				}),
+			).rejects.toMatchObject({
+				code: "BAD_REQUEST",
+				message: "Re-enter the API key to change apiUrl",
+			});
+		}
+		expect(mocks.insert).not.toHaveBeenCalled();
+
+		await saveAiSettings("org-1", {
+			aiId: "ai-1",
+			apiKey: "__DOKPLOY_REDACTED_SECRET__",
+			apiUrl: "https://api.openai.com/v1/",
+			model: "gpt-4o",
+		});
+		await saveAiSettings("org-1", {
+			aiId: "ai-1",
+			apiKey: "new-secret",
+			apiUrl: "https://api.mistral.ai/v1",
+		});
+		expect(mocks.onConflictDoUpdate).toHaveBeenCalledTimes(2);
+		expect(mocks.onConflictDoUpdate).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				set: expect.objectContaining({
+					apiKey: "new-secret",
+					apiUrl: "https://api.mistral.ai/v1",
+				}),
+			}),
+		);
+	});
+
 	it("rejects deleting another organization's AI settings by aiId", async () => {
 		await expect(deleteAiSettings("ai-1", "org-1")).rejects.toMatchObject({
 			code: "NOT_FOUND",

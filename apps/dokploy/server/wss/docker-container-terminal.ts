@@ -6,6 +6,7 @@ import { Client } from "ssh2";
 import { WebSocketServer } from "ws";
 import { canAccessDockerOverWss } from "./authorize";
 import { canAccessDockerTerminalWebSocket } from "./docker-permission";
+import { verifyWebSocketOrigin } from "./origin";
 import {
 	isValidContainerId,
 	isValidShell,
@@ -18,6 +19,7 @@ export const setupDockerContainerTerminalWebSocketServer = (
 ) => {
 	const wssTerm = new WebSocketServer({
 		noServer: true,
+		verifyClient: verifyWebSocketOrigin,
 		path: "/docker-container-terminal",
 	});
 

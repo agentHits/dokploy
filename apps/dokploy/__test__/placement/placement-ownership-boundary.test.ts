@@ -73,6 +73,7 @@ const permissionMocks = vi.hoisted(() => ({
 	checkServiceAccess: vi.fn(),
 	checkServicePermissionAndAccess: vi.fn(),
 	findMemberByUserId: vi.fn(),
+	hasPermission: vi.fn(async () => true),
 }));
 
 const dbMocks = vi.hoisted(() => ({
@@ -169,6 +170,7 @@ vi.mock("@dokploy/server/services/permission", () => ({
 	checkServicePermissionAndAccess:
 		permissionMocks.checkServicePermissionAndAccess,
 	findMemberByUserId: permissionMocks.findMemberByUserId,
+	hasPermission: permissionMocks.hasPermission,
 }));
 
 vi.mock("@dokploy/server/services/git-provider", () => ({

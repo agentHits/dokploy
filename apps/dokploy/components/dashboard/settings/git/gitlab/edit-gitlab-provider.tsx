@@ -38,6 +38,7 @@ const Schema = z.object({
 		.union([z.string().url(), z.literal("")])
 		.optional()
 		.transform((v) => (v === "" ? undefined : v)),
+	secret: z.string().optional(),
 	webhookSecret: z.string().optional(),
 	groupName: z.string().optional(),
 });
@@ -68,6 +69,7 @@ export const EditGitlabProvider = ({ gitlabId }: Props) => {
 			name: "",
 			gitlabUrl: "https://gitlab.com",
 			gitlabInternalUrl: "",
+			secret: "",
 			webhookSecret: "",
 		},
 		resolver: zodResolver(Schema),
@@ -81,6 +83,7 @@ export const EditGitlabProvider = ({ gitlabId }: Props) => {
 			name: gitlab?.gitProvider.name || "",
 			gitlabUrl: gitlab?.gitlabUrl || "",
 			gitlabInternalUrl: gitlab?.gitlabInternalUrl || "",
+			secret: "",
 			webhookSecret: "",
 		});
 	}, [form, isOpen]);
@@ -93,6 +96,7 @@ export const EditGitlabProvider = ({ gitlabId }: Props) => {
 			name: data.name || "",
 			gitlabUrl: data.gitlabUrl || "",
 			gitlabInternalUrl: data.gitlabInternalUrl ?? null,
+			secret: data.secret || undefined,
 			webhookSecret: data.webhookSecret || undefined,
 		})
 			.then(async () => {
@@ -180,6 +184,29 @@ export const EditGitlabProvider = ({ gitlabId }: Props) => {
 												Use when GitLab runs on the same instance as Dokploy.
 												Used for OAuth token exchange to reach GitLab via
 												internal network (e.g. Docker service name).
+											</FormDescription>
+											<FormMessage />
+										</FormItem>
+									)}
+								/>
+
+								<FormField
+									control={form.control}
+									name="secret"
+									render={({ field }) => (
+										<FormItem>
+											<FormLabel>Application Secret (Optional)</FormLabel>
+											<FormControl>
+												<Input
+													type="password"
+													placeholder="Leave blank to keep existing value"
+													autoComplete="off"
+													{...field}
+												/>
+											</FormControl>
+											<FormDescription>
+												Required when changing the GitLab URL. Authorize the
+												provider again after the change.
 											</FormDescription>
 											<FormMessage />
 										</FormItem>

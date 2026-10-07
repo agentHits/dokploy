@@ -9,15 +9,18 @@ import {
 	updateDestinationById,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
+import { runDestinationConnectionTest } from "@dokploy/server/utils/destination/connection-test";
 import {
-	buildRcloneS3Command,
-	getRcloneS3Destination,
-} from "@dokploy/server/utils/backups/utils";
+	type DestinationConnectionTestReport,
+	formatDestinationConnectionTestReport,
+	isDestinationConnectionTestPassed,
+} from "@dokploy/server/utils/destination/connection-test-report";
 import { assertDestinationEndpointAllowed } from "@dokploy/server/utils/destination/endpoint";
 import {
 	isRedactedSecretValue,
 	redactSecretFields,
 	redactSecretFieldsList,
+	redactSensitiveText,
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { desc, eq } from "drizzle-orm";
@@ -118,36 +121,35 @@ export const destinationRouter = createTRPCRouter({
 				connectionInput.secretAccessKey = destination.secretAccessKey;
 			}
 
+			let report: DestinationConnectionTestReport;
 			try {
 				const destinationInput =
 					await normalizeDestinationEndpointInput(connectionInput);
-				const rcloneCommand = buildRcloneS3Command("ls", destinationInput, [
-					"--retries",
-					"1",
-					"--low-level-retries",
-					"1",
-					"--timeout",
-					"10s",
-					"--contimeout",
-					"5s",
-					getRcloneS3Destination(destinationInput),
-				]);
-
-				if (IS_CLOUD) {
-					await execAsyncRemote(destinationInput.serverId || "", rcloneCommand);
-				} else {
-					await execAsync(rcloneCommand);
-				}
+				report = await runDestinationConnectionTest(
+					destinationInput,
+					(command) =>
+						IS_CLOUD
+							? execAsyncRemote(destinationInput.serverId || "", command)
+							: execAsync(command),
+				);
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
 					message:
 						error instanceof Error
-							? error?.message
+							? redactSensitiveText(error.message)
 							: "Error connecting to bucket",
 					cause: error,
 				});
 			}
+
+			if (!isDestinationConnectionTestPassed(report)) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: formatDestinationConnectionTestReport(report),
+				});
+			}
+			return report;
 		}),
 	one: withPermission("destination", "read")
 		.input(apiFindOneDestination)

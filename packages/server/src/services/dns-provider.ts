@@ -16,8 +16,8 @@ export const DNS_SECRET_MASK = "********";
 
 const SENSITIVE_FIELDS: Record<DnsProviderConfig["providerType"], string[]> = {
 	cloudflare: ["apiToken"],
-	route53: ["secretAccessKey"],
-	porkbun: ["secretApiKey"],
+	route53: ["accessKeyId", "secretAccessKey"],
+	porkbun: ["apiKey", "secretApiKey"],
 	infomaniak: ["apiToken"],
 	ovh: ["applicationSecret", "consumerKey"],
 };

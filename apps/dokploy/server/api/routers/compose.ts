@@ -60,8 +60,10 @@ import { processTemplate } from "@dokploy/server/templates/processors";
 import { assertCustomGitUrlAllowed } from "@dokploy/server/utils/providers/git";
 import {
 	preserveSecretPlaceholderFields,
+	redactBackupScheduleSecrets,
 	redactDeployableServiceSecretsFor,
 	redactSecretFields,
+	redactSecretValue,
 	type SharedEnvReadAccess,
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
@@ -134,10 +136,18 @@ const redactComposeSecrets = <T extends SecretRecord | null | undefined>(
 		),
 		sharedEnvAccess,
 	);
+	const withBackups = Array.isArray(record.backups)
+		? ({
+				...redacted,
+				backups: record.backups.map((backup) =>
+					redactBackupScheduleSecrets(backup),
+				),
+			} as typeof redacted)
+		: redacted;
 
 	return redactComposeFile
-		? redactSecretFields(redacted, ["composeFile"])
-		: redacted;
+		? redactSecretFields(withBackups, ["composeFile"])
+		: withBackups;
 };
 
 const composeSourceUpdateFields = [
@@ -587,7 +597,10 @@ export const composeRouter = createTRPCRouter({
 				resourceId: input.composeId,
 				resourceName: compose.name,
 			});
-			return result;
+			// Compose files often inline secrets; compose.one hides composeFile
+			// from callers without envVars.read the same way.
+			const canReadEnvVars = await hasPermission(ctx, { envVars: ["read"] });
+			return canReadEnvVars ? result : redactSecretValue(result);
 		}),
 	isolatedDeployment: protectedProcedure
 		.input(apiRandomizeCompose)
@@ -606,7 +619,8 @@ export const composeRouter = createTRPCRouter({
 				resourceId: input.composeId,
 				resourceName: compose.name,
 			});
-			return result;
+			const canReadEnvVars = await hasPermission(ctx, { envVars: ["read"] });
+			return canReadEnvVars ? result : redactSecretValue(result);
 		}),
 	getConvertedCompose: protectedProcedure
 		.input(apiFindCompose)
@@ -617,9 +631,11 @@ export const composeRouter = createTRPCRouter({
 			const compose = await findComposeById(input.composeId);
 			const domains = await findDomainsByComposeId(input.composeId);
 			const composeFile = await addDomainToCompose(compose, domains);
-			return stringify(composeFile, {
+			const converted = stringify(composeFile, {
 				lineWidth: 1000,
 			});
+			const canReadEnvVars = await hasPermission(ctx, { envVars: ["read"] });
+			return canReadEnvVars ? converted : redactSecretValue(converted);
 		}),
 
 	deploy: protectedProcedure

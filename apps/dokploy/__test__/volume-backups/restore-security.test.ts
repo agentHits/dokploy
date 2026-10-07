@@ -1,3 +1,4 @@
+import { REDACTED_SECRET_VALUE } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -507,6 +508,122 @@ describe("volume backup destination ownership boundary", () => {
 		await expect(
 			createCaller().one({ volumeBackupId: "volume-backup-1" }),
 		).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+	});
+});
+
+describe("volume backup read redaction", () => {
+	const sharedEnvironment = {
+		environmentId: "env-1",
+		env: "ENVIRONMENT_SHARED=environment-secret",
+		project: { ...project(), env: "PROJECT_SHARED=project-secret" },
+	};
+
+	const expectNoSecrets = (value: unknown) => {
+		const serialized = JSON.stringify(value);
+		for (const secret of [
+			"db-password",
+			"db-root-password",
+			"db-env-secret",
+			"compose-env-secret",
+			"file-secret",
+			"repo-token",
+			"compose-refresh-token",
+			"environment-secret",
+			"project-secret",
+		]) {
+			expect(serialized).not.toContain(secret);
+		}
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.checkServicePermissionAndAccess.mockResolvedValue(undefined);
+		mocks.findMemberByUserId.mockResolvedValue({
+			role: "admin",
+			accessedEnvironments: [],
+			accessedProjects: [],
+			accessedServices: [],
+		});
+	});
+
+	it("redacts database credentials and shared env of the bound database", async () => {
+		mocks.findPostgresById.mockResolvedValue({
+			postgresId: "postgres-1",
+			environmentId: "env-1",
+			serverId: null,
+			environment: { environmentId: "env-1", project: project() },
+		});
+		mocks.findVolumeBackupById.mockResolvedValue({
+			volumeBackupId: "volume-backup-1",
+			name: "daily volume",
+			serviceType: "postgres",
+			postgresId: "postgres-1",
+			volumeName: "data_volume",
+			postgres: {
+				postgresId: "postgres-1",
+				appName: "postgres-one",
+				databaseUser: "app",
+				databasePassword: "db-password",
+				databaseRootPassword: "db-root-password",
+				env: "POSTGRES_EXTRA=db-env-secret",
+				environment: sharedEnvironment,
+			},
+		});
+
+		const volumeBackup = await createCaller().one({
+			volumeBackupId: "volume-backup-1",
+		});
+
+		expect(volumeBackup).toMatchObject({
+			name: "daily volume",
+			volumeName: "data_volume",
+			postgres: {
+				appName: "postgres-one",
+				databaseUser: "app",
+				databasePassword: REDACTED_SECRET_VALUE,
+				databaseRootPassword: REDACTED_SECRET_VALUE,
+				env: REDACTED_SECRET_VALUE,
+				environment: {
+					env: REDACTED_SECRET_VALUE,
+					project: { env: REDACTED_SECRET_VALUE, organizationId: "org-1" },
+				},
+			},
+		});
+		expectNoSecrets(volumeBackup);
+	});
+
+	it("redacts env, compose file and source credentials of the bound compose", async () => {
+		mocks.findComposeById.mockResolvedValue(composeService("compose-1"));
+		mocks.findVolumeBackupById.mockResolvedValue({
+			volumeBackupId: "volume-backup-1",
+			name: "daily volume",
+			serviceType: "compose",
+			composeId: "compose-1",
+			volumeName: "data_volume",
+			compose: {
+				composeId: "compose-1",
+				appName: "compose-one",
+				env: "COMPOSE_SECRET=compose-env-secret",
+				composeFile:
+					"services:\n  api:\n    environment:\n      TOKEN: file-secret",
+				customGitUrl: "https://repo-user:repo-token@example.com/org/repo.git",
+				refreshToken: "compose-refresh-token",
+				environment: sharedEnvironment,
+			},
+		});
+
+		const volumeBackup = await createCaller().one({
+			volumeBackupId: "volume-backup-1",
+		});
+
+		expect(volumeBackup.compose).toMatchObject({
+			appName: "compose-one",
+			env: REDACTED_SECRET_VALUE,
+			composeFile: REDACTED_SECRET_VALUE,
+			customGitUrl: `https://${REDACTED_SECRET_VALUE}@example.com/org/repo.git`,
+			refreshToken: REDACTED_SECRET_VALUE,
+		});
+		expectNoSecrets(volumeBackup);
 	});
 });
 

@@ -6,6 +6,7 @@ import {
 	type VaultProviderConfig,
 	vaultProvider,
 } from "@dokploy/server/db/schema";
+import { assertStoredSecretTargetUnchanged } from "@dokploy/server/utils/security/redaction";
 import { getVaultClient } from "@dokploy/server/utils/vault";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
@@ -19,13 +20,27 @@ const SENSITIVE_FIELDS: Record<VaultProviderConfig["providerType"], string[]> =
 	{
 		hashicorp: ["token"],
 		infisical: ["clientSecret"],
-		aws: ["secretAccessKey"],
-		"aws-parameter-store": ["secretAccessKey"],
+		aws: ["accessKeyId", "secretAccessKey"],
+		"aws-parameter-store": ["accessKeyId", "secretAccessKey"],
 		doppler: ["serviceToken"],
 		azure: ["clientSecret"],
 		scaleway: ["secretKey"],
 		phase: ["token"],
 	};
+
+const SECRET_TARGET_FIELDS: Record<
+	VaultProviderConfig["providerType"],
+	string[]
+> = {
+	hashicorp: ["url"],
+	infisical: ["siteUrl", "clientId"],
+	aws: ["region", "endpoint", "accessKeyId"],
+	"aws-parameter-store": ["region", "endpoint", "accessKeyId"],
+	doppler: [],
+	azure: ["vaultUri", "tenantId", "clientId"],
+	scaleway: ["apiUrl"],
+	phase: ["apiUrl"],
+};
 
 export const maskVaultProviderConfig = (
 	config: VaultProviderConfig,
@@ -44,6 +59,8 @@ export const mergeVaultProviderConfig = (
 	existing: VaultProviderConfig,
 ): VaultProviderConfig => {
 	const merged: Record<string, unknown> = { ...incoming };
+	const stored = existing as Record<string, unknown>;
+	let keepsStoredSecret = false;
 	for (const field of SENSITIVE_FIELDS[incoming.providerType]) {
 		if (merged[field] === VAULT_SECRET_MASK) {
 			if (incoming.providerType !== existing.providerType) {
@@ -53,8 +70,20 @@ export const mergeVaultProviderConfig = (
 						"Credentials must be re-entered when changing the provider type",
 				});
 			}
-			merged[field] = (existing as Record<string, unknown>)[field];
+			merged[field] = stored[field];
+			keepsStoredSecret = true;
 		}
+	}
+	if (keepsStoredSecret) {
+		assertStoredSecretTargetUnchanged(
+			"vault provider credentials",
+			Object.fromEntries(
+				SECRET_TARGET_FIELDS[incoming.providerType].map((field) => [
+					field,
+					[merged[field], stored[field]] as const,
+				]),
+			),
+		);
 	}
 	return merged as VaultProviderConfig;
 };

@@ -162,6 +162,50 @@ describe("schedule service/server binding boundary", () => {
 		);
 	});
 
+	it.each([
+		{ scheduleType: "dokploy-server" as const },
+		{ scheduleType: "server" as const, serverId: "server-1" },
+	])(
+		"rejects members creating $scheduleType schedules before persistence",
+		async (hostInput) => {
+			mocks.findMemberByUserId.mockResolvedValue({ role: "member" });
+
+			await expect(
+				createCaller().create({
+					...scheduleInput,
+					...hostInput,
+					script: "id",
+				}),
+			).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+			expect(mocks.createSchedule).not.toHaveBeenCalled();
+			expect(mocks.scheduleJob).not.toHaveBeenCalled();
+		},
+	);
+
+	it("allows admins to create dokploy-server schedules", async () => {
+		mocks.createSchedule.mockResolvedValueOnce({
+			...scheduleInput,
+			scheduleId: "host-schedule-1",
+			scheduleType: "dokploy-server",
+		});
+
+		await expect(
+			createCaller().create({
+				...scheduleInput,
+				scheduleType: "dokploy-server",
+				script: "echo ok",
+			}),
+		).resolves.toMatchObject({ scheduleId: "host-schedule-1" });
+
+		expect(mocks.createSchedule).toHaveBeenCalledWith(
+			expect.objectContaining({
+				scheduleType: "dokploy-server",
+				organizationId: "org-1",
+			}),
+		);
+	});
+
 	it("rejects converting an application schedule into a server schedule", async () => {
 		await expect(
 			createCaller().update({

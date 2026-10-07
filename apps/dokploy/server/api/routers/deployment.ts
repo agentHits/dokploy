@@ -22,7 +22,6 @@ import {
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
-import { redactRollbackFullContextSecrets } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -406,24 +405,17 @@ export const deploymentRouter = createTRPCRouter({
 					deployment: ["read"],
 				});
 			}
-			const deploymentsList = await db.query.deployments.findMany({
+			return await db.query.deployments.findMany({
 				where: eq(deployments[`${input.type}Id`], input.id),
 				orderBy: desc(deployments.createdAt),
 				with: {
-					rollback: true,
+					rollback: {
+						columns: {
+							fullContext: false,
+						},
+					},
 				},
 			});
-			return deploymentsList.map((deployment) => ({
-				...deployment,
-				rollback: deployment.rollback
-					? {
-							...deployment.rollback,
-							fullContext: redactRollbackFullContextSecrets(
-								deployment.rollback.fullContext,
-							),
-						}
-					: deployment.rollback,
-			}));
 		}),
 	killProcess: protectedProcedure
 		.input(

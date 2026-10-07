@@ -263,7 +263,7 @@ describe("Git provider clone command boundary", () => {
 	});
 
 	it("quotes GitHub clone metadata", async () => {
-		const expectedCloneUrl = `https://oauth2:${fixtures.githubToken}@github.com/${fixtures.githubOwner}/${fixtures.githubRepository}.git`;
+		const expectedCloneUrl = `https://github.com/${fixtures.githubOwner}/${fixtures.githubRepository}.git`;
 		const command = await cloneGithubRepository({
 			appName: "app",
 			branch: fixtures.branch,
@@ -284,7 +284,7 @@ describe("Git provider clone command boundary", () => {
 
 	it("quotes GitLab clone metadata", async () => {
 		const repoClone = `${fixtures.gitlabBaseUrl.replace(/^https?:\/\//, "")}/${fixtures.gitlabNamespace}.git`;
-		const expectedCloneUrl = `https://oauth2:${fixtures.gitlabToken}@${repoClone}`;
+		const expectedCloneUrl = `https://${repoClone}`;
 		const command = await cloneGitlabRepository({
 			appName: "app",
 			enableSubmodules: false,
@@ -306,7 +306,7 @@ describe("Git provider clone command boundary", () => {
 
 	it("quotes Bitbucket clone metadata", async () => {
 		const repoClone = `bitbucket.org/${fixtures.bitbucketOwner}/${fixtures.bitbucketRepository}.git`;
-		const expectedCloneUrl = `https://x-bitbucket-api-token-auth:${fixtures.bitbucketToken}@${repoClone}`;
+		const expectedCloneUrl = `https://${repoClone}`;
 		const command = await cloneBitbucketRepository({
 			appName: "app",
 			bitbucketBranch: fixtures.branch,
@@ -567,7 +567,7 @@ describe("Git provider clone command boundary", () => {
 
 	it("quotes Gitea clone metadata", async () => {
 		const baseUrl = fixtures.giteaBaseUrl.replace(/^https?:\/\//, "");
-		const expectedCloneUrl = `https://oauth2:${fixtures.giteaToken}@${baseUrl}/${fixtures.giteaOwner}/${fixtures.giteaRepository}.git`;
+		const expectedCloneUrl = `https://${baseUrl}/${fixtures.giteaOwner}/${fixtures.giteaRepository}.git`;
 		const command = await cloneGiteaRepository({
 			appName: "app",
 			enableSubmodules: false,

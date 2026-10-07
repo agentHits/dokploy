@@ -7,6 +7,7 @@ import {
 	updateCertificate,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
+import { redactServer } from "@dokploy/server/services/server";
 import {
 	isRedactedSecretValue,
 	redactSecretFields,
@@ -106,10 +107,15 @@ export const certificateRouter = createTRPCRouter({
 		});
 		const accessibleIds = await getAccessibleServerIds(ctx.session);
 		return redactSecretFieldsList(
-			allCertificates.filter(
-				(certificate) =>
-					!certificate.serverId || accessibleIds.has(certificate.serverId),
-			),
+			allCertificates
+				.filter(
+					(certificate) =>
+						!certificate.serverId || accessibleIds.has(certificate.serverId),
+				)
+				.map((certificate) => ({
+					...certificate,
+					server: redactServer(certificate.server),
+				})),
 			["privateKey"],
 		);
 	}),

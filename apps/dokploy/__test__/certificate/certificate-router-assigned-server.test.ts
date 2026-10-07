@@ -144,6 +144,39 @@ describe("certificate router assigned-server boundary", () => {
 		]);
 	});
 
+	it("redacts the assigned server's command and metrics token from all", async () => {
+		mocks.certificateFindMany.mockResolvedValue([
+			{
+				certificateId: "certificate-1",
+				name: "accessible",
+				privateKey: "private-key",
+				organizationId: "org-1",
+				serverId: "server-1",
+				server: {
+					serverId: "server-1",
+					name: "remote",
+					command: "curl -H 'Authorization: Bearer server-secret' example.com",
+					metricsConfig: {
+						server: { token: "metrics-token", port: 4500 },
+						containers: { refreshRate: 60 },
+					},
+				},
+			},
+		]);
+
+		const [certificate] = await createCaller().all();
+
+		expect(certificate?.server).toMatchObject({
+			name: "remote",
+			command: REDACTED_SECRET_VALUE,
+			metricsConfig: {
+				server: { token: REDACTED_SECRET_VALUE, port: 4500 },
+			},
+		});
+		expect(JSON.stringify(certificate)).not.toContain("server-secret");
+		expect(JSON.stringify(certificate)).not.toContain("metrics-token");
+	});
+
 	it("preserves stored certificate private keys when update receives the redacted placeholder", async () => {
 		const result = await createCaller().update({
 			certificateId: "certificate-1",
