@@ -18,6 +18,7 @@ const {
 	getDokployImageKeepCount,
 	getDokployImageRepositories,
 	getDokployImages,
+	getOfficialUpdateCommand,
 } = await import("@dokploy/server/services/settings");
 
 describe("Dokploy image cleanup", () => {
@@ -197,5 +198,51 @@ describe("Dokploy image list", () => {
 		execAsync.mockResolvedValue({ stdout: "", stderr: "" });
 		await expect(getDokployImages()).resolves.toEqual([]);
 		expect(execAsync).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("Dokploy update commands", () => {
+	beforeEach(() => {
+		vi.stubEnv("DOKPLOY_AGENTHITS_UPDATE_IMAGE", undefined);
+		vi.stubEnv("DOKPLOY_AGENTHITS_UPDATE_TAG", undefined);
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	const expectPullBeforeUpdate = (command: string, pull: string) => {
+		expect(command).toContain(`${pull} || exit 1`);
+		expect(command.indexOf(pull)).toBeLessThan(
+			command.indexOf("docker service update"),
+		);
+	};
+
+	it("pulls the AgentHits image while the old container still runs", () => {
+		expectPullBeforeUpdate(
+			getAgentHitsUpdateCommand("v0.30.6"),
+			"docker pull ghcr.io/agenthits/dokploy\\:agenthits-dev",
+		);
+	});
+
+	it("pulls the official image before updating the service", () => {
+		const command = getOfficialUpdateCommand("v0.30.7", 3);
+
+		expectPullBeforeUpdate(command, "docker pull dokploy/dokploy\\:v0.30.7");
+		expect(command).toContain(
+			"--image dokploy/dokploy\\:v0.30.7 --env-add DOKPLOY_KEEP_IMAGES\\=3 dokploy",
+		);
+		expect(getOfficialUpdateCommand("v0.30.7")).not.toContain(
+			"DOKPLOY_KEEP_IMAGES",
+		);
+	});
+
+	it("includes untagged images that swarm pulled by digest", async () => {
+		execAsync.mockResolvedValue({ stdout: "", stderr: "" });
+
+		await getDokployImages();
+
+		expect(execAsync.mock.calls[0]?.[0]).toMatch(/^docker image ls -a -q /);
+		expect(getDokployImageCleanupCommand(3)).toContain("docker image ls -a -q");
 	});
 });

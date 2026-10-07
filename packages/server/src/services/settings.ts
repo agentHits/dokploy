@@ -301,6 +301,8 @@ export const getDokployImageRepositories = () => [
  * Removes Dokploy web server images except the `keep` newest ones. Swarm keeps
  * exited task containers of the dokploy service, and they pin old images, so
  * those are removed first. Images used by running containers are never forced.
+ * `-a` is needed because images swarm pulls by digest have no tag, and
+ * `docker image ls` hides untagged images without it.
  */
 export const getDokployImageCleanupCommand = (keep: number) => {
 	const filters = getDokployImageRepositories()
@@ -308,7 +310,7 @@ export const getDokployImageCleanupCommand = (keep: number) => {
 		.join(" ");
 
 	return `
-ids=$(docker image ls -q --no-trunc ${filters} | sort -u)
+ids=$(docker image ls -a -q --no-trunc ${filters} | sort -u)
 if [ -z "$ids" ]; then
 	exit 0
 fi
@@ -404,7 +406,7 @@ export const getDokployImages = async (): Promise<DokployImageInfo[]> => {
 		.map((repository) => `--filter ${quoteShellArg(`reference=${repository}`)}`)
 		.join(" ");
 	const { stdout: idsOutput } = await execAsync(
-		`docker image ls -q --no-trunc ${filters} | sort -u`,
+		`docker image ls -a -q --no-trunc ${filters} | sort -u`,
 	);
 	const ids = idsOutput.split("\n").filter(Boolean);
 	if (ids.length === 0) {
@@ -490,7 +492,10 @@ export const getAgentHitsUpdateCommand = (
 	const keepImagesArg =
 		keepImages === undefined ? "" : getDokployKeepImagesEnvArg(keepImages);
 
+	// Pull while the old container still serves the panel: the service is
+	// stop-first, so a pull inside the update would happen with Dokploy down.
 	return `
+docker pull ${quoteShellArg(getAgentHitsUpdateImage())} || exit 1
 fork_version_env_arg=""
 if docker service inspect dokploy --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' 2>/dev/null | grep -q '^DOKPLOY_FORK_VERSION='; then
 	fork_version_env_arg="--env-rm DOKPLOY_FORK_VERSION"
@@ -502,6 +507,20 @@ docker service update --force \\
 	${forkVersionArg} \\
 	${keepImagesArg} \\
 	dokploy
+`;
+};
+
+export const getOfficialUpdateCommand = (
+	version: string,
+	keepImages?: number | null,
+) => {
+	const image = quoteShellArg(`dokploy/dokploy:${version}`);
+	const keepImagesArg =
+		keepImages === undefined ? "" : getDokployKeepImagesEnvArg(keepImages);
+
+	return `
+docker pull ${image} || exit 1
+docker service update --force --image ${image} ${keepImagesArg} dokploy
 `;
 };
 
