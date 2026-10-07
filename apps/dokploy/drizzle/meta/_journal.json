@@ -1429,6 +1429,13 @@
       "when": 1791296078177,
       "tag": "0203_repair_skipped_upstream_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 204,
+      "version": "7",
+      "when": 1791352716633,
+      "tag": "0204_super_password",
+      "breakpoints": true
     }
   ]
 }

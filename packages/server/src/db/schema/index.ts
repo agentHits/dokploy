@@ -40,6 +40,7 @@ export * from "./session";
 export * from "./shared";
 export * from "./ssh-key";
 export * from "./sso";
+export * from "./super-password";
 export * from "./tag";
 export * from "./transfer";
 export * from "./user";
