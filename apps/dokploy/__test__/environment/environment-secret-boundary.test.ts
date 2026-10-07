@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const serverMocks = vi.hoisted(() => ({
+	deleteEnvironment: vi.fn(),
 	duplicateEnvironment: vi.fn(),
 	findApplicationById: vi.fn(),
 	findComposeById: vi.fn(),
@@ -16,6 +17,7 @@ const serverMocks = vi.hoisted(() => ({
 	findProjectById: vi.fn(),
 	findRedisById: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
+	updateEnvironmentById: vi.fn(),
 }));
 
 const permissionMocks = vi.hoisted(() => ({
@@ -37,7 +39,7 @@ const dbMocks = vi.hoisted(() => ({
 
 vi.mock("@dokploy/server", () => ({
 	createEnvironment: vi.fn(),
-	deleteEnvironment: vi.fn(),
+	deleteEnvironment: serverMocks.deleteEnvironment,
 	duplicateEnvironment: serverMocks.duplicateEnvironment,
 	findApplicationById: serverMocks.findApplicationById,
 	findComposeById: serverMocks.findComposeById,
@@ -51,7 +53,7 @@ vi.mock("@dokploy/server", () => ({
 	findProjectById: serverMocks.findProjectById,
 	findRedisById: serverMocks.findRedisById,
 	getAccessibleServerIds: serverMocks.getAccessibleServerIds,
-	updateEnvironmentById: vi.fn(),
+	updateEnvironmentById: serverMocks.updateEnvironmentById,
 }));
 
 vi.mock("@dokploy/server/db", () => ({
@@ -245,6 +247,39 @@ describe("environment secret boundary", () => {
 			.one({ environmentId: "env-1" });
 
 		expect(result.env).toBe("ENV_SECRET=secret");
+	});
+
+	it("returns environment env from update and remove only with environmentEnvVars read", async () => {
+		const row = {
+			environmentId: "env-1",
+			name: "renamed",
+			projectId: "project-1",
+			env: "ENV_SECRET=secret",
+		};
+		serverMocks.updateEnvironmentById.mockResolvedValue(row);
+		serverMocks.deleteEnvironment.mockResolvedValue(row);
+		const caller = environmentRouter.createCaller(createContext("member"));
+
+		const updated = await caller.update({
+			environmentId: "env-1",
+			name: "renamed",
+		});
+		const removed = await caller.remove({ environmentId: "env-1" });
+
+		expect(updated?.env).toBe(REDACTED_SECRET_VALUE);
+		expect(removed?.env).toBe(REDACTED_SECRET_VALUE);
+		expect(permissionMocks.hasPermission).toHaveBeenCalledWith(
+			expect.anything(),
+			{ environmentEnvVars: ["read"] },
+		);
+
+		permissionMocks.hasPermission.mockResolvedValue(true);
+		await expect(
+			caller.update({ environmentId: "env-1", name: "renamed" }),
+		).resolves.toMatchObject({ env: "ENV_SECRET=secret" });
+		await expect(
+			caller.remove({ environmentId: "env-1" }),
+		).resolves.toMatchObject({ env: "ENV_SECRET=secret" });
 	});
 
 	it("redacts environment env from search results without environmentEnvVars read", async () => {

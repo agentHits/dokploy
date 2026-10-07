@@ -42,6 +42,7 @@ import {
 import { serviceColumns } from "@dokploy/server/services/project";
 import {
 	preserveSecretPlaceholderFields,
+	redactEnvironmentSharedEnvFor,
 	redactProjectNestedSecrets,
 	redactSecretFields,
 } from "@dokploy/server/utils/security/redaction";
@@ -59,6 +60,7 @@ import {
 	assertServicePlacementAccess,
 	assertTargetEnvironmentAccess,
 } from "@/server/api/utils/placement-access";
+import { getSharedEnvReadAccess } from "@/server/api/utils/service-environment";
 import {
 	apiCreateProject,
 	apiFindOneProject,
@@ -805,7 +807,9 @@ export const projectRouter = createTRPCRouter({
 					resourceId: currentProject.projectId,
 					resourceName: currentProject.name,
 				});
-				return deletedProject;
+				return (await canReadProjectEnvVars(ctx))
+					? deletedProject
+					: redactSecretFields(deletedProject, ["env"]);
 			} catch (error) {
 				throw error;
 			}
@@ -856,7 +860,9 @@ export const projectRouter = createTRPCRouter({
 						resourceName: project.name,
 					});
 				}
-				return project;
+				return (await canReadProjectEnvVars(ctx))
+					? project
+					: redactSecretFields(project, ["env"]);
 			} catch (error) {
 				throw error;
 			}
@@ -1270,7 +1276,12 @@ export const projectRouter = createTRPCRouter({
 					resourceName: input.name,
 					metadata: { duplicatedFrom: input.sourceEnvironmentId },
 				});
-				return targetProject;
+				// With duplicateInSameProject this is the source environment,
+				// loaded with its env and project.env.
+				return redactEnvironmentSharedEnvFor(
+					targetProject,
+					await getSharedEnvReadAccess(ctx),
+				);
 			} catch (error) {
 				if (error instanceof TRPCError) {
 					throw error;

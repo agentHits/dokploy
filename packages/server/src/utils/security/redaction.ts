@@ -89,9 +89,38 @@ const NO_SHARED_ENV_READ_ACCESS: SharedEnvReadAccess = {
 	projectEnv: false,
 };
 
-// Service reads load environment.project for organization checks. The env of
-// those relations is shared by every service in them, so it is only returned to
-// callers with the matching environmentEnvVars/projectEnvVars read permission.
+// The env of an environment and its project is shared by every service in them,
+// so it is only returned to callers with the matching
+// environmentEnvVars/projectEnvVars read permission.
+export const redactEnvironmentSharedEnvFor = <
+	T extends SecretRecord | null | undefined,
+>(
+	environment: T,
+	access: SharedEnvReadAccess,
+) => {
+	if (!environment) {
+		return environment;
+	}
+
+	let redacted: SecretRecord = environment;
+	if (!access.environmentEnv) {
+		redacted = redactSecretFields(redacted, ["env"]);
+	}
+	if (
+		!access.projectEnv &&
+		redacted.project &&
+		typeof redacted.project === "object"
+	) {
+		redacted = {
+			...redacted,
+			project: redactSecretFields(redacted.project as SecretRecord, ["env"]),
+		};
+	}
+
+	return redacted as T;
+};
+
+// Service reads load environment.project for organization checks.
 const redactServiceSharedEnv = <T extends SecretRecord | null | undefined>(
 	record: T,
 	access: SharedEnvReadAccess,
@@ -100,22 +129,13 @@ const redactServiceSharedEnv = <T extends SecretRecord | null | undefined>(
 		return record;
 	}
 
-	let environment = record.environment as SecretRecord;
-	if (!access.environmentEnv) {
-		environment = redactSecretFields(environment, ["env"]);
-	}
-	if (
-		!access.projectEnv &&
-		environment.project &&
-		typeof environment.project === "object"
-	) {
-		environment = {
-			...environment,
-			project: redactSecretFields(environment.project as SecretRecord, ["env"]),
-		};
-	}
-
-	return { ...record, environment } as T;
+	return {
+		...record,
+		environment: redactEnvironmentSharedEnvFor(
+			record.environment as SecretRecord,
+			access,
+		),
+	} as T;
 };
 
 export const redactDeployableServiceSecrets = <
