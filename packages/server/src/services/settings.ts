@@ -260,26 +260,51 @@ export const getAgentHitsUpdateData = async (
 	};
 };
 
-export const DOKPLOY_KEEP_IMAGES_ENV = "DOKPLOY_KEEP_IMAGES";
-export const DOKPLOY_KEEP_IMAGES_MIN = 3;
+// Renamed from DOKPLOY_KEEP_IMAGES when the count stopped including the new
+// and the previous build: an old "0" (off) must not read as "keep none".
+export const DOKPLOY_KEEP_IMAGES_ENV = "DOKPLOY_KEEP_OLD_IMAGES";
+export const DOKPLOY_PREVIOUS_IMAGE_ENV = "DOKPLOY_PREVIOUS_IMAGE";
+export const DOKPLOY_KEEP_IMAGES_MIN = 0;
 export const DOKPLOY_KEEP_IMAGES_MAX = 5;
 
-/** Returns how many Dokploy images to keep, or null when the cleanup is off. */
+/**
+ * Returns how many older Dokploy images to keep besides the running and the
+ * previous one, or null when the cleanup is off.
+ */
 export const getDokployImageKeepCount = () => {
-	const value = Number(process.env[DOKPLOY_KEEP_IMAGES_ENV]);
-	if (
-		!Number.isInteger(value) ||
-		value < DOKPLOY_KEEP_IMAGES_MIN ||
-		value > DOKPLOY_KEEP_IMAGES_MAX
-	) {
+	const raw = process.env[DOKPLOY_KEEP_IMAGES_ENV]?.trim() ?? "";
+	if (!/^\d+$/.test(raw)) {
+		return null;
+	}
+	const value = Number(raw);
+	if (value < DOKPLOY_KEEP_IMAGES_MIN || value > DOKPLOY_KEEP_IMAGES_MAX) {
 		return null;
 	}
 	return value;
 };
 
-/** `--env-add` argument that stores the cleanup choice on the dokploy service; 0 turns it off. */
+/** `--env-add` argument that stores the cleanup choice on the dokploy service. */
 export const getDokployKeepImagesEnvArg = (keepImages: number | null) =>
-	`--env-add ${quoteShellArg(`${DOKPLOY_KEEP_IMAGES_ENV}=${keepImages ?? 0}`)}`;
+	`--env-add ${quoteShellArg(`${DOKPLOY_KEEP_IMAGES_ENV}=${keepImages ?? "off"}`)}`;
+
+/** Image id of the build that ran before the last update, if it was recorded. */
+export const getDokployPreviousImage = () => {
+	const value = process.env[DOKPLOY_PREVIOUS_IMAGE_ENV]?.trim() ?? "";
+	return /^sha256:[a-f0-9]{64}$/.test(value) ? value : null;
+};
+
+const DOKPLOY_RUNNING_TASKS =
+	"docker ps -q --filter label=com.docker.swarm.service.name=dokploy --filter status=running";
+
+// Captured before `docker service update` so the cleanup in the new container
+// knows which build to keep for a rollback.
+const RECORD_PREVIOUS_IMAGE = `previous_image=""
+running_tasks=$(${DOKPLOY_RUNNING_TASKS})
+if [ -n "$running_tasks" ]; then
+	previous_image=$(docker inspect --format '{{.Image}}' $running_tasks 2>/dev/null | head -n 1)
+fi`;
+
+const PREVIOUS_IMAGE_ENV_ARG = `--env-add "${DOKPLOY_PREVIOUS_IMAGE_ENV}=$previous_image"`;
 
 const getImageRepository = (image: string) => {
 	const withoutDigest = image.split("@")[0] ?? image;
@@ -299,23 +324,39 @@ export const getDokployImageRepositories = () => [
 ];
 
 /**
- * Removes Dokploy web server images except the `keep` newest ones. Swarm keeps
- * exited task containers of the dokploy service, and they pin old images, so
- * those are removed first. Images used by running containers are never forced.
- * `-a` is needed because images swarm pulls by digest have no tag, and
- * `docker image ls` hides untagged images without it.
+ * Removes Dokploy web server images except the running one, the previous one
+ * and the `keep` newest of the rest. Swarm keeps exited task containers of the
+ * dokploy service, and they pin old images, so those are removed first.
+ * Images used by running containers are never forced. `-a` is needed because
+ * images swarm pulls by digest have no tag, and `docker image ls` hides
+ * untagged images without it.
  */
-export const getDokployImageCleanupCommand = (keep: number) => {
+export const getDokployImageCleanupCommand = (
+	keep: number,
+	previousImage: string | null,
+) => {
 	const filters = getDokployImageRepositories()
 		.map((repository) => `--filter ${quoteShellArg(`reference=${repository}`)}`)
 		.join(" ");
+	// Without a recorded previous build, the newest older image stands in for it.
+	const skip = keep + (previousImage ? 0 : 1);
 
 	return `
 ids=$(docker image ls -a -q --no-trunc ${filters} | sort -u)
 if [ -z "$ids" ]; then
 	exit 0
 fi
-docker image inspect --format '{{.Created}} {{.Id}}' $ids | sort -r | awk '{print $2}' | tail -n +${keep + 1} | while read -r id; do
+protected="${previousImage ?? ""}"
+running_tasks=$(${DOKPLOY_RUNNING_TASKS})
+if [ -n "$running_tasks" ]; then
+	protected="$protected $(docker inspect --format '{{.Image}}' $running_tasks | tr '\n' ' ')"
+fi
+docker image inspect --format '{{.Created}} {{.Id}}' $ids | sort -r | awk '{print $2}' | while read -r id; do
+	case " $protected " in
+		*" $id "*) ;;
+		*) echo "$id" ;;
+	esac
+done | tail -n +${skip + 1} | while read -r id; do
 	containers=$(docker ps -aq --filter "ancestor=$id" --filter status=exited --filter status=created --filter label=com.docker.swarm.service.name=dokploy)
 	if [ -n "$containers" ]; then
 		docker rm $containers || true
@@ -334,11 +375,13 @@ done
 
 export const cleanupOldDokployImages = async () => {
 	const keep = getDokployImageKeepCount();
-	if (!keep) {
+	if (keep === null) {
 		return;
 	}
 	try {
-		await execAsync(getDokployImageCleanupCommand(keep));
+		await execAsync(
+			getDokployImageCleanupCommand(keep, getDokployPreviousImage()),
+		);
 	} catch (error) {
 		console.error("Failed to clean up old Dokploy images", error);
 	}
@@ -498,6 +541,7 @@ export const getAgentHitsUpdateCommand = (
 	return `
 docker pull ${quoteShellArg(getAgentHitsUpdateImage())} || exit 1
 echo ${quoteShellArg(UPDATE_IMAGE_PULLED_MARKER)}
+${RECORD_PREVIOUS_IMAGE}
 fork_version_env_arg=""
 if docker service inspect dokploy --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' 2>/dev/null | grep -q '^DOKPLOY_FORK_VERSION='; then
 	fork_version_env_arg="--env-rm DOKPLOY_FORK_VERSION"
@@ -508,6 +552,7 @@ docker service update --force \\
 	--env-add ${quoteShellArg(`DOKPLOY_OFFICIAL_VERSION=${officialVersionArg}`)} \\
 	${forkVersionArg} \\
 	${keepImagesArg} \\
+	${PREVIOUS_IMAGE_ENV_ARG} \\
 	dokploy
 `;
 };
@@ -523,7 +568,8 @@ export const getOfficialUpdateCommand = (
 	return `
 docker pull ${image} || exit 1
 echo ${quoteShellArg(UPDATE_IMAGE_PULLED_MARKER)}
-docker service update --force --image ${image} ${keepImagesArg} dokploy
+${RECORD_PREVIOUS_IMAGE}
+docker service update --force --image ${image} ${keepImagesArg} ${PREVIOUS_IMAGE_ENV_ARG} dokploy
 `;
 };
 

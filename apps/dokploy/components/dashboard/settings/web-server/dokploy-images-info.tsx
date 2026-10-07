@@ -30,7 +30,8 @@ interface PopoverProps {
 }
 
 const rowStyles: Record<DokployImageAction, string> = {
-	new: "border-dashed border-emerald-500/50 bg-emerald-500/5",
+	new: "border-border",
+	current: "border-border",
 	keep: "border-emerald-500/30 bg-emerald-500/5",
 	remove: "border-red-500/50 bg-red-500/10",
 	blocked: "border-yellow-500/40 bg-yellow-500/10",
@@ -40,10 +41,25 @@ const actionBadges: Record<
 	DokployImageAction,
 	{ label: string; className: string }
 > = {
-	new: { label: "New build", className: "bg-emerald-600 text-white" },
+	new: { label: "New build", className: "" },
+	current: { label: "Installed now", className: "" },
 	keep: { label: "Keep", className: "bg-emerald-600/80 text-white" },
 	remove: { label: "Delete", className: "bg-red-600 text-white" },
 	blocked: { label: "In use", className: "bg-yellow-600 text-white" },
+};
+
+const describeCleanup = (keepImages: number | null, hasPending: boolean) => {
+	if (keepImages === null) {
+		return "Cleanup is off: every image stays.";
+	}
+	const protectedText = hasPending
+		? "The new build and the one installed now always stay."
+		: "The build installed now always stays.";
+	const olderText =
+		keepImages === 0
+			? "All older images are deleted after the update."
+			: `Of the older images, the newest ${keepImages} ${keepImages === 1 ? "stays" : "stay"}; red ones are deleted after the update.`;
+	return `${protectedText} ${olderText}`;
 };
 
 export const DokployImagesInfo = ({
@@ -93,9 +109,7 @@ export const DokployImagesPopover = ({
 				<div>
 					<p className="font-medium">Dokploy images on this server</p>
 					<p className="text-xs text-muted-foreground">
-						{keepImages === null
-							? "Cleanup is off: every image stays."
-							: `The newest ${keepImages} stay${pendingVersion ? ", counting the new build" : ""}. Red ones are deleted after the update.`}
+						{describeCleanup(keepImages, !!pendingVersion)}
 					</p>
 				</div>
 
@@ -112,9 +126,10 @@ export const DokployImagesPopover = ({
 
 				{plan && plan.rows.length > 0 && (
 					<ul className="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">
-						{plan.rows.map((row, index) => {
+						{plan.rows.map((row) => {
 							const badge = actionBadges[row.action];
 							const image = row.image;
+							const isProtected = row.position === null;
 							return (
 								<li
 									key={row.key}
@@ -124,7 +139,7 @@ export const DokployImagesPopover = ({
 									)}
 								>
 									<span className="w-4 pt-0.5 text-right text-xs text-muted-foreground">
-										{index + 1}
+										{row.position}
 									</span>
 									<div className="min-w-0 flex-1">
 										<div className="flex flex-wrap items-center gap-1.5">
@@ -136,10 +151,12 @@ export const DokployImagesPopover = ({
 											>
 												{row.version}
 											</span>
-											<Badge className={badge.className}>{badge.label}</Badge>
-											{image?.isCurrent && (
-												<Badge variant="outline">Running now</Badge>
-											)}
+											<Badge
+												variant={isProtected ? "outline" : "default"}
+												className={badge.className}
+											>
+												{badge.label}
+											</Badge>
 										</div>
 										<div className="text-xs text-muted-foreground">
 											{image ? (
@@ -180,7 +197,7 @@ export const DokployImagesPopover = ({
 											<div className="font-medium">
 												{formatImageSize(image.sizeBytes)}
 											</div>
-											{image.uniqueSizeBytes !== null && (
+											{!isProtected && image.uniqueSizeBytes !== null && (
 												<div className="text-muted-foreground">
 													frees {formatImageSize(image.uniqueSizeBytes)}
 												</div>

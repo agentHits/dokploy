@@ -10,7 +10,7 @@ import {
 	X,
 } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,12 +45,12 @@ export const UpdateServer = ({
 	onOpenChange: onOpenChangeProp,
 }: Props) => {
 	const [hasCheckedUpdate, setHasCheckedUpdate] = useState(!!updateData);
-	const [isUpdateAvailable, setIsUpdateAvailable] = useState(
+	const [isUpdateFound, setIsUpdateFound] = useState(
 		!!updateData?.updateAvailable,
 	);
 	const { mutateAsync: getUpdateData, isPending } =
 		api.settings.getUpdateData.useMutation();
-	const { data: dokployVersionData } =
+	const { data: dokployVersionData, refetch: refetchVersionData } =
 		api.settings.getDokployVersionData.useQuery();
 	const [latestVersion, setLatestVersion] = useState(
 		updateData?.latestVersion ?? "",
@@ -74,7 +74,7 @@ export const UpdateServer = ({
 			const versionToUpdate = updateData.latestVersion || "";
 			const nextUpdateSource = updateData.updateSource ?? "official";
 			setHasCheckedUpdate(true);
-			setIsUpdateAvailable(updateData.updateAvailable);
+			setIsUpdateFound(updateData.updateAvailable);
 			setLatestVersion(versionToUpdate);
 			setUpdateSource(nextUpdateSource);
 
@@ -91,14 +91,24 @@ export const UpdateServer = ({
 		} catch (error) {
 			console.error("Error checking for updates:", error);
 			setHasCheckedUpdate(true);
-			setIsUpdateAvailable(false);
+			setIsUpdateFound(false);
 			toast.error(
 				"An error occurred while checking for updates, please try again.",
 			);
 		}
 	};
 
+	// The result may predate an update made since, e.g. from another tab.
+	const isUpdateAvailable =
+		isUpdateFound && latestVersion !== dokployVersionData?.forkVersion;
+
 	const isOpen = isOpenInternal || isOpenProp;
+
+	useEffect(() => {
+		if (isOpen) {
+			void refetchVersionData();
+		}
+	}, [isOpen, refetchVersionData]);
 	const onOpenChange = (open: boolean) => {
 		setIsOpenInternal(open);
 		onOpenChangeProp?.(open);
@@ -146,35 +156,42 @@ export const UpdateServer = ({
 				)}
 			</DialogTrigger>
 			<DialogContent className="max-w-lg" showCloseButton={false}>
-				<div className="flex items-center gap-2 mb-8">
-					<DialogTitle className="text-2xl font-semibold mr-auto">
-						Web Server Update
-					</DialogTitle>
+				<div className="mb-8 flex flex-col gap-4">
+					<div className="flex items-center gap-2">
+						<DialogTitle className="mr-auto text-2xl font-semibold">
+							Web Server Update
+						</DialogTitle>
+						<DialogClose asChild>
+							<Button variant="ghost" size="icon-sm" className="shrink-0">
+								<X />
+								<span className="sr-only">Close</span>
+							</Button>
+						</DialogClose>
+					</div>
 					{dokployVersionData && (
-						<div className="mr-2 flex max-w-[16rem] items-start gap-2 rounded-md bg-muted px-3 py-2">
-							<Server className="mt-0.5 h-4 w-4 flex-shrink-0 text-muted-foreground" />
-							<div className="min-w-0 text-xs leading-5 text-muted-foreground">
-								<div className="flex min-w-0 items-center gap-1.5">
-									<span>Official</span>
-									<span className="truncate font-medium">
+						<div className="flex items-start gap-3 rounded-md border bg-muted px-4 py-3">
+							<Server className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+							<div className="min-w-0 flex-1">
+								<p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+									Installed now
+								</p>
+								<dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+									{dokployVersionData.isFork && (
+										<>
+											<dt className="text-muted-foreground">Fork build</dt>
+											<dd className="break-all font-mono font-medium">
+												{dokployVersionData.forkVersion}
+											</dd>
+										</>
+									)}
+									<dt className="text-muted-foreground">Official base</dt>
+									<dd className="break-all font-mono font-medium">
 										{dokployVersionData.officialVersion}
-									</span>
-								</div>
-								<div className="flex min-w-0 items-center gap-1.5">
-									<span>Fork</span>
-									<span className="truncate font-medium">
-										{dokployVersionData.forkVersion}
-									</span>
-								</div>
+									</dd>
+								</dl>
 							</div>
 						</div>
 					)}
-					<DialogClose asChild>
-						<Button variant="ghost" size="icon-sm" className="shrink-0">
-							<X />
-							<span className="sr-only">Close</span>
-						</Button>
-					</DialogClose>
 				</div>
 
 				{/* Initial state */}
