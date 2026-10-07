@@ -31,6 +31,7 @@ export const auditLogRouter = createTRPCRouter({
 						"redeploy",
 						"login",
 						"logout",
+						"reveal",
 					])
 					.optional(),
 				resourceType: z

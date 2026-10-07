@@ -29,6 +29,7 @@ const REQUIRED_DANGEROUS = [
 	"volumeBackups.restoreVolumeBackupWithLogs",
 	"user.createApiKey",
 	"user.deleteApiKey",
+	"user.revealApiKey",
 	"user.deleteAccount",
 	"user.remove",
 	"user.assignPermissions",

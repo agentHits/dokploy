@@ -5,6 +5,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
 import {
 	ArrowUpDown,
+	Eye,
 	FileJson,
 	LogIn,
 	LogOut,
@@ -76,6 +77,12 @@ const ACTION_CONFIG: Record<
 		icon: LogOut,
 		className:
 			"bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20",
+	},
+	reveal: {
+		label: "Revealed",
+		icon: Eye,
+		className:
+			"bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
 	},
 };
 
