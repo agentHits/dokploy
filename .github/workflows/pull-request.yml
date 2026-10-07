@@ -7,9 +7,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: pull-request-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   audit:
-    runs-on: ubuntu-latest
+    # Only the owner's own PRs reach the Mac mini runners. A fork PR could rewrite
+    # this line, so the repo also requires approval for every outside contributor.
+    runs-on: ${{ (github.event.pull_request.user.login == github.repository_owner && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "dokploy-ci"]') || 'ubuntu-latest' }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -21,7 +28,8 @@ jobs:
       - run: bun audit --audit-level=moderate --ignore GHSA-vfj7-8cjw-p6xm
 
   pr-check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event.pull_request.user.login == github.repository_owner && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "dokploy-ci"]') || 'ubuntu-latest' }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -38,14 +46,14 @@ jobs:
           node-version: 24.4.0
       
       - name: Install Nixpacks
-        if: matrix.job == 'test'
+        if: matrix.job == 'test' && runner.environment == 'github-hosted'
         run:  |
           export NIXPACKS_VERSION=1.41.0
           curl -sSL https://nixpacks.com/install.sh | bash
           echo "Nixpacks installed $NIXPACKS_VERSION"
 
       - name: Install Railpack
-        if: matrix.job == 'test'
+        if: matrix.job == 'test' && runner.environment == 'github-hosted'
         run:  |
           export RAILPACK_VERSION=0.15.4
           curl -sSL https://railpack.com/install.sh | bash
@@ -58,7 +66,10 @@ jobs:
       - name: Initialize Docker Swarm
         if: matrix.job == 'test'
         run: |
-          docker swarm init
+          # The Mac mini keeps its swarm between runs.
+          if [ "$(docker info --format '{{.Swarm.LocalNodeState}}')" != "active" ]; then
+            docker swarm init
+          fi
           docker network create --driver overlay dokploy-network || true
           echo "✅ Docker Swarm initialized"
       
