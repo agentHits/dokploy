@@ -49,6 +49,18 @@ describe("pipeBetweenServers", () => {
 		).rejects.toThrow("target exited with code 3: boom");
 	});
 
+	it("drains the source when the target exits before reading it", async () => {
+		const size = 1024 * 1024;
+		const bytes = await pipeBetweenServers({
+			source: {
+				serverId: null,
+				command: `sleep 0.1; head -c ${size} /dev/zero`,
+			},
+			target: { serverId: null, command: "exit 0" },
+		});
+		expect(bytes).toBe(size);
+	});
+
 	it("reports a source failure", async () => {
 		await expect(
 			pipeBetweenServers({

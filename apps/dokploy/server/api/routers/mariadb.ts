@@ -32,6 +32,7 @@ import { getServiceContainerCommand } from "@dokploy/server/utils/backups/utils"
 import {
 	preserveSecretPlaceholderFields,
 	redactDatabaseServiceSecrets,
+	redactDatabaseServiceSecretsFor,
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { observable } from "@trpc/server/observable";
@@ -41,7 +42,10 @@ import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { buildMysqlPasswordChangeCommand } from "@/server/api/utils/database-password";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
-import { assertServiceEnvironmentReadAccess } from "@/server/api/utils/service-environment";
+import {
+	assertServiceEnvironmentReadAccess,
+	getSharedEnvReadAccess,
+} from "@/server/api/utils/service-environment";
 import {
 	apiChangeMariaDBStatus,
 	apiCreateMariaDB,
@@ -141,7 +145,10 @@ export const mariadbRouter = createTRPCRouter({
 					message: "You are not authorized to access this Mariadb",
 				});
 			}
-			return redactDatabaseServiceSecrets(mariadb);
+			return redactDatabaseServiceSecretsFor(
+				mariadb,
+				await getSharedEnvReadAccess(ctx),
+			);
 		}),
 
 	revealEnvironment: protectedProcedure
