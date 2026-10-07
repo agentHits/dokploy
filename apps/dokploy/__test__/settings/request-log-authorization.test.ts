@@ -50,6 +50,7 @@ const mocks = vi.hoisted(() => ({
 	generateOpenApiDocument: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
 	getAgentHitsUpdateCommand: vi.fn(),
+	getOfficialUpdateCommand: vi.fn(),
 	getDockerDiskUsage: vi.fn(),
 	getDokployImageTag: vi.fn(),
 	getDokployVersionData: vi.fn(),
@@ -90,7 +91,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@dokploy/server", () => ({
 	CLEANUP_CRON_JOB: "0 0 * * *",
 	DEFAULT_UPDATE_DATA: {},
-	DOKPLOY_KEEP_IMAGES_ENV: "DOKPLOY_KEEP_IMAGES",
 	DOKPLOY_KEEP_IMAGES_MAX: 5,
 	DOKPLOY_KEEP_IMAGES_MIN: 3,
 	getDokployImageKeepCount: vi.fn(),
@@ -112,6 +112,7 @@ vi.mock("@dokploy/server", () => ({
 	findServerById: mocks.findServerById,
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
 	getAgentHitsUpdateCommand: mocks.getAgentHitsUpdateCommand,
+	getOfficialUpdateCommand: mocks.getOfficialUpdateCommand,
 	getDockerDiskUsage: mocks.getDockerDiskUsage,
 	getDokployImageTag: mocks.getDokployImageTag,
 	getDokployVersionData: mocks.getDokployVersionData,

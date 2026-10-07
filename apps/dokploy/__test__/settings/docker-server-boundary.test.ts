@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
 	generateOpenApiDocument: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
 	getAgentHitsUpdateCommand: vi.fn(),
+	getOfficialUpdateCommand: vi.fn(),
 	getDockerDiskUsage: vi.fn(),
 	getDokployImageTag: vi.fn(),
 	getDokployVersionData: vi.fn(),
@@ -67,7 +68,6 @@ const redactWebServerSettings = <T>(settings: T) => settings;
 vi.mock("@dokploy/server", () => ({
 	CLEANUP_CRON_JOB: "0 0 * * *",
 	DEFAULT_UPDATE_DATA: {},
-	DOKPLOY_KEEP_IMAGES_ENV: "DOKPLOY_KEEP_IMAGES",
 	DOKPLOY_KEEP_IMAGES_MAX: 5,
 	DOKPLOY_KEEP_IMAGES_MIN: 3,
 	getDokployImageKeepCount: vi.fn(),
@@ -90,6 +90,7 @@ vi.mock("@dokploy/server", () => ({
 	findServerById: mocks.findServerById,
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
 	getAgentHitsUpdateCommand: mocks.getAgentHitsUpdateCommand,
+	getOfficialUpdateCommand: mocks.getOfficialUpdateCommand,
 	getDockerDiskUsage: mocks.getDockerDiskUsage,
 	getDokployImageTag: mocks.getDokployImageTag,
 	getDokployVersionData: mocks.getDokployVersionData,
@@ -470,15 +471,17 @@ describe("settings Docker server boundary", () => {
 			updateSource: "official",
 		});
 
+		mocks.getOfficialUpdateCommand.mockReturnValue("official update command");
+
 		await expect(createCaller().updateServer()).resolves.toBe(true);
 
-		expect(mocks.spawnAsync).toHaveBeenCalledWith("docker", [
-			"service",
-			"update",
-			"--force",
-			"--image",
-			"dokploy/dokploy:v0.30.0",
-			"dokploy",
+		expect(mocks.getOfficialUpdateCommand).toHaveBeenCalledWith(
+			"v0.30.0",
+			undefined,
+		);
+		expect(mocks.spawnAsync).toHaveBeenCalledWith("sh", [
+			"-c",
+			"official update command",
 		]);
 		expect(mocks.getAgentHitsUpdateCommand).not.toHaveBeenCalled();
 	});
@@ -494,16 +497,10 @@ describe("settings Docker server boundary", () => {
 			createCaller().updateServer({ keepImages: null }),
 		).resolves.toBe(true);
 
-		expect(mocks.spawnAsync).toHaveBeenCalledWith("docker", [
-			"service",
-			"update",
-			"--force",
-			"--image",
-			"dokploy/dokploy:v0.30.0",
-			"--env-add",
-			"DOKPLOY_KEEP_IMAGES=0",
-			"dokploy",
-		]);
+		expect(mocks.getOfficialUpdateCommand).toHaveBeenCalledWith(
+			"v0.30.0",
+			null,
+		);
 	});
 
 	it("requires api.read before generating the OpenAPI document", async () => {

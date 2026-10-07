@@ -33,6 +33,11 @@ type HealthResult = {
 	traefik: ServiceStatus;
 };
 
+const HEALTH_POLL_MS = 2000;
+const HEALTH_TIMEOUT_MS = 5000;
+// Pulling a 4+ GB image on a slow link can take several minutes.
+const RESTART_WAIT_MS = 20 * 60 * 1000;
+
 type ModalState = "idle" | "checking" | "results" | "updating";
 
 const ServiceStatusItem = ({
@@ -92,23 +97,33 @@ export const UpdateWebServer = ({
 		healthResult.postgres.status === "healthy" &&
 		healthResult.traefik.status === "healthy";
 
-	const checkIsUpdateFinished = async () => {
+	const isServerUp = async () => {
 		try {
-			const response = await fetch("/api/health");
-			if (!response.ok) {
-				throw new Error("Health check failed");
-			}
-
-			toast.success(
-				"The server has been updated. The page will be reloaded to reflect the changes...",
-			);
-
-			setTimeout(() => {
-				window.location.reload();
-			}, 2000);
+			const response = await fetch("/api/health", {
+				cache: "no-store",
+				signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+			});
+			return response.ok;
 		} catch {
-			await new Promise((resolve) => setTimeout(resolve, 2000));
-			void checkIsUpdateFinished();
+			return false;
+		}
+	};
+
+	const sleep = (ms: number) =>
+		new Promise((resolve) => setTimeout(resolve, ms));
+
+	// The old server keeps answering while the new image is pulled, so wait
+	// until it goes down once before treating a healthy answer as the new one.
+	const waitForRestart = async () => {
+		const startedAt = Date.now();
+		while (await isServerUp()) {
+			if (Date.now() - startedAt > RESTART_WAIT_MS) {
+				throw new Error("The server did not restart");
+			}
+			await sleep(HEALTH_POLL_MS);
+		}
+		while (!(await isServerUp())) {
+			await sleep(HEALTH_POLL_MS);
 		}
 	};
 
@@ -116,15 +131,19 @@ export const UpdateWebServer = ({
 		try {
 			setModalState("updating");
 			await updateServer(keepImages === undefined ? undefined : { keepImages });
+			await waitForRestart();
 
-			await new Promise((resolve) => setTimeout(resolve, 8000));
-
-			await checkIsUpdateFinished();
+			toast.success(
+				"The server has been updated. The page will be reloaded to reflect the changes...",
+			);
+			setTimeout(() => {
+				window.location.reload();
+			}, 2000);
 		} catch (error) {
 			setModalState("results");
 			console.error("Error updating server:", error);
 			toast.error(
-				"An error occurred while updating the server, please try again.",
+				"The server did not restart with the new version. Check the Dokploy service logs and try again.",
 			);
 		}
 	};
@@ -168,8 +187,9 @@ export const UpdateWebServer = ({
 								<span>
 									This will update the web server to the selected latest build.
 									AgentHits fork installs update from the AgentHits GHCR image.
-									You will not be able to use the panel during the update
-									process. The page will be reloaded once the update is
+									The new image is downloaded first, so the panel is
+									unavailable only for about 20 seconds while Dokploy
+									restarts. The page will be reloaded once the update is
 									finished.
 									<br />
 									<br />
@@ -229,7 +249,8 @@ export const UpdateWebServer = ({
 							{modalState === "updating" && (
 								<span className="flex items-center gap-2">
 									<Loader2 className="animate-spin h-4 w-4" />
-									The server is being updated, please wait...
+									Downloading the new image. The panel keeps working meanwhile;
+									it is unavailable for about 20 seconds while Dokploy restarts.
 								</span>
 							)}
 						</div>
