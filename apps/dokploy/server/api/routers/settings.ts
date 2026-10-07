@@ -12,7 +12,6 @@ import {
 	cleanupSystem,
 	cleanupVolumes,
 	DEFAULT_UPDATE_DATA,
-	DOKPLOY_KEEP_IMAGES_ENV,
 	DOKPLOY_KEEP_IMAGES_MAX,
 	DOKPLOY_KEEP_IMAGES_MIN,
 	filterProtectedTraefikEntries,
@@ -25,6 +24,7 @@ import {
 	getDokployImageTag,
 	getDokployVersionData,
 	getLogCleanupStatus,
+	getOfficialUpdateCommand,
 	getUpdateData,
 	getWebServerSettings,
 	IS_CLOUD,
@@ -669,16 +669,9 @@ export const settingsRouter = createTRPCRouter({
 						),
 					]);
 				} else {
-					void spawnAsync("docker", [
-						"service",
-						"update",
-						"--force",
-						"--image",
-						`dokploy/dokploy:${data.latestVersion}`,
-						...(keepImages === undefined
-							? []
-							: ["--env-add", `${DOKPLOY_KEEP_IMAGES_ENV}=${keepImages ?? 0}`]),
-						"dokploy",
+					void spawnAsync("sh", [
+						"-c",
+						getOfficialUpdateCommand(data.latestVersion ?? "", keepImages),
 					]);
 				}
 				await audit(ctx, {
