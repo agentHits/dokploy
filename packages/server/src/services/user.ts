@@ -2,6 +2,7 @@ import { db } from "@dokploy/server/db";
 import {
 	account,
 	apikey,
+	apikeySecret,
 	invitation,
 	member,
 	passkey,
@@ -568,7 +569,19 @@ export const createApiKey = async (
 			.where(eq(apikey.id, result.id));
 	}
 
+	await db
+		.insert(apikeySecret)
+		.values({ apikeyId: result.id, key: result.key });
+
 	return result;
+};
+
+export const findApiKeySecret = async (apiKeyId: string) => {
+	const secret = await db.query.apikeySecret.findFirst({
+		where: eq(apikeySecret.apikeyId, apiKeyId),
+		columns: { key: true },
+	});
+	return secret?.key ?? null;
 };
 
 export const findCredentialAccount = async (userId: string) => {

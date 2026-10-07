@@ -13,6 +13,7 @@ import { projects } from "./project";
 import { server } from "./server";
 import { ssoProvider } from "./sso";
 import { user } from "./user";
+import { encryptedText } from "./utils";
 
 export const account = pgTable("account", {
 	id: text("id")
@@ -286,4 +287,19 @@ export const apikeyRelations = relations(apikey, ({ one }) => ({
 		fields: [apikey.referenceId],
 		references: [user.id],
 	}),
+	secret: one(apikeySecret, {
+		fields: [apikey.id],
+		references: [apikeySecret.apikeyId],
+	}),
 }));
+
+// better-auth keeps only a hash of each key; this encrypted copy lets the
+// owner reveal it again behind an open super session. Kept outside the
+// apikey table so better-auth's schema stays untouched.
+export const apikeySecret = pgTable("apikey_secret", {
+	apikeyId: text("apikey_id")
+		.primaryKey()
+		.references(() => apikey.id, { onDelete: "cascade" }),
+	key: encryptedText("key").notNull(),
+	createdAt: timestamp("created_at").notNull().defaultNow(),
+});

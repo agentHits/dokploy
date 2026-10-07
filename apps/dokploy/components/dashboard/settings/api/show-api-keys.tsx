@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { api } from "@/utils/api";
 import { AddApiKey } from "./add-api-key";
+import { RevealApiKey } from "./reveal-api-key";
 
 export const ShowApiKeys = () => {
 	const { data, refetch } = api.user.get.useQuery();
@@ -89,34 +90,41 @@ export const ShowApiKeys = () => {
 													)}
 												</div>
 											</div>
-											<DialogAction
-												title="Delete API Key"
-												description="Are you sure you want to delete this API key? This action cannot be undone."
-												type="destructive"
-												onClick={async () => {
-													try {
-														await deleteApiKey({
-															apiKeyId: apiKey.id,
-														});
-														await refetch();
-														toast.success("API key deleted successfully");
-													} catch (error) {
-														toast.error(
-															error instanceof Error
-																? error.message
-																: "Error deleting API key",
-														);
-													}
-												}}
-											>
-												<Button
-													variant="ghost"
-													size="icon"
-													isLoading={isLoadingDelete}
+											<div className="flex items-center gap-1">
+												<RevealApiKey
+													apiKeyId={apiKey.id}
+													name={apiKey.name}
+													revealable={apiKey.revealable}
+												/>
+												<DialogAction
+													title="Delete API Key"
+													description="Are you sure you want to delete this API key? This action cannot be undone."
+													type="destructive"
+													onClick={async () => {
+														try {
+															await deleteApiKey({
+																apiKeyId: apiKey.id,
+															});
+															await refetch();
+															toast.success("API key deleted successfully");
+														} catch (error) {
+															toast.error(
+																error instanceof Error
+																	? error.message
+																	: "Error deleting API key",
+															);
+														}
+													}}
 												>
-													<Trash2 className="size-4" />
-												</Button>
-											</DialogAction>
+													<Button
+														variant="ghost"
+														size="icon"
+														isLoading={isLoadingDelete}
+													>
+														<Trash2 className="size-4" />
+													</Button>
+												</DialogAction>
+											</div>
 										</div>
 									</div>
 								))

@@ -709,6 +709,7 @@ export const PROCEDURE_ACCESS: Record<string, ProcedureAccess> = {
 	"user.one": "read",
 	"user.remove": "dangerous",
 	"user.requestAccountDeletionCode": "write",
+	"user.revealApiKey": "dangerous",
 	"user.revokeSession": "write",
 	"user.sendInvitation": "dangerous",
 	"user.session": "read",

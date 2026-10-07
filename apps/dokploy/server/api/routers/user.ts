@@ -4,6 +4,7 @@ import {
 	createAccountDeletionCode,
 	createApiKey,
 	createOrganizationUserWithCredentials,
+	findApiKeySecret,
 	findCredentialAccount,
 	findNotificationById,
 	findOrganizationById,
@@ -43,7 +44,10 @@ import {
 	resolvePermissions,
 } from "@dokploy/server/services/permission";
 import { hasValidLicense } from "@dokploy/server/services/proprietary/license-key";
-import { matchesSuperPassword } from "@dokploy/server/services/super-password";
+import {
+	checkProtectedResourceAccess,
+	matchesSuperPassword,
+} from "@dokploy/server/services/super-password";
 import { fetchWithPublicEgress } from "@dokploy/server/utils/url/network";
 import { TRPCError } from "@trpc/server";
 import * as bcrypt from "bcrypt";
@@ -52,6 +56,11 @@ import { z } from "zod";
 import { apiKeyNameSchema } from "@/lib/api-keys";
 import { audit } from "@/server/api/utils/audit";
 import { assertContainerMetricsServiceAccess } from "@/server/api/utils/monitoring-access";
+import {
+	assertBrowserSession,
+	isApiKeySession,
+	superSessionError,
+} from "@/server/api/utils/super-session";
 import { deleteAccount } from "@/server/utils/account-deletion";
 import {
 	adminProcedure,
@@ -93,6 +102,34 @@ const getApiKeyOrganizationId = (apiKey: { metadata?: string | null }) => {
 	} catch {
 		return null;
 	}
+};
+
+const findOwnApiKey = async (
+	ctx: { user: { id: string }; session: { activeOrganizationId: string } },
+	apiKeyId: string,
+) => {
+	const found = await db.query.apikey.findFirst({
+		where: eq(apikey.id, apiKeyId),
+	});
+
+	if (!found) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: "API key not found",
+		});
+	}
+
+	if (
+		found.referenceId !== ctx.user.id ||
+		getApiKeyOrganizationId(found) !== ctx.session.activeOrganizationId
+	) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not authorized to access this API key",
+		});
+	}
+
+	return found;
 };
 
 const getContainerMetricsTarget = async (
@@ -401,6 +438,9 @@ export const userRouter = createTRPCRouter({
 								createdAt: true,
 								metadata: true,
 							},
+							with: {
+								secret: { columns: { apikeyId: true } },
+							},
 						},
 					},
 				},
@@ -421,7 +461,10 @@ export const userRouter = createTRPCRouter({
 							getApiKeyOrganizationId(apiKey) ===
 							ctx.session.activeOrganizationId,
 					)
-					.map(({ metadata: _metadata, ...apiKey }) => apiKey),
+					.map(({ metadata: _metadata, secret, ...apiKey }) => ({
+						...apiKey,
+						revealable: !!secret,
+					})),
 			},
 		};
 	}),
@@ -988,33 +1031,7 @@ export const userRouter = createTRPCRouter({
 		.mutation(async ({ input, ctx }) => {
 			try {
 				await checkPermission(ctx, { api: ["read"] });
-				const apiKeyToDelete = await db.query.apikey.findFirst({
-					where: eq(apikey.id, input.apiKeyId),
-				});
-
-				if (!apiKeyToDelete) {
-					throw new TRPCError({
-						code: "NOT_FOUND",
-						message: "API key not found",
-					});
-				}
-
-				if (apiKeyToDelete.referenceId !== ctx.user.id) {
-					throw new TRPCError({
-						code: "UNAUTHORIZED",
-						message: "You are not authorized to delete this API key",
-					});
-				}
-
-				if (
-					getApiKeyOrganizationId(apiKeyToDelete) !==
-					ctx.session.activeOrganizationId
-				) {
-					throw new TRPCError({
-						code: "UNAUTHORIZED",
-						message: "You are not authorized to delete this API key",
-					});
-				}
+				const apiKeyToDelete = await findOwnApiKey(ctx, input.apiKeyId);
 
 				await db.delete(apikey).where(eq(apikey.id, input.apiKeyId));
 				await audit(ctx, {
@@ -1027,6 +1044,41 @@ export const userRouter = createTRPCRouter({
 			} catch (error) {
 				throw error;
 			}
+		}),
+
+	revealApiKey: protectedProcedure
+		.input(z.object({ apiKeyId: z.string() }))
+		.mutation(async ({ input, ctx }) => {
+			assertBrowserSession(ctx);
+			// Unlike other dangerous procedures this one needs an open super
+			// session even when no super password is set: the key alone is
+			// enough to act as the user.
+			const denial = await checkProtectedResourceAccess({
+				userId: ctx.user.id,
+				viaApiKey: isApiKeySession(ctx.session),
+			});
+			if (denial) {
+				throw superSessionError(denial);
+			}
+			await checkPermission(ctx, { api: ["read"] });
+			const found = await findOwnApiKey(ctx, input.apiKeyId);
+
+			const key = await findApiKeySecret(found.id);
+			if (!key) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message:
+						"This key was created before keys could be revealed. Create a new key instead.",
+				});
+			}
+
+			await audit(ctx, {
+				action: "reveal",
+				resourceType: "user",
+				resourceId: found.id,
+				resourceName: found.name || undefined,
+			});
+			return { key };
 		}),
 
 	createApiKey: protectedProcedure
