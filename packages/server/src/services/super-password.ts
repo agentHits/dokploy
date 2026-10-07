@@ -8,18 +8,16 @@ import {
 	superPassword,
 	superPasswordToken,
 	superSession,
+	user as userTable,
 } from "@dokploy/server/db/schema";
-import SuperPasswordEmail, {
-	type SuperPasswordEmailProps,
-} from "@dokploy/server/emails/emails/super-password";
-import { render } from "@react-email/components";
 import { TRPCError } from "@trpc/server";
 import bcrypt from "bcrypt";
 import { and, eq, gt, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import {
-	sendEmailNotification,
-	sendResendNotification,
-} from "../utils/notifications/utils";
+	type SuperPasswordAlertMessage,
+	type SuperPasswordChannel,
+	sendSuperPasswordAlertToChannel,
+} from "../utils/notifications/super-password";
 import { getDokployUrl } from "./admin";
 
 export const SUPER_SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
@@ -324,13 +322,12 @@ const lockedError = (lockedUntil: Date) =>
 export const verifySuperPassword = async ({
 	user,
 	password,
-	organizationId,
+	ipAddress,
+	userAgent,
 	now = new Date(),
-}: {
+}: SuperPasswordAlertContext & {
 	user: SuperPasswordUser;
 	password: string;
-	organizationId?: string | null;
-	now?: Date;
 }) => {
 	const record = await findSuperPassword(user.id);
 	if (!record) {
@@ -372,25 +369,18 @@ export const verifySuperPassword = async ({
 			.update(superPassword)
 			.set({ failedAttempts: 0, lockedUntil, updatedAt: now })
 			.where(eq(superPassword.userId, user.id));
-		await sendSuperPasswordEmailSafely({
-			user,
-			organizationId,
-			subject: "Super password locked after wrong attempts",
-			content: {
-				title: "Super password locked",
-				intro: `Someone entered a wrong super password ${SUPER_PASSWORD_MAX_FAILED_ATTEMPTS} times. Unlocking is blocked for ${SUPER_PASSWORD_LOCK_DURATION_MS / 60_000} minutes.`,
-				details: [
-					{ label: "Time", value: now.toISOString() },
-					{ label: "Locked until", value: lockedUntil.toISOString() },
-				],
-				footer:
-					"If this wasn't you, someone may have your login session or API key. Sign out other sessions, rotate API keys and change your passwords.",
-			},
-		});
+		void sendSuperPasswordAlert(
+			{ type: "locked", lockedUntil },
+			{ user, ipAddress, userAgent, now },
+		);
 		throw lockedError(lockedUntil);
 	}
 
 	const left = SUPER_PASSWORD_MAX_FAILED_ATTEMPTS - attempts;
+	void sendSuperPasswordAlert(
+		{ type: "wrong-attempt", attemptsLeft: left },
+		{ user, ipAddress, userAgent, now },
+	);
 	throw badRequest(
 		`Incorrect super password. ${left} attempt${left === 1 ? "" : "s"} left before a ${SUPER_PASSWORD_LOCK_DURATION_MS / 60_000}-minute lock.`,
 	);
@@ -439,7 +429,11 @@ export const extendSuperSession = async (userId: string, now = new Date()) => {
 };
 
 export const closeSuperSession = async (userId: string) => {
-	await db.delete(superSession).where(eq(superSession.userId, userId));
+	const closed = await db
+		.delete(superSession)
+		.where(eq(superSession.userId, userId))
+		.returning({ userId: superSession.userId });
+	return closed.length > 0;
 };
 
 export const removeSuperPassword = async (userId: string) => {
@@ -535,7 +529,12 @@ export const closeSuperSessionWithToken = async (token: string) => {
 	if (!userId) {
 		return false;
 	}
-	await closeSuperSession(userId);
+	if (await closeSuperSession(userId)) {
+		void sendSuperPasswordAlert(
+			{ type: "closed", via: "link" },
+			{ user: { id: userId } },
+		);
+	}
 	return true;
 };
 
@@ -571,177 +570,504 @@ export const resetSuperPasswordWithToken = async ({
 	await closeSuperSession(userId);
 };
 
-const getUserOrganizationIds = async (
-	userId: string,
-	preferredOrganizationId?: string | null,
-) => {
+export const SUPER_PASSWORD_RESET_REQUESTS_PER_HOUR = 3;
+const RESET_REQUEST_WINDOW_MS = 60 * 60 * 1000;
+
+const CHANNEL_RELATIONS = {
+	slack: true,
+	telegram: true,
+	discord: true,
+	email: true,
+	resend: true,
+	gotify: true,
+	ntfy: true,
+	mattermost: true,
+	custom: true,
+	lark: true,
+	pushover: true,
+	teams: true,
+} as const;
+
+export const findSuperPasswordChannelsInOrganization = async (
+	organizationId: string,
+): Promise<SuperPasswordChannel[]> => {
+	const channels = await db.query.notifications.findMany({
+		where: and(
+			eq(notifications.organizationId, organizationId),
+			eq(notifications.superPassword, true),
+		),
+		with: CHANNEL_RELATIONS,
+	});
+	return channels.filter((channel) => channel.superPassword === true);
+};
+
+const getSuperPasswordOrganizationIds = async (userId: string) => {
 	const memberships = await db.query.member.findMany({
 		where: eq(member.userId, userId),
 		columns: { organizationId: true, role: true },
 	});
-	const ids = memberships
-		.sort((a, b) => Number(b.role === "owner") - Number(a.role === "owner"))
-		.map((membership) => membership.organizationId);
-	return preferredOrganizationId
-		? [
-				preferredOrganizationId,
-				...ids.filter((id) => id !== preferredOrganizationId),
-			]
-		: ids;
+	return [
+		...new Set(
+			memberships
+				.filter(({ role }) => role === "owner" || role === "admin")
+				.map(({ organizationId }) => organizationId),
+		),
+	];
 };
 
-const findEmailChannel = async (
-	userId: string,
-	preferredOrganizationId?: string | null,
+export const findSuperPasswordChannels = async (userId: string) => {
+	const channels: SuperPasswordChannel[] = [];
+	for (const organizationId of await getSuperPasswordOrganizationIds(userId)) {
+		channels.push(
+			...(await findSuperPasswordChannelsInOrganization(organizationId)),
+		);
+	}
+	return channels;
+};
+
+export const listSuperPasswordRecoveryChannels = async (userId: string) =>
+	(await findSuperPasswordChannels(userId)).map(
+		({ notificationId, name, notificationType }) => ({
+			notificationId,
+			name,
+			notificationType,
+		}),
+	);
+
+export type SuperPasswordAlertContext = {
+	user: { id: string; email?: string | null };
+	ipAddress?: string | null;
+	userAgent?: string | null;
+	now?: Date;
+};
+
+export type SuperPasswordChannelChange =
+	| "turned-on"
+	| "turned-off"
+	| "destination-changed";
+
+export type SuperPasswordEvent =
+	| { type: "opened"; expiresAt: Date }
+	| { type: "extended"; expiresAt: Date }
+	| { type: "closed"; via: "panel" | "link" | "ssh" }
+	| { type: "wrong-attempt"; attemptsLeft: number }
+	| { type: "locked"; lockedUntil: Date }
+	| { type: "set" }
+	| { type: "changed" }
+	| { type: "disabled" }
+	| { type: "reset"; via: "link" | "ssh" }
+	| { type: "reset-requested"; channelName: string }
+	| { type: "reset-link"; url: string }
+	| {
+			type: "channel-changed";
+			channelName: string;
+			channelType: string;
+			change: SuperPasswordChannelChange;
+	  };
+
+const formatTime = (date: Date) =>
+	`${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+
+const formatDuration = (ms: number) => {
+	const totalMinutes = Math.max(0, Math.floor(ms / 60_000));
+	return `${Math.floor(totalMinutes / 60)} h ${totalMinutes % 60} min`;
+};
+
+const CLOSED_VIA = {
+	panel: {
+		label: "Panel",
+		summary: "Access was closed from the panel.",
+	},
+	link: {
+		label: "Link",
+		summary: 'Access was closed with the "This wasn\'t me" link.',
+	},
+	ssh: {
+		label: "SSH",
+		summary: "Access was closed over SSH (lock-super-session).",
+	},
+} as const;
+
+const CHANNEL_CHANGES: Record<SuperPasswordChannelChange, string> = {
+	"turned-on": "now receives super password alerts",
+	"turned-off":
+		"no longer receives super password alerts (toggle off or channel removed)",
+	"destination-changed":
+		"changed its destination and still receives super password alerts",
+};
+
+export const SUPER_PASSWORD_LOCK_ACTION_LABEL = "This wasn't me – close access";
+
+export const buildSuperPasswordAlertMessage = (
+	event: SuperPasswordEvent,
+	context: SuperPasswordAlertContext & { now: Date },
+	lockUrl?: string,
+): SuperPasswordAlertMessage => {
+	const { now } = context;
+	const details = [
+		{ label: "User", value: context.user.email || context.user.id },
+		{ label: "Time", value: formatTime(now) },
+	];
+	const requestDetails = [
+		...(context.ipAddress
+			? [{ label: "IP address", value: context.ipAddress }]
+			: []),
+		...(context.userAgent
+			? [{ label: "User agent", value: context.userAgent }]
+			: []),
+	];
+	const lockAction = lockUrl
+		? { label: SUPER_PASSWORD_LOCK_ACTION_LABEL, url: lockUrl }
+		: undefined;
+
+	switch (event.type) {
+		case "opened":
+		case "extended":
+			return {
+				event: event.type,
+				title:
+					event.type === "opened"
+						? "Super password access opened"
+						: "Super password access extended",
+				summary:
+					event.type === "opened"
+						? "Dangerous actions and API key writes are open."
+						: "Access was extended for another 24 hours without the password.",
+				details: [
+					...details,
+					{
+						label: "Time left",
+						value: formatDuration(event.expiresAt.getTime() - now.getTime()),
+					},
+					{ label: "Expires", value: formatTime(event.expiresAt) },
+					...requestDetails,
+				],
+				action: lockAction,
+			};
+		case "closed":
+			return {
+				event: event.type,
+				title: "Super password access closed",
+				summary: CLOSED_VIA[event.via].summary,
+				details: [
+					...details,
+					{ label: "Closed via", value: CLOSED_VIA[event.via].label },
+					...requestDetails,
+				],
+			};
+		case "wrong-attempt":
+			return {
+				event: event.type,
+				title: "Wrong super password entered",
+				summary: `${event.attemptsLeft} attempt${event.attemptsLeft === 1 ? "" : "s"} left before a ${SUPER_PASSWORD_LOCK_DURATION_MS / 60_000}-minute lock.`,
+				details: [...details, ...requestDetails],
+			};
+		case "locked":
+			return {
+				event: event.type,
+				title: "Super password locked",
+				summary: `${SUPER_PASSWORD_MAX_FAILED_ATTEMPTS} wrong attempts. Unlocking is blocked until ${formatTime(event.lockedUntil)}.`,
+				details: [
+					...details,
+					{ label: "Locked until", value: formatTime(event.lockedUntil) },
+					...requestDetails,
+				],
+			};
+		case "set":
+			return {
+				event: event.type,
+				title: "Super password set",
+				summary:
+					"A super password now protects dangerous actions and API key writes.",
+				details: [...details, ...requestDetails],
+			};
+		case "changed":
+			return {
+				event: event.type,
+				title: "Super password changed",
+				summary: "The super password was changed with the current one.",
+				details: [...details, ...requestDetails],
+			};
+		case "disabled":
+			return {
+				event: event.type,
+				title: "Super password turned off",
+				summary:
+					"API keys can write again and dangerous actions no longer ask for a second password. Open access was closed.",
+				details: [...details, ...requestDetails],
+			};
+		case "reset":
+			return {
+				event: event.type,
+				title: "Super password reset",
+				summary:
+					event.via === "link"
+						? "The super password was reset with a reset link. Open access was closed."
+						: "The super password was removed over SSH (reset-super-password). Open access was closed.",
+				details: [...details, ...requestDetails],
+			};
+		case "reset-requested":
+			return {
+				event: event.type,
+				title: "Super password reset link requested",
+				summary: `A one-time reset link was sent to "${event.channelName}".`,
+				details: [...details, ...requestDetails],
+			};
+		case "reset-link":
+			return {
+				event: event.type,
+				title: "Reset your super password",
+				summary: `Open the link while signed in to the panel as ${context.user.email || "the same user"}. It works once and expires in ${SUPER_PASSWORD_RESET_TOKEN_TTL_MS / 60_000} minutes. Resetting closes open access.`,
+				details: [...details, ...requestDetails],
+				action: { label: "Reset super password", url: event.url },
+			};
+		case "channel-changed":
+			return {
+				event: event.type,
+				title: "Super password alert channel changed",
+				summary: `"${event.channelName}" (${event.channelType}) ${CHANNEL_CHANGES[event.change]}.`,
+				details: [
+					{ label: "Changed by", value: context.user.email || context.user.id },
+					{ label: "Time", value: formatTime(now) },
+					...requestDetails,
+				],
+			};
+	}
+};
+
+const resolveAlertUser = async (user: SuperPasswordAlertContext["user"]) => {
+	if (user.email) {
+		return user;
+	}
+	const record = await db.query.user
+		.findFirst({ where: eq(userTable.id, user.id), columns: { email: true } })
+		.catch(() => undefined);
+	return { ...user, email: record?.email ?? null };
+};
+
+const sendToChannels = async (
+	channels: SuperPasswordChannel[],
+	message: SuperPasswordAlertMessage,
 ) => {
-	for (const organizationId of await getUserOrganizationIds(
-		userId,
-		preferredOrganizationId,
-	)) {
-		const channel = await db.query.notifications.findFirst({
-			where: and(
-				eq(notifications.organizationId, organizationId),
-				or(isNotNull(notifications.emailId), isNotNull(notifications.resendId)),
-			),
-			with: { email: true, resend: true },
-		});
-		if (channel?.email || channel?.resend) {
-			return channel;
+	const results = await Promise.allSettled(
+		channels.map((channel) =>
+			sendSuperPasswordAlertToChannel(channel, message),
+		),
+	);
+	results.forEach((result, index) => {
+		if (result.status === "rejected") {
+			console.error(
+				`Failed to send a super password alert to "${channels[index]?.name}"`,
+				result.reason instanceof Error ? result.reason.message : result.reason,
+			);
 		}
-	}
-	return null;
+	});
 };
 
-export const isSuperPasswordEmailAvailable = async (
-	userId: string,
-	preferredOrganizationId?: string | null,
-) => !!(await findEmailChannel(userId, preferredOrganizationId));
-
-export const sendSuperPasswordEmail = async ({
-	user,
-	organizationId,
-	subject,
-	content,
-}: {
-	user: SuperPasswordUser;
-	organizationId?: string | null;
-	subject: string;
-	content: SuperPasswordEmailProps;
-}) => {
-	const channel = await findEmailChannel(user.id, organizationId);
-	if (!channel) {
-		return false;
-	}
-	const html = await render(SuperPasswordEmail(content));
-	if (channel.email) {
-		await sendEmailNotification(
-			{ ...channel.email, toAddresses: [user.email] },
-			subject,
-			html,
-		);
-	} else if (channel.resend) {
-		await sendResendNotification(
-			{ ...channel.resend, toAddresses: [user.email] },
-			subject,
-			html,
-		);
-	}
-	return true;
-};
-
-const sendSuperPasswordEmailSafely = async (
-	params: Parameters<typeof sendSuperPasswordEmail>[0],
+// Never throws: alerts are best effort and must not block unlock, extend or
+// any other super password action.
+export const sendSuperPasswordAlert = async (
+	event: SuperPasswordEvent,
+	context: SuperPasswordAlertContext,
+	options: { excludeNotificationIds?: string[] } = {},
 ) => {
 	try {
-		return await sendSuperPasswordEmail(params);
+		const now = context.now ?? new Date();
+		const channels = (await findSuperPasswordChannels(context.user.id)).filter(
+			({ notificationId }) =>
+				!options.excludeNotificationIds?.includes(notificationId),
+		);
+		if (channels.length === 0) {
+			return;
+		}
+		let lockUrl: string | undefined;
+		if (event.type === "opened" || event.type === "extended") {
+			const { token } = await createSuperPasswordToken({
+				userId: context.user.id,
+				type: "lock",
+				now,
+			});
+			lockUrl = `${await getDokployUrl()}${SUPER_PASSWORD_LOCK_PATH}?token=${encodeURIComponent(token)}`;
+		}
+		const user = await resolveAlertUser(context.user);
+		await sendToChannels(
+			channels,
+			buildSuperPasswordAlertMessage(event, { ...context, user, now }, lockUrl),
+		);
 	} catch (error) {
-		console.error("Failed to send super password email", error);
-		return false;
+		console.error("Failed to send super password alerts", error);
 	}
 };
 
-export const notifySuperSessionOpened = async ({
-	user,
-	organizationId,
-	ipAddress,
-	userAgent,
-	now = new Date(),
+const channelDestination = (channel: SuperPasswordChannel) =>
+	JSON.stringify(channel[channel.notificationType] ?? null);
+
+export const notifySuperPasswordChannelChanges = async ({
+	before,
+	after,
+	context,
 }: {
-	user: SuperPasswordUser;
-	organizationId?: string | null;
-	ipAddress: string | null;
-	userAgent: string | null;
-	now?: Date;
+	before: SuperPasswordChannel[];
+	after: SuperPasswordChannel[];
+	context: SuperPasswordAlertContext;
 }) => {
-	if (!(await findEmailChannel(user.id, organizationId))) {
-		return false;
+	try {
+		const beforeById = new Map(
+			before.map((channel) => [channel.notificationId, channel]),
+		);
+		const afterIds = new Set(after.map(({ notificationId }) => notificationId));
+		const changes: {
+			channel: SuperPasswordChannel;
+			change: SuperPasswordChannelChange;
+		}[] = [];
+
+		for (const channel of after) {
+			const previous = beforeById.get(channel.notificationId);
+			if (!previous) {
+				changes.push({ channel, change: "turned-on" });
+			} else if (channelDestination(previous) !== channelDestination(channel)) {
+				changes.push({ channel, change: "destination-changed" });
+			}
+		}
+		for (const channel of before) {
+			if (!afterIds.has(channel.notificationId)) {
+				changes.push({ channel, change: "turned-off" });
+			}
+		}
+		if (changes.length === 0) {
+			return;
+		}
+
+		// The old destination of a channel that was switched off or redirected
+		// hears about it too, so a hijacked channel cannot go quiet unnoticed.
+		const recipients = [
+			...after,
+			...changes
+				.filter(({ change }) => change !== "turned-on")
+				.flatMap(({ channel }) => {
+					const previous = beforeById.get(channel.notificationId);
+					return previous ? [previous] : [];
+				}),
+		];
+		const now = context.now ?? new Date();
+		for (const { channel, change } of changes) {
+			await sendToChannels(
+				recipients,
+				buildSuperPasswordAlertMessage(
+					{
+						type: "channel-changed",
+						channelName: channel.name,
+						channelType: channel.notificationType,
+						change,
+					},
+					{ ...context, now },
+				),
+			);
+		}
+	} catch (error) {
+		console.error("Failed to send super password channel alerts", error);
 	}
-	const { token } = await createSuperPasswordToken({
-		userId: user.id,
-		type: "lock",
-		now,
-	});
-	const baseUrl = await getDokployUrl();
-	return sendSuperPasswordEmailSafely({
-		user,
-		organizationId,
-		subject: "Super password access opened",
-		content: {
-			title: "Super password access opened",
-			intro: `Your super password was entered and access to dangerous actions and API key writes is open for ${SUPER_SESSION_DURATION_MS / 3_600_000} hours.`,
-			details: [
-				{ label: "Time", value: now.toISOString() },
-				{ label: "IP address", value: ipAddress || "unknown" },
-				{ label: "User agent", value: userAgent || "unknown" },
-			],
-			action: {
-				label: "This wasn't me: close access",
-				url: `${baseUrl}${SUPER_PASSWORD_LOCK_PATH}?token=${encodeURIComponent(token)}`,
-			},
-			footer:
-				"The button only closes access; it can never open it. If this wasn't you, also change your login password and super password.",
-		},
-	});
+};
+
+const consumeResetRequestQuota = async (
+	record: NonNullable<Awaited<ReturnType<typeof findSuperPassword>>>,
+	now: Date,
+) => {
+	const windowOpen =
+		record.resetWindowStartedAt &&
+		now.getTime() - record.resetWindowStartedAt.getTime() <
+			RESET_REQUEST_WINDOW_MS;
+	if (
+		windowOpen &&
+		record.resetRequestCount >= SUPER_PASSWORD_RESET_REQUESTS_PER_HOUR
+	) {
+		throw new TRPCError({
+			code: "TOO_MANY_REQUESTS",
+			message: `At most ${SUPER_PASSWORD_RESET_REQUESTS_PER_HOUR} reset links per hour. Try again later or use SSH.`,
+		});
+	}
+	await db
+		.update(superPassword)
+		.set(
+			windowOpen
+				? { resetRequestCount: record.resetRequestCount + 1 }
+				: { resetRequestCount: 1, resetWindowStartedAt: now },
+		)
+		.where(eq(superPassword.userId, record.userId));
 };
 
 export const requestSuperPasswordReset = async ({
 	user,
-	organizationId,
-}: {
+	notificationId,
+	ipAddress,
+	userAgent,
+	now = new Date(),
+}: SuperPasswordAlertContext & {
 	user: SuperPasswordUser;
-	organizationId?: string | null;
+	notificationId: string;
 }) => {
-	if (!(await findSuperPassword(user.id))) {
+	const record = await findSuperPassword(user.id);
+	if (!record) {
 		throw new TRPCError({
 			code: "PRECONDITION_FAILED",
 			message: "No super password is set",
 		});
 	}
-	if (!(await findEmailChannel(user.id, organizationId))) {
-		throw new TRPCError({
-			code: "PRECONDITION_FAILED",
-			message:
-				"Email reset unavailable: configure an email notification, or use SSH.",
-		});
+	const channel = (await findSuperPasswordChannels(user.id)).find(
+		(candidate) => candidate.notificationId === notificationId,
+	);
+	if (!channel) {
+		throw badRequest(
+			"Pick a notification channel that has the 'Super password' toggle on.",
+		);
 	}
+	await consumeResetRequestQuota(record, now);
+
 	const { token } = await createSuperPasswordToken({
 		userId: user.id,
 		type: "reset",
+		now,
 	});
-	const baseUrl = await getDokployUrl();
-	await sendSuperPasswordEmail({
-		user,
-		organizationId,
-		subject: "Reset your super password",
-		content: {
-			title: "Reset your super password",
-			intro: `Open the link below while signed in to the panel as ${user.email} to set a new super password. The link works once and expires in ${SUPER_PASSWORD_RESET_TOKEN_TTL_MS / 60_000} minutes. Resetting closes open super password access.`,
-			action: {
-				label: "Reset super password",
-				url: `${baseUrl}${SUPER_PASSWORD_RESET_PATH}?token=${encodeURIComponent(token)}`,
-			},
-			footer:
-				"If you did not request this, ignore this email and consider changing your login password.",
-		},
-	});
+	const url = `${await getDokployUrl()}${SUPER_PASSWORD_RESET_PATH}?token=${encodeURIComponent(token)}`;
+	const context = { user, ipAddress, userAgent, now };
+	try {
+		await sendSuperPasswordAlertToChannel(
+			channel,
+			buildSuperPasswordAlertMessage({ type: "reset-link", url }, context),
+		);
+	} catch (error) {
+		console.error("Failed to send the super password reset link", error);
+		throw new TRPCError({
+			code: "BAD_GATEWAY",
+			message: `Could not send the reset link to "${channel.name}". Check the channel or use SSH.`,
+		});
+	}
+	void sendSuperPasswordAlert(
+		{ type: "reset-requested", channelName: channel.name },
+		context,
+		{ excludeNotificationIds: [channel.notificationId] },
+	);
+};
+
+export const lockSuperSessionOverSsh = async (userId: string) => {
+	const closed = await closeSuperSession(userId);
+	if (closed) {
+		await sendSuperPasswordAlert(
+			{ type: "closed", via: "ssh" },
+			{ user: { id: userId } },
+		);
+	}
+	return closed;
+};
+
+export const resetSuperPasswordOverSsh = async (userId: string) => {
+	const existed = !!(await findSuperPassword(userId));
+	await removeSuperPassword(userId);
+	if (existed) {
+		await sendSuperPasswordAlert(
+			{ type: "reset", via: "ssh" },
+			{ user: { id: userId } },
+		);
+	}
+	return existed;
 };

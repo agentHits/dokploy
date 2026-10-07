@@ -187,13 +187,14 @@ export const createFakeDrizzleDb = (tables: Record<string, Table>) => {
 		for (const name of Object.keys(relations ?? {})) {
 			const relatedTable = tables[name];
 			const foreignKey = `${name}Id`;
-			result[name] = relatedTable
-				? ((rows.get(relatedTable) ?? []).find(
-						(related) =>
+			const related = relatedTable
+				? (rows.get(relatedTable) ?? []).find(
+						(candidate) =>
 							row[foreignKey] !== null &&
-							related[foreignKey] === row[foreignKey],
-					) ?? null)
-				: null;
+							candidate[foreignKey] === row[foreignKey],
+					)
+				: undefined;
+			result[name] = related ? { ...related } : null;
 		}
 		return result;
 	};
@@ -207,21 +208,27 @@ export const createFakeDrizzleDb = (tables: Record<string, Table>) => {
 			);
 			return found ? withRelations(found, options.with) : undefined;
 		},
-		findMany: async (options: { where?: unknown } = {}) =>
+		findMany: async (
+			options: { where?: unknown; with?: Record<string, unknown> } = {},
+		) =>
 			(rows.get(table) ?? [])
 				.filter((row) => evaluate(options.where, row))
-				.map((row) => ({ ...row })),
+				.map((row) => withRelations(row, options.with)),
 	});
 
 	const query = Object.fromEntries(
 		Object.entries(tables).map(([key, table]) => [key, queryApi(table)]),
 	);
 
-	const db = {
+	const db: Record<string, unknown> = {
 		query,
+		transaction: async <T>(run: (tx: unknown) => Promise<T>) => run(db),
 		insert: (table: Table) => ({
 			values: (values: Row) =>
 				lazy(() => [insertRow(table, values)], {
+					returning: async (columns?: Record<string, unknown>) => [
+						project(insertRow(table, values), columns),
+					],
 					onConflictDoUpdate: async ({ set }: { set: Row }) => {
 						const primaryKey = primaryKeyOf(table);
 						const existing = (rows.get(table) ?? []).find(
@@ -245,7 +252,9 @@ export const createFakeDrizzleDb = (tables: Record<string, Table>) => {
 						for (const row of rows.get(table) ?? []) {
 							if (evaluate(condition, row)) {
 								for (const [key, value] of Object.entries(values)) {
-									row[key] = resolveValue(value, row);
+									if (value !== undefined) {
+										row[key] = resolveValue(value, row);
+									}
 								}
 								updated.push(row);
 							}
@@ -260,14 +269,20 @@ export const createFakeDrizzleDb = (tables: Record<string, Table>) => {
 			}),
 		}),
 		delete: (table: Table) => ({
-			where: (condition: unknown) =>
-				lazy(() => {
+			where: (condition: unknown) => {
+				const remove = () => {
 					const list = rows.get(table) ?? [];
 					rows.set(
 						table,
 						list.filter((row) => !evaluate(condition, row)),
 					);
-				}),
+					return list.filter((row) => evaluate(condition, row));
+				};
+				return lazy(remove, {
+					returning: async (columns?: Record<string, unknown>) =>
+						remove().map((row) => project(row, columns)),
+				});
+			},
 		}),
 	};
 

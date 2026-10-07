@@ -78,6 +78,7 @@ const seedEmailChannel = () => {
 		notificationType: "email",
 		emailId: "email-1",
 		organizationId: "org-1",
+		superPassword: true,
 	});
 };
 
@@ -88,7 +89,6 @@ const verify = (password: string, now?: Date) =>
 	service.verifySuperPassword({
 		user,
 		password,
-		organizationId: "org-1",
 		now,
 	});
 
@@ -187,7 +187,7 @@ describe("super password brute-force lock", () => {
 		vi.clearAllMocks();
 	});
 
-	it("locks for 15 minutes after 5 wrong attempts and emails the user", async () => {
+	it("locks for 15 minutes after 5 wrong attempts and alerts the channels", async () => {
 		seedEmailChannel();
 		await setSuperPassword();
 		const now = new Date("2026-01-01T10:00:00.000Z");
@@ -205,10 +205,20 @@ describe("super password brute-force lock", () => {
 		const [record] = fake.rows(schema.superPassword);
 		expect(record?.lockedUntil).toEqual(new Date("2026-01-01T10:15:00.000Z"));
 		expect(record?.failedAttempts).toBe(0);
-		expect(mocks.sendEmailNotification).toHaveBeenCalledTimes(1);
-		expect(mocks.sendEmailNotification.mock.calls[0]?.[0]).toMatchObject({
-			toAddresses: [user.email],
-		});
+		await vi.waitFor(() =>
+			expect(mocks.sendEmailNotification).toHaveBeenCalledWith(
+				expect.objectContaining({ toAddresses: ["ops@example.test"] }),
+				"Super password locked",
+				expect.stringContaining("2026-01-01 10:15 UTC"),
+			),
+		);
+		await vi.waitFor(() =>
+			expect(
+				mocks.sendEmailNotification.mock.calls.filter(
+					([, subject]) => subject === "Wrong super password entered",
+				),
+			).toHaveLength(4),
+		);
 
 		await expect(
 			verify(SUPER_PASSWORD, new Date("2026-01-01T10:14:00.000Z")),
@@ -223,7 +233,7 @@ describe("super password brute-force lock", () => {
 		});
 	});
 
-	it("still locks when no email channel is configured", async () => {
+	it("still locks when no channel has the super password toggle on", async () => {
 		await setSuperPassword();
 		for (let attempt = 0; attempt < 4; attempt++) {
 			await expect(verify("wrong-password")).rejects.toMatchObject({
@@ -423,45 +433,30 @@ describe("super password tokens", () => {
 		).rejects.toMatchObject({ code: "BAD_REQUEST" });
 	});
 
-	it("sends reset links and unlock notices only through a configured email channel", async () => {
+	it("sends reset links and unlock alerts through an email channel with the toggle on", async () => {
 		await setSuperPassword();
-		await expect(
-			service.requestSuperPasswordReset({ user, organizationId: "org-1" }),
-		).rejects.toMatchObject({
-			code: "PRECONDITION_FAILED",
-			message:
-				"Email reset unavailable: configure an email notification, or use SSH.",
-		});
-		await expect(
-			service.notifySuperSessionOpened({
-				user,
-				organizationId: "org-1",
-				ipAddress: "203.0.113.7",
-				userAgent: "Browser/1.0",
-			}),
-		).resolves.toBe(false);
-		expect(fake.rows(schema.superPasswordToken)).toHaveLength(0);
-
 		seedEmailChannel();
-		await service.requestSuperPasswordReset({ user, organizationId: "org-1" });
-		const [, resetSubject, resetHtml] =
+
+		await service.requestSuperPasswordReset({
+			user,
+			notificationId: "notification-1",
+		});
+		const [resetConnection, resetSubject, resetHtml] =
 			mocks.sendEmailNotification.mock.calls[0] ?? [];
+		expect(resetConnection).toMatchObject({
+			toAddresses: ["ops@example.test"],
+		});
 		expect(resetSubject).toBe("Reset your super password");
 		expect(resetHtml).toContain(
 			"https://panel.example.test/dashboard/settings/super-password-reset?token=",
 		);
 
-		await expect(
-			service.notifySuperSessionOpened({
-				user,
-				organizationId: "org-1",
-				ipAddress: "203.0.113.7",
-				userAgent: "Browser/1.0",
-			}),
-		).resolves.toBe(true);
-		const [connection, subject, html] =
-			mocks.sendEmailNotification.mock.calls[1] ?? [];
-		expect(connection).toMatchObject({ toAddresses: [user.email] });
+		mocks.sendEmailNotification.mockClear();
+		await service.sendSuperPasswordAlert(
+			{ type: "opened", expiresAt: new Date(Date.now() + 86_400_000) },
+			{ user, ipAddress: "203.0.113.7", userAgent: "Browser/1.0" },
+		);
+		const [, subject, html] = mocks.sendEmailNotification.mock.calls[0] ?? [];
 		expect(subject).toBe("Super password access opened");
 		expect(html).toContain("203.0.113.7");
 		expect(html).toContain("Browser/1.0");

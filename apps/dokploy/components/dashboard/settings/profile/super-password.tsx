@@ -22,6 +22,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { api } from "@/utils/api";
 
 const HINT_MAX_LENGTH = 200;
@@ -305,6 +312,100 @@ const DisableSuperPasswordDialog = ({ onDone }: { onDone: () => void }) => {
 	);
 };
 
+const CHANNEL_TYPE_LABELS: Record<string, string> = {
+	slack: "Slack",
+	telegram: "Telegram",
+	discord: "Discord",
+	email: "Email",
+	resend: "Resend",
+	gotify: "Gotify",
+	ntfy: "ntfy",
+	mattermost: "Mattermost",
+	pushover: "Pushover",
+	custom: "Webhook",
+	lark: "Lark",
+	teams: "Teams",
+};
+
+const RecoveryChannelPicker = ({
+	channels,
+}: {
+	channels: {
+		notificationId: string;
+		name: string;
+		notificationType: string;
+	}[];
+}) => {
+	const [notificationId, setNotificationId] = useState("");
+	const requestReset = api.superPassword.requestReset.useMutation();
+	const selected =
+		channels.find((channel) => channel.notificationId === notificationId) ??
+		channels[0];
+
+	if (channels.length === 0) {
+		return (
+			<p className="text-sm text-muted-foreground">
+				No recovery channel: enable 'Super password' on a notification, or use
+				SSH.
+			</p>
+		);
+	}
+
+	const handleSend = async () => {
+		if (!selected) {
+			return;
+		}
+		try {
+			await requestReset.mutateAsync({
+				notificationId: selected.notificationId,
+			});
+			toast.success(`Reset link sent to ${selected.name}`);
+		} catch (error) {
+			toast.error(errorMessage(error, "Error sending the reset link"));
+		}
+	};
+
+	return (
+		<div className="flex flex-col gap-2 w-full">
+			<Label>Forgot super password?</Label>
+			<div className="flex flex-row flex-wrap gap-2">
+				<Select
+					value={selected?.notificationId}
+					onValueChange={setNotificationId}
+				>
+					<SelectTrigger className="w-full sm:w-80">
+						<SelectValue placeholder="Pick a recovery channel" />
+					</SelectTrigger>
+					<SelectContent>
+						{channels.map((channel) => (
+							<SelectItem
+								key={channel.notificationId}
+								value={channel.notificationId}
+							>
+								{channel.name} (
+								{CHANNEL_TYPE_LABELS[channel.notificationType] ??
+									channel.notificationType}
+								)
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+				<Button
+					variant="secondary"
+					onClick={handleSend}
+					isLoading={requestReset.isPending}
+				>
+					Send reset link
+				</Button>
+			</div>
+			<p className="text-sm text-muted-foreground">
+				The link works once for 30 minutes and only while you are signed in as
+				this user.
+			</p>
+		</div>
+	);
+};
+
 export const SuperPasswordCard = () => {
 	const utils = api.useUtils();
 	const { data: status, isPending } = api.superPassword.status.useQuery();
@@ -313,7 +414,6 @@ export const SuperPasswordCard = () => {
 	const unlock = api.superPassword.unlock.useMutation();
 	const extend = api.superPassword.extend.useMutation();
 	const close = api.superPassword.close.useMutation();
-	const requestReset = api.superPassword.requestReset.useMutation();
 
 	const expiresAt = status?.expiresAt
 		? new Date(status.expiresAt).getTime()
@@ -355,13 +455,9 @@ export const SuperPasswordCard = () => {
 	const handleUnlock = async (event: React.FormEvent) => {
 		event.preventDefault();
 		try {
-			const result = await unlock.mutateAsync({ password });
+			await unlock.mutateAsync({ password });
 			setPassword("");
-			toast.success(
-				result.emailSent
-					? "Access open for 24 hours. A notification email was sent."
-					: "Access open for 24 hours",
-			);
+			toast.success("Access open for 24 hours");
 		} catch (error) {
 			toast.error(errorMessage(error, "Error opening access"));
 		} finally {
@@ -388,15 +484,6 @@ export const SuperPasswordCard = () => {
 			toast.error(errorMessage(error, "Error closing access"));
 		} finally {
 			await refresh();
-		}
-	};
-
-	const handleRequestReset = async () => {
-		try {
-			await requestReset.mutateAsync();
-			toast.success("Reset link sent to your account email");
-		} catch (error) {
-			toast.error(errorMessage(error, "Error sending the reset link"));
 		}
 	};
 
@@ -513,21 +600,8 @@ export const SuperPasswordCard = () => {
 								<div className="flex flex-row flex-wrap items-center gap-2 border-t pt-4">
 									<ChangeSuperPasswordDialog onDone={() => void refresh()} />
 									<DisableSuperPasswordDialog onDone={() => void refresh()} />
-									{status.emailResetAvailable ? (
-										<Button
-											variant="link"
-											onClick={handleRequestReset}
-											isLoading={requestReset.isPending}
-										>
-											Forgot super password? Send reset link
-										</Button>
-									) : (
-										<p className="text-sm text-muted-foreground">
-											Email reset unavailable: configure an email notification,
-											or use SSH.
-										</p>
-									)}
 								</div>
+								<RecoveryChannelPicker channels={status.recoveryChannels} />
 							</>
 						)}
 					</CardContent>

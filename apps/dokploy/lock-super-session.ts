@@ -1,7 +1,7 @@
 import { findOwner } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
 import { user } from "@dokploy/server/db/schema";
-import { closeSuperSession } from "@dokploy/server/services/super-password";
+import { lockSuperSessionOverSsh } from "@dokploy/server/services/super-password";
 import { eq } from "drizzle-orm";
 
 (async () => {
@@ -26,9 +26,9 @@ import { eq } from "drizzle-orm";
 			userId = owner.userId;
 		}
 
-		await closeSuperSession(userId);
+		const closed = await lockSuperSessionOverSsh(userId);
 
-		console.log("Super session closed");
+		console.log(closed ? "Super session closed" : "No super session was open");
 		process.exit(0);
 	} catch (error) {
 		console.log("Error closing the super session", error);

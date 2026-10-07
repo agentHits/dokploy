@@ -1,24 +1,24 @@
-import type { IncomingMessage } from "node:http";
 import {
 	changeSuperPassword,
 	closeSuperSession,
 	closeSuperSessionWithToken,
 	extendSuperSession,
 	getSuperSessionState,
-	isSuperPasswordEmailAvailable,
-	notifySuperSessionOpened,
+	listSuperPasswordRecoveryChannels,
 	openSuperSession,
 	removeSuperPassword,
 	requestSuperPasswordReset,
 	resetSuperPasswordWithToken,
 	SUPER_PASSWORD_HINT_MAX_LENGTH,
 	SUPER_SESSION_DURATION_MS,
+	sendSuperPasswordAlert,
 	setSuperPassword,
 	verifySuperPassword,
 } from "@dokploy/server/services/super-password";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
+import { getRequestMeta } from "@/server/api/utils/request-meta";
 import {
 	assertBrowserSession,
 	isApiKeySession,
@@ -32,20 +32,6 @@ const hintSchema = z
 	.nullable()
 	.optional();
 const tokenSchema = z.string().min(1).max(256);
-
-const firstHeader = (req: IncomingMessage | undefined, name: string) => {
-	const value = req?.headers?.[name];
-	return (Array.isArray(value) ? value[0] : value)?.trim() || null;
-};
-
-const getRequestMeta = (req: IncomingMessage | undefined) => ({
-	ipAddress:
-		firstHeader(req, "x-real-ip") ??
-		firstHeader(req, "x-forwarded-for")?.split(",")[0]?.trim() ??
-		req?.socket?.remoteAddress ??
-		null,
-	userAgent: firstHeader(req, "user-agent"),
-});
 
 const assertCanManageSuperPassword = (ctx: { user: { role: string } }) => {
 	if (ctx.user.role !== "owner" && ctx.user.role !== "admin") {
@@ -68,6 +54,11 @@ const auditSuperPassword = (
 		resourceName: `super-password:${event}`,
 	});
 
+const alertContext = (ctx: {
+	user: { id: string; email: string };
+	req?: Parameters<typeof getRequestMeta>[0];
+}) => ({ user: ctx.user, ...getRequestMeta(ctx.req) });
+
 export const superPasswordRouter = createTRPCRouter({
 	status: protectedProcedure.query(async ({ ctx }) => {
 		const state = await getSuperSessionState(ctx.user.id);
@@ -80,12 +71,7 @@ export const superPasswordRouter = createTRPCRouter({
 			durationMs: SUPER_SESSION_DURATION_MS,
 			canManage: ctx.user.role === "owner" || ctx.user.role === "admin",
 			viaApiKey: isApiKeySession(ctx.session),
-			emailResetAvailable: state.isSet
-				? await isSuperPasswordEmailAvailable(
-						ctx.user.id,
-						ctx.session.activeOrganizationId,
-					)
-				: false,
+			recoveryChannels: await listSuperPasswordRecoveryChannels(ctx.user.id),
 		};
 	}),
 
@@ -99,6 +85,7 @@ export const superPasswordRouter = createTRPCRouter({
 				password: input.password,
 				hint: input.hint,
 			});
+			void sendSuperPasswordAlert({ type: "set" }, alertContext(ctx));
 			await auditSuperPassword(ctx, "create", "set");
 			return true;
 		}),
@@ -107,36 +94,35 @@ export const superPasswordRouter = createTRPCRouter({
 		.input(z.object({ password: passwordSchema }))
 		.mutation(async ({ ctx, input }) => {
 			assertBrowserSession(ctx);
-			await verifySuperPassword({
-				user: ctx.user,
-				password: input.password,
-				organizationId: ctx.session.activeOrganizationId,
-			});
-			const now = new Date();
+			const context = alertContext(ctx);
+			await verifySuperPassword({ ...context, password: input.password });
 			const { expiresAt } = await openSuperSession({
 				userId: ctx.user.id,
 				sessionId: ctx.session.id,
-				now,
 			});
-			const emailSent = await notifySuperSessionOpened({
-				user: ctx.user,
-				organizationId: ctx.session.activeOrganizationId,
-				...getRequestMeta(ctx.req),
-				now,
-			});
+			void sendSuperPasswordAlert({ type: "opened", expiresAt }, context);
 			await auditSuperPassword(ctx, "start", "unlock");
-			return { expiresAt, emailSent };
+			return { expiresAt };
 		}),
 
 	extend: protectedProcedure.mutation(async ({ ctx }) => {
 		assertBrowserSession(ctx);
 		const { expiresAt } = await extendSuperSession(ctx.user.id);
+		void sendSuperPasswordAlert(
+			{ type: "extended", expiresAt },
+			alertContext(ctx),
+		);
 		await auditSuperPassword(ctx, "update", "extend");
 		return { expiresAt };
 	}),
 
 	close: protectedProcedure.mutation(async ({ ctx }) => {
-		await closeSuperSession(ctx.user.id);
+		if (await closeSuperSession(ctx.user.id)) {
+			void sendSuperPasswordAlert(
+				{ type: "closed", via: "panel" },
+				alertContext(ctx),
+			);
+		}
 		await auditSuperPassword(ctx, "stop", "close");
 		return true;
 	}),
@@ -151,16 +137,17 @@ export const superPasswordRouter = createTRPCRouter({
 		)
 		.mutation(async ({ ctx, input }) => {
 			assertBrowserSession(ctx);
+			const context = alertContext(ctx);
 			await verifySuperPassword({
-				user: ctx.user,
+				...context,
 				password: input.currentPassword,
-				organizationId: ctx.session.activeOrganizationId,
 			});
 			await changeSuperPassword({
 				userId: ctx.user.id,
 				password: input.password,
 				hint: input.hint,
 			});
+			void sendSuperPasswordAlert({ type: "changed" }, context);
 			await auditSuperPassword(ctx, "update", "change");
 			return true;
 		}),
@@ -169,24 +156,24 @@ export const superPasswordRouter = createTRPCRouter({
 		.input(z.object({ password: passwordSchema }))
 		.mutation(async ({ ctx, input }) => {
 			assertBrowserSession(ctx);
-			await verifySuperPassword({
-				user: ctx.user,
-				password: input.password,
-				organizationId: ctx.session.activeOrganizationId,
-			});
+			const context = alertContext(ctx);
+			await verifySuperPassword({ ...context, password: input.password });
 			await removeSuperPassword(ctx.user.id);
+			void sendSuperPasswordAlert({ type: "disabled" }, context);
 			await auditSuperPassword(ctx, "delete", "disable");
 			return true;
 		}),
 
-	requestReset: protectedProcedure.mutation(async ({ ctx }) => {
-		assertBrowserSession(ctx);
-		await requestSuperPasswordReset({
-			user: ctx.user,
-			organizationId: ctx.session.activeOrganizationId,
-		});
-		return true;
-	}),
+	requestReset: protectedProcedure
+		.input(z.object({ notificationId: z.string().min(1) }))
+		.mutation(async ({ ctx, input }) => {
+			assertBrowserSession(ctx);
+			await requestSuperPasswordReset({
+				...alertContext(ctx),
+				notificationId: input.notificationId,
+			});
+			return true;
+		}),
 
 	resetWithToken: protectedProcedure
 		.input(
@@ -204,12 +191,16 @@ export const superPasswordRouter = createTRPCRouter({
 				password: input.password,
 				hint: input.hint,
 			});
+			void sendSuperPasswordAlert(
+				{ type: "reset", via: "link" },
+				alertContext(ctx),
+			);
 			await auditSuperPassword(ctx, "update", "reset");
 			return true;
 		}),
 
-	// Reached from the "This wasn't me" email link without signing in; the
-	// token can only close access.
+	// Reached from the "This wasn't me" link without signing in; the token can
+	// only close access.
 	lockWithToken: publicProcedure
 		.input(z.object({ token: tokenSchema }))
 		.mutation(async ({ input }) => {

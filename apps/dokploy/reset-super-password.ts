@@ -1,7 +1,7 @@
 import { findOwner } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
 import { user } from "@dokploy/server/db/schema";
-import { removeSuperPassword } from "@dokploy/server/services/super-password";
+import { resetSuperPasswordOverSsh } from "@dokploy/server/services/super-password";
 import { eq } from "drizzle-orm";
 
 (async () => {
@@ -26,7 +26,7 @@ import { eq } from "drizzle-orm";
 			userId = owner.userId;
 		}
 
-		await removeSuperPassword(userId);
+		await resetSuperPasswordOverSsh(userId);
 
 		console.log(
 			"Super password removed and super session closed. Set a new super password in Profile.",

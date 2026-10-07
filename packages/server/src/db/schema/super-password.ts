@@ -10,6 +10,8 @@ export const superPassword = pgTable("super_password", {
 	hint: text("hint"),
 	failedAttempts: integer("failed_attempts").notNull().default(0),
 	lockedUntil: timestamp("locked_until"),
+	resetRequestCount: integer("reset_request_count").notNull().default(0),
+	resetWindowStartedAt: timestamp("reset_window_started_at"),
 	createdAt: timestamp("created_at").notNull().defaultNow(),
 	updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
