@@ -16,6 +16,7 @@ import {
 	CommandGroup,
 	CommandInput,
 	CommandItem,
+	CommandList,
 } from "@/components/ui/command";
 import {
 	Form,
@@ -292,51 +293,53 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 														Loading Repositories....
 													</span>
 												) : null}
-												<CommandEmpty>No repositories found.</CommandEmpty>
-												<ScrollArea className="h-96">
-													<CommandGroup>
-														{repositories && repositories.length === 0 && (
-															<CommandEmpty>
-																No repositories found.
-															</CommandEmpty>
-														)}
-														{repositories?.map((repo) => {
-															return (
-																<CommandItem
-																	value={repo.url}
-																	key={repo.url}
-																	onSelect={() => {
-																		form.setValue("repository", {
-																			owner: repo.owner.username as string,
-																			repo: repo.name,
-																			id: repo.id,
-																			gitlabPathNamespace: repo.url,
-																		});
-																		form.setValue("branch", "");
-																	}}
-																>
-																	<span className="flex min-w-0 items-center gap-2">
-																		<span className="truncate">
-																			{repo.name}
+												<CommandList className="max-h-none">
+													<CommandEmpty>No repositories found.</CommandEmpty>
+													<ScrollArea className="h-96">
+														<CommandGroup>
+															{repositories && repositories.length === 0 && (
+																<CommandEmpty>
+																	No repositories found.
+																</CommandEmpty>
+															)}
+															{repositories?.map((repo) => {
+																return (
+																	<CommandItem
+																		value={repo.url}
+																		key={repo.url}
+																		onSelect={() => {
+																			form.setValue("repository", {
+																				owner: repo.owner.username as string,
+																				repo: repo.name,
+																				id: repo.id,
+																				gitlabPathNamespace: repo.url,
+																			});
+																			form.setValue("branch", "");
+																		}}
+																	>
+																		<span className="flex min-w-0 items-center gap-2">
+																			<span className="truncate">
+																				{repo.name}
+																			</span>
+																			<span className="text-muted-foreground text-xs">
+																				{repo.owner.username}
+																			</span>
 																		</span>
-																		<span className="text-muted-foreground text-xs">
-																			{repo.owner.username}
-																		</span>
-																	</span>
-																	<CheckIcon
-																		className={cn(
-																			"ml-auto h-4 w-4",
-																			repo.url ===
-																				field.value.gitlabPathNamespace
-																				? "opacity-100"
-																				: "opacity-0",
-																		)}
-																	/>
-																</CommandItem>
-															);
-														})}
-													</CommandGroup>
-												</ScrollArea>
+																		<CheckIcon
+																			className={cn(
+																				"ml-auto h-4 w-4",
+																				repo.url ===
+																					field.value.gitlabPathNamespace
+																					? "opacity-100"
+																					: "opacity-0",
+																			)}
+																		/>
+																	</CommandItem>
+																);
+															})}
+														</CommandGroup>
+													</ScrollArea>
+												</CommandList>
 											</Command>
 										</PopoverContent>
 									</Popover>
@@ -394,31 +397,35 @@ export const SaveGitlabProviderCompose = ({ composeId }: Props) => {
 														Select a repository
 													</span>
 												)}
-												<ScrollArea className="h-96">
-													<CommandEmpty>No branch found.</CommandEmpty>
+												<CommandList className="max-h-none">
+													<ScrollArea className="h-96">
+														<CommandEmpty>No branch found.</CommandEmpty>
 
-													<CommandGroup>
-														{branches?.map((branch) => (
-															<CommandItem
-																value={branch.name}
-																key={branch.commit.id}
-																onSelect={() => {
-																	form.setValue("branch", branch.name);
-																}}
-															>
-																<span className="truncate">{branch.name}</span>
-																<CheckIcon
-																	className={cn(
-																		"ml-auto h-4 w-4",
-																		branch.name === field.value
-																			? "opacity-100"
-																			: "opacity-0",
-																	)}
-																/>
-															</CommandItem>
-														))}
-													</CommandGroup>
-												</ScrollArea>
+														<CommandGroup>
+															{branches?.map((branch) => (
+																<CommandItem
+																	value={branch.name}
+																	key={branch.commit.id}
+																	onSelect={() => {
+																		form.setValue("branch", branch.name);
+																	}}
+																>
+																	<span className="truncate">
+																		{branch.name}
+																	</span>
+																	<CheckIcon
+																		className={cn(
+																			"ml-auto h-4 w-4",
+																			branch.name === field.value
+																				? "opacity-100"
+																				: "opacity-0",
+																		)}
+																	/>
+																</CommandItem>
+															))}
+														</CommandGroup>
+													</ScrollArea>
+												</CommandList>
 											</Command>
 										</PopoverContent>
 

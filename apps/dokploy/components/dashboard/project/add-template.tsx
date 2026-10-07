@@ -35,6 +35,7 @@ import {
 	CommandGroup,
 	CommandInput,
 	CommandItem,
+	CommandList,
 } from "@/components/ui/command";
 import {
 	Dialog,
@@ -259,36 +260,38 @@ export const AddTemplate = ({ environmentId, baseUrl }: Props) => {
 													Loading Tags....
 												</span>
 											)}
-											<CommandEmpty>No tags found.</CommandEmpty>
-											<ScrollArea className="h-96">
-												<CommandGroup>
-													{tags?.map((tag) => (
-														<CommandItem
-															value={tag}
-															key={tag}
-															onSelect={() => {
-																if (selectedTags.includes(tag)) {
-																	setSelectedTags(
-																		selectedTags.filter((t) => t !== tag),
-																	);
-																	return;
-																}
-																setSelectedTags([...selectedTags, tag]);
-															}}
-														>
-															{tag}
-															<CheckIcon
-																className={cn(
-																	"ml-auto h-4 w-4",
-																	selectedTags.includes(tag)
-																		? "opacity-100"
-																		: "opacity-0",
-																)}
-															/>
-														</CommandItem>
-													))}
-												</CommandGroup>
-											</ScrollArea>
+											<CommandList className="max-h-none">
+												<CommandEmpty>No tags found.</CommandEmpty>
+												<ScrollArea className="h-96">
+													<CommandGroup>
+														{tags?.map((tag) => (
+															<CommandItem
+																value={tag}
+																key={tag}
+																onSelect={() => {
+																	if (selectedTags.includes(tag)) {
+																		setSelectedTags(
+																			selectedTags.filter((t) => t !== tag),
+																		);
+																		return;
+																	}
+																	setSelectedTags([...selectedTags, tag]);
+																}}
+															>
+																{tag}
+																<CheckIcon
+																	className={cn(
+																		"ml-auto h-4 w-4",
+																		selectedTags.includes(tag)
+																			? "opacity-100"
+																			: "opacity-0",
+																	)}
+																/>
+															</CommandItem>
+														))}
+													</CommandGroup>
+												</ScrollArea>
+											</CommandList>
 										</Command>
 									</PopoverContent>
 								</Popover>

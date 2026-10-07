@@ -16,6 +16,7 @@ import {
 	CommandGroup,
 	CommandInput,
 	CommandItem,
+	CommandList,
 } from "@/components/ui/command";
 import {
 	Form,
@@ -280,40 +281,45 @@ export const SaveGiteaProviderCompose = ({ composeId }: Props) => {
 														Loading Repositories....
 													</span>
 												) : null}
-												<CommandEmpty>No repositories found.</CommandEmpty>
-												<ScrollArea className="h-96">
-													<CommandGroup>
-														{repositories?.map((repo) => (
-															<CommandItem
-																key={repo.url}
-																value={`${repo.owner.username}/${repo.name}`}
-																onSelect={() => {
-																	form.setValue("repository", {
-																		owner: repo.owner.username,
-																		repo: repo.name,
-																	});
-																	form.setValue("branch", "");
-																}}
-															>
-																<span className="flex min-w-0 items-center gap-2">
-																	<span className="truncate">{repo.name}</span>
-																	<span className="text-muted-foreground text-xs">
-																		{repo.owner.username}
+												<CommandList className="max-h-none">
+													<CommandEmpty>No repositories found.</CommandEmpty>
+													<ScrollArea className="h-96">
+														<CommandGroup>
+															{repositories?.map((repo) => (
+																<CommandItem
+																	key={repo.url}
+																	value={`${repo.owner.username}/${repo.name}`}
+																	onSelect={() => {
+																		form.setValue("repository", {
+																			owner: repo.owner.username,
+																			repo: repo.name,
+																		});
+																		form.setValue("branch", "");
+																	}}
+																>
+																	<span className="flex min-w-0 items-center gap-2">
+																		<span className="truncate">
+																			{repo.name}
+																		</span>
+																		<span className="text-muted-foreground text-xs">
+																			{repo.owner.username}
+																		</span>
 																	</span>
-																</span>
-																<CheckIcon
-																	className={cn(
-																		"ml-auto h-4 w-4",
-																		repo.name === field.value.repo &&
-																			repo.owner.username === field.value.owner
-																			? "opacity-100"
-																			: "opacity-0",
-																	)}
-																/>
-															</CommandItem>
-														))}
-													</CommandGroup>
-												</ScrollArea>
+																	<CheckIcon
+																		className={cn(
+																			"ml-auto h-4 w-4",
+																			repo.name === field.value.repo &&
+																				repo.owner.username ===
+																					field.value.owner
+																				? "opacity-100"
+																				: "opacity-0",
+																		)}
+																	/>
+																</CommandItem>
+															))}
+														</CommandGroup>
+													</ScrollArea>
+												</CommandList>
 											</Command>
 										</PopoverContent>
 									</Popover>
@@ -362,34 +368,36 @@ export const SaveGiteaProviderCompose = ({ composeId }: Props) => {
 													placeholder="Search branches..."
 													className="h-9"
 												/>
-												<CommandEmpty>No branches found.</CommandEmpty>
-												<ScrollArea className="h-96">
-													<CommandGroup>
-														{branches?.map((branch) => (
-															<CommandItem
-																key={branch.name}
-																value={branch.name}
-																onSelect={() =>
-																	form.setValue("branch", branch.name)
-																}
-															>
-																<span className="flex min-w-0 items-center gap-2">
-																	<span className="truncate">
-																		{branch.name}
+												<CommandList className="max-h-none">
+													<CommandEmpty>No branches found.</CommandEmpty>
+													<ScrollArea className="h-96">
+														<CommandGroup>
+															{branches?.map((branch) => (
+																<CommandItem
+																	key={branch.name}
+																	value={branch.name}
+																	onSelect={() =>
+																		form.setValue("branch", branch.name)
+																	}
+																>
+																	<span className="flex min-w-0 items-center gap-2">
+																		<span className="truncate">
+																			{branch.name}
+																		</span>
 																	</span>
-																</span>
-																<CheckIcon
-																	className={cn(
-																		"ml-auto h-4 w-4",
-																		branch.name === field.value
-																			? "opacity-100"
-																			: "opacity-0",
-																	)}
-																/>
-															</CommandItem>
-														))}
-													</CommandGroup>
-												</ScrollArea>
+																	<CheckIcon
+																		className={cn(
+																			"ml-auto h-4 w-4",
+																			branch.name === field.value
+																				? "opacity-100"
+																				: "opacity-0",
+																		)}
+																	/>
+																</CommandItem>
+															))}
+														</CommandGroup>
+													</ScrollArea>
+												</CommandList>
 											</Command>
 										</PopoverContent>
 									</Popover>

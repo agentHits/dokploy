@@ -16,6 +16,7 @@ import {
 	CommandGroup,
 	CommandInput,
 	CommandItem,
+	CommandList,
 } from "@/components/ui/command";
 import {
 	Dialog,
@@ -208,33 +209,35 @@ export const RestoreVolumeBackups = ({
 													placeholder="Search destinations..."
 													className="h-9"
 												/>
-												<CommandEmpty>No destinations found.</CommandEmpty>
-												<ScrollArea className="h-64">
-													<CommandGroup>
-														{destinations.map((destination) => (
-															<CommandItem
-																value={destination.destinationId}
-																key={destination.destinationId}
-																onSelect={() => {
-																	form.setValue(
-																		"destinationId",
-																		destination.destinationId,
-																	);
-																}}
-															>
-																{destination.name}
-																<CheckIcon
-																	className={cn(
-																		"ml-auto h-4 w-4",
-																		destination.destinationId === field.value
-																			? "opacity-100"
-																			: "opacity-0",
-																	)}
-																/>
-															</CommandItem>
-														))}
-													</CommandGroup>
-												</ScrollArea>
+												<CommandList className="max-h-none">
+													<CommandEmpty>No destinations found.</CommandEmpty>
+													<ScrollArea className="h-64">
+														<CommandGroup>
+															{destinations.map((destination) => (
+																<CommandItem
+																	value={destination.destinationId}
+																	key={destination.destinationId}
+																	onSelect={() => {
+																		form.setValue(
+																			"destinationId",
+																			destination.destinationId,
+																		);
+																	}}
+																>
+																	{destination.name}
+																	<CheckIcon
+																		className={cn(
+																			"ml-auto h-4 w-4",
+																			destination.destinationId === field.value
+																				? "opacity-100"
+																				: "opacity-0",
+																		)}
+																	/>
+																</CommandItem>
+															))}
+														</CommandGroup>
+													</ScrollArea>
+												</CommandList>
 											</Command>
 										</PopoverContent>
 									</Popover>
@@ -304,56 +307,58 @@ export const RestoreVolumeBackups = ({
 														No backup files available
 													</div>
 												) : (
-													<ScrollArea className="h-64">
-														<CommandGroup className="w-96">
-															{files?.map((file) => (
-																<CommandItem
-																	value={file.Path}
-																	key={file.Path}
-																	onSelect={() => {
-																		form.setValue("backupFile", file.Path);
-																		if (file.IsDir) {
-																			setSearch(`${file.Path}/`);
-																			setDebouncedSearchTerm(`${file.Path}/`);
-																		} else {
-																			setSearch(file.Path);
-																			setDebouncedSearchTerm(file.Path);
-																		}
-																	}}
-																>
-																	<div className="flex w-full flex-col gap-1">
-																		<div className="flex w-full justify-between">
-																			<span className="font-medium">
-																				{file.Path}
-																			</span>
-
-																			<CheckIcon
-																				className={cn(
-																					"ml-auto h-4 w-4",
-																					file.Path === field.value
-																						? "opacity-100"
-																						: "opacity-0",
-																				)}
-																			/>
-																		</div>
-																		<div className="flex items-center gap-4 text-xs text-muted-foreground">
-																			<span>
-																				Size: {formatBytes(file.Size)}
-																			</span>
-																			{file.IsDir && (
-																				<span className="text-blue-500">
-																					Directory
+													<CommandList className="max-h-none">
+														<ScrollArea className="h-64">
+															<CommandGroup className="w-96">
+																{files?.map((file) => (
+																	<CommandItem
+																		value={file.Path}
+																		key={file.Path}
+																		onSelect={() => {
+																			form.setValue("backupFile", file.Path);
+																			if (file.IsDir) {
+																				setSearch(`${file.Path}/`);
+																				setDebouncedSearchTerm(`${file.Path}/`);
+																			} else {
+																				setSearch(file.Path);
+																				setDebouncedSearchTerm(file.Path);
+																			}
+																		}}
+																	>
+																		<div className="flex w-full flex-col gap-1">
+																			<div className="flex w-full justify-between">
+																				<span className="font-medium">
+																					{file.Path}
 																				</span>
-																			)}
-																			{file.Hashes?.MD5 && (
-																				<span>MD5: {file.Hashes.MD5}</span>
-																			)}
+
+																				<CheckIcon
+																					className={cn(
+																						"ml-auto h-4 w-4",
+																						file.Path === field.value
+																							? "opacity-100"
+																							: "opacity-0",
+																					)}
+																				/>
+																			</div>
+																			<div className="flex items-center gap-4 text-xs text-muted-foreground">
+																				<span>
+																					Size: {formatBytes(file.Size)}
+																				</span>
+																				{file.IsDir && (
+																					<span className="text-blue-500">
+																						Directory
+																					</span>
+																				)}
+																				{file.Hashes?.MD5 && (
+																					<span>MD5: {file.Hashes.MD5}</span>
+																				)}
+																			</div>
 																		</div>
-																	</div>
-																</CommandItem>
-															))}
-														</CommandGroup>
-													</ScrollArea>
+																	</CommandItem>
+																))}
+															</CommandGroup>
+														</ScrollArea>
+													</CommandList>
 												)}
 											</Command>
 										</PopoverContent>
