@@ -9,6 +9,9 @@
 		"moduleResolution": "bundler",
 		"paths": {
 			"@/*": ["./*"],
+			// Without this the package root resolves to the built dist while deep
+			// imports resolve to src, and builds bundle both copies of the server.
+			"@dokploy/server": ["../../packages/server/src/index.ts"],
 			"@dokploy/server/*": ["../../packages/server/src/*"]
 		}
 	},
