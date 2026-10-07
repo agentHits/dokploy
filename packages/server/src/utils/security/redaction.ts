@@ -1,3 +1,5 @@
+import { TRPCError } from "@trpc/server";
+
 export const REDACTED_SECRET_VALUE = "__DOKPLOY_REDACTED_SECRET__";
 const MCP_REDACTED_SECRET_VALUE = "[REDACTED]";
 
@@ -451,6 +453,39 @@ export const secretUpdateValue = (value: unknown) => {
 	}
 
 	return value;
+};
+
+type SecretTargetFields = Record<
+	string,
+	readonly [next: unknown, stored: unknown]
+>;
+
+const isUnsetSecretTargetValue = (value: unknown) =>
+	value === undefined || value === null || value === "";
+
+export const changedSecretTargetFields = (fields: SecretTargetFields) =>
+	Object.entries(fields)
+		.filter(([, [next, stored]]) =>
+			isUnsetSecretTargetValue(next) && isUnsetSecretTargetValue(stored)
+				? false
+				: next !== stored,
+		)
+		.map(([field]) => field);
+
+// A kept stored secret may only travel to the endpoint and identity it was
+// saved with. Otherwise a caller who can edit the record but not read the
+// secret could point it at a host they control and capture it.
+export const assertStoredSecretTargetUnchanged = (
+	secretLabel: string,
+	fields: SecretTargetFields,
+) => {
+	const changed = changedSecretTargetFields(fields);
+	if (changed.length > 0) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: `Re-enter the ${secretLabel} to change ${changed.join(", ")}`,
+		});
+	}
 };
 
 export const preserveSecretPlaceholderFields = <

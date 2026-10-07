@@ -4,7 +4,11 @@ import {
 	gitlab,
 	gitProvider,
 } from "@dokploy/server/db/schema";
-import { secretUpdateValue } from "@dokploy/server/utils/security/redaction";
+import {
+	assertStoredSecretTargetUnchanged,
+	changedSecretTargetFields,
+	secretUpdateValue,
+} from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import type { z } from "zod";
@@ -84,16 +88,68 @@ export const findGitlabGitProviderId = async (gitlabId: string) => {
 	return gitlabProviderResult.gitProviderId;
 };
 
+const gitlabTargetFields = [
+	"gitlabUrl",
+	"gitlabInternalUrl",
+	"applicationId",
+] as const;
+
+// OAuth tokens and the application secret are sent to the GitLab URL, so a
+// caller may only move the provider to another URL by entering the secret
+// again, and tokens issued by the old instance are dropped.
+const bindStoredGitlabSecrets = async (
+	gitlabId: string,
+	input: Partial<Gitlab>,
+) => {
+	if (gitlabTargetFields.every((field) => input[field] === undefined)) {
+		return {};
+	}
+	const current = await db.query.gitlab.findFirst({
+		where: eq(gitlab.gitlabId, gitlabId),
+	});
+	if (!current) {
+		return {};
+	}
+
+	const targets = Object.fromEntries(
+		gitlabTargetFields.map((field) => [
+			field,
+			[
+				input[field] === undefined ? current[field] : input[field],
+				current[field],
+			] as const,
+		]),
+	);
+	if (current.secret && secretUpdateValue(input.secret) === undefined) {
+		assertStoredSecretTargetUnchanged("GitLab application secret", targets);
+	}
+
+	const urlChanged = changedSecretTargetFields(targets).some(
+		(field) => field !== "applicationId",
+	);
+	return urlChanged
+		? {
+				accessToken: input.accessToken ?? null,
+				refreshToken: input.refreshToken ?? null,
+				expiresAt: input.expiresAt ?? null,
+			}
+		: {};
+};
+
 export const updateGitlab = async (
 	gitlabId: string,
 	input: Partial<Gitlab>,
 ) => {
-	const { webhookSecret, ...gitlabInput } = input;
+	const { webhookSecret, secret, ...gitlabInput } = input;
 	const nextWebhookSecret = secretUpdateValue(webhookSecret);
+	const nextSecret = secretUpdateValue(secret);
+	const tokenReset = await bindStoredGitlabSecrets(gitlabId, input);
 	return await db
 		.update(gitlab)
 		.set({
 			...gitlabInput,
+			...tokenReset,
+			...(nextSecret !== undefined && { secret: nextSecret }),
 			...(nextWebhookSecret !== undefined && {
 				webhookSecret: nextWebhookSecret,
 			}),
