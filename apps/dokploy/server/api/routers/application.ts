@@ -51,6 +51,7 @@ import { assertCustomGitUrlAllowed } from "@dokploy/server/utils/providers/git";
 import {
 	preserveSecretPlaceholderFields,
 	redactDeployableServiceSecrets,
+	redactDeployableServiceSecretsFor,
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
@@ -66,7 +67,10 @@ import { audit } from "@/server/api/utils/audit";
 import { assertDeploySourceCredentialAccess } from "@/server/api/utils/deploy-source-access";
 import { assertContainerMetricsServiceAccess } from "@/server/api/utils/monitoring-access";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
-import { assertServiceEnvironmentReadAccess } from "@/server/api/utils/service-environment";
+import {
+	assertServiceEnvironmentReadAccess,
+	getSharedEnvReadAccess,
+} from "@/server/api/utils/service-environment";
 import {
 	apiCreateApplication,
 	apiDeployApplication,
@@ -445,8 +449,9 @@ export const applicationRouter = createTRPCRouter({
 			}
 
 			return {
-				...redactDeployableServiceSecrets(
+				...redactDeployableServiceSecretsFor(
 					redactGitProviderSecrets(application),
+					await getSharedEnvReadAccess(ctx),
 				),
 				hasGitProviderAccess,
 				unauthorizedProvider,
