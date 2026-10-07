@@ -166,6 +166,7 @@ export const runCommand = async (scheduleId: string) => {
 					throw error;
 				}
 			}
+		} else if (scheduleType === "dokploy-server") {
 			const writeStream = createWriteStream(deployment.logPath, { flags: "a" });
 			const { SCHEDULES_PATH } = paths();
 			const fullPath = getScheduleDirectory(SCHEDULES_PATH, appName);

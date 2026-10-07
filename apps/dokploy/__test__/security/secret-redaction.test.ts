@@ -5,7 +5,9 @@ import {
 	REDACTED_SECRET_VALUE,
 	redactBackupScheduleSecrets,
 	redactDatabaseServiceSecrets,
+	redactDatabaseServiceSecretsFor,
 	redactDeployableServiceSecrets,
+	redactDeployableServiceSecretsFor,
 	redactProjectNestedSecrets,
 	redactRollbackFullContextSecrets,
 	redactSecretFields,
@@ -153,6 +155,77 @@ describe("shared secret redaction helpers", () => {
 					token: REDACTED_SECRET_VALUE,
 					port: 4501,
 				},
+			},
+		});
+	});
+
+	it("redacts git url credentials and shared env from deployable service reads", () => {
+		const redacted = redactDeployableServiceSecrets({
+			customGitUrl: "https://user:token@example.com/org/repo.git",
+			environment: {
+				env: "ENVIRONMENT_SHARED=secret",
+				project: { env: "PROJECT_SHARED=secret", organizationId: "org-1" },
+			},
+		});
+
+		expect(redacted).toEqual({
+			customGitUrl: `https://${REDACTED_SECRET_VALUE}@example.com/org/repo.git`,
+			environment: {
+				env: REDACTED_SECRET_VALUE,
+				project: { env: REDACTED_SECRET_VALUE, organizationId: "org-1" },
+			},
+		});
+	});
+
+	it("keeps only the shared env a reader may read", () => {
+		const service = {
+			env: "TOKEN=secret",
+			environment: {
+				env: "ENVIRONMENT_SHARED=secret",
+				project: { env: "PROJECT_SHARED=secret" },
+			},
+		};
+
+		expect(
+			redactDeployableServiceSecretsFor(service, {
+				environmentEnv: true,
+				projectEnv: false,
+			}),
+		).toEqual({
+			env: REDACTED_SECRET_VALUE,
+			environment: {
+				env: "ENVIRONMENT_SHARED=secret",
+				project: { env: REDACTED_SECRET_VALUE },
+			},
+		});
+		expect(
+			redactDatabaseServiceSecretsFor(service, {
+				environmentEnv: false,
+				projectEnv: true,
+			}),
+		).toEqual({
+			env: REDACTED_SECRET_VALUE,
+			environment: {
+				env: REDACTED_SECRET_VALUE,
+				project: { env: "PROJECT_SHARED=secret" },
+			},
+		});
+	});
+
+	it("redacts shared env from database service reads", () => {
+		expect(
+			redactDatabaseServiceSecrets({
+				databasePassword: "secret",
+				environment: {
+					env: "ENVIRONMENT_SHARED=secret",
+					project: { env: "PROJECT_SHARED=secret" },
+				},
+			}),
+		).toEqual({
+			databasePassword: REDACTED_SECRET_VALUE,
+			environment: {
+				env: REDACTED_SECRET_VALUE,
+				project: { env: REDACTED_SECRET_VALUE },
 			},
 		});
 	});
