@@ -1,0 +1,3 @@
+[install]
+# Freshly published versions are where hijacked releases live; most get pulled within days.
+minimumReleaseAge = 259200
