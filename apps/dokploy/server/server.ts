@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import http from "node:http";
 import {
+	cleanupOldDokployImages,
 	createDefaultMiddlewares,
 	createDefaultServerTraefikConfig,
 	createDefaultTraefikConfig,
@@ -155,6 +156,7 @@ void app.prepare().then(async () => {
 			await initCancelDeployments();
 			await initVolumeBackupsCronJobs();
 			await sendDokployRestartNotifications();
+			void cleanupOldDokployImages();
 		}
 		await initEnterpriseBackupCronJobs();
 

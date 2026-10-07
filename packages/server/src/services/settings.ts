@@ -259,10 +259,227 @@ export const getAgentHitsUpdateData = async (
 	};
 };
 
+export const DOKPLOY_KEEP_IMAGES_ENV = "DOKPLOY_KEEP_IMAGES";
+export const DOKPLOY_KEEP_IMAGES_MIN = 3;
+export const DOKPLOY_KEEP_IMAGES_MAX = 5;
+
+/** Returns how many Dokploy images to keep, or null when the cleanup is off. */
+export const getDokployImageKeepCount = () => {
+	const value = Number(process.env[DOKPLOY_KEEP_IMAGES_ENV]);
+	if (
+		!Number.isInteger(value) ||
+		value < DOKPLOY_KEEP_IMAGES_MIN ||
+		value > DOKPLOY_KEEP_IMAGES_MAX
+	) {
+		return null;
+	}
+	return value;
+};
+
+/** `--env-add` argument that stores the cleanup choice on the dokploy service; 0 turns it off. */
+export const getDokployKeepImagesEnvArg = (keepImages: number | null) =>
+	`--env-add ${quoteShellArg(`${DOKPLOY_KEEP_IMAGES_ENV}=${keepImages ?? 0}`)}`;
+
+const getImageRepository = (image: string) => {
+	const withoutDigest = image.split("@")[0] ?? image;
+	const lastSlash = withoutDigest.lastIndexOf("/");
+	const lastColon = withoutDigest.lastIndexOf(":");
+	// A colon before the last slash is a registry port, not a tag.
+	return lastColon > lastSlash
+		? withoutDigest.slice(0, lastColon)
+		: withoutDigest;
+};
+
+export const getDokployImageRepositories = () => [
+	...new Set([
+		getImageRepository(getAgentHitsUpdateImage()),
+		"dokploy/dokploy",
+	]),
+];
+
+/**
+ * Removes Dokploy web server images except the `keep` newest ones. Swarm keeps
+ * exited task containers of the dokploy service, and they pin old images, so
+ * those are removed first. Images used by running containers are never forced.
+ */
+export const getDokployImageCleanupCommand = (keep: number) => {
+	const filters = getDokployImageRepositories()
+		.map((repository) => `--filter ${quoteShellArg(`reference=${repository}`)}`)
+		.join(" ");
+
+	return `
+ids=$(docker image ls -q --no-trunc ${filters} | sort -u)
+if [ -z "$ids" ]; then
+	exit 0
+fi
+docker image inspect --format '{{.Created}} {{.Id}}' $ids | sort -r | awk '{print $2}' | tail -n +${keep + 1} | while read -r id; do
+	containers=$(docker ps -aq --filter "ancestor=$id" --filter status=exited --filter status=created --filter label=com.docker.swarm.service.name=dokploy)
+	if [ -n "$containers" ]; then
+		docker rm $containers || true
+	fi
+	echo "Removing old Dokploy image $id"
+	tags=$(docker image inspect --format '{{range .RepoTags}}{{.}} {{end}}' "$id")
+	if [ -n "$tags" ]; then
+		docker image rm $tags || true
+	fi
+	if docker image inspect "$id" >/dev/null 2>&1; then
+		docker image rm "$id" || true
+	fi
+done
+`;
+};
+
+export const cleanupOldDokployImages = async () => {
+	const keep = getDokployImageKeepCount();
+	if (!keep) {
+		return;
+	}
+	try {
+		await execAsync(getDokployImageCleanupCommand(keep));
+	} catch (error) {
+		console.error("Failed to clean up old Dokploy images", error);
+	}
+};
+
+export interface DokployImageInfo {
+	id: string;
+	tags: string[];
+	createdAt: string;
+	sizeBytes: number;
+	/** Bytes not shared with other images, i.e. what deleting it frees. */
+	uniqueSizeBytes: number | null;
+	forkVersion: string | null;
+	officialVersion: string | null;
+	isCurrent: boolean;
+	/** Exited task containers of the dokploy service; the cleanup removes them. */
+	dokployTaskContainers: number;
+	/** Containers of anything else; they keep the image from being removed. */
+	otherContainers: number;
+}
+
+// `docker system df` prints sizes with decimal units (go-units HumanSize).
+const parseDockerHumanSize = (size: string | undefined) => {
+	const match = size?.trim().match(/^([\d.]+)\s*([kKMGTP]?B)$/);
+	if (!match) {
+		return null;
+	}
+	const units: Record<string, number> = {
+		B: 1,
+		KB: 1e3,
+		MB: 1e6,
+		GB: 1e9,
+		TB: 1e12,
+		PB: 1e15,
+	};
+	return Math.round(
+		Number.parseFloat(match[1] as string) *
+			(units[(match[2] as string).toUpperCase()] ?? 0),
+	);
+};
+
+const getDockerUniqueImageSizes = async () => {
+	const sizes = new Map<string, number>();
+	try {
+		const { stdout } = await execAsync(
+			"docker system df -v --format '{{json .}}'",
+		);
+		const data = JSON.parse(stdout) as {
+			Images?: { ID?: string; UniqueSize?: string }[];
+		};
+		for (const image of data.Images ?? []) {
+			const size = parseDockerHumanSize(image.UniqueSize);
+			if (image.ID && size !== null) {
+				sizes.set(image.ID, size);
+			}
+		}
+	} catch (error) {
+		console.error("Could not read Docker image unique sizes", error);
+	}
+	return sizes;
+};
+
+/** Lists Dokploy web server images on this host, newest first. */
+export const getDokployImages = async (): Promise<DokployImageInfo[]> => {
+	const filters = getDokployImageRepositories()
+		.map((repository) => `--filter ${quoteShellArg(`reference=${repository}`)}`)
+		.join(" ");
+	const { stdout: idsOutput } = await execAsync(
+		`docker image ls -q --no-trunc ${filters} | sort -u`,
+	);
+	const ids = idsOutput.split("\n").filter(Boolean);
+	if (ids.length === 0) {
+		return [];
+	}
+
+	const [{ stdout: imagesOutput }, { stdout: containersOutput }, uniqueSizes] =
+		await Promise.all([
+			execAsync(
+				`docker image inspect --format '{"id":{{json .Id}},"createdAt":{{json .Created}},"size":{{json .Size}},"tags":{{json .RepoTags}},"config":{{json .Config}}}' ${ids.join(" ")}`,
+			),
+			execAsync(
+				`ids=$(docker ps -aq); if [ -n "$ids" ]; then docker inspect --format '{"image":{{json .Image}},"running":{{json .State.Running}},"service":{{json (index .Config.Labels "com.docker.swarm.service.name")}}}' $ids; fi`,
+			),
+			getDockerUniqueImageSizes(),
+		]);
+
+	const containers = containersOutput
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => {
+			const container = JSON.parse(line) as {
+				image: string;
+				running: boolean;
+				service: string | null;
+			};
+			return {
+				image: container.image,
+				running: container.running,
+				isDokployTask: container.service === "dokploy",
+			};
+		});
+
+	return imagesOutput
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => {
+			const { id, createdAt, size, tags, config } = JSON.parse(line) as {
+				id: string;
+				createdAt: string;
+				size: number;
+				tags: string[] | null;
+				config: { Env?: string[] | null } | null;
+			};
+			const env = config?.Env ?? [];
+			const imageContainers = containers.filter(
+				(container) => container.image === id,
+			);
+			return {
+				id,
+				tags: tags ?? [],
+				createdAt,
+				sizeBytes: size,
+				uniqueSizeBytes: uniqueSizes.get(id) ?? null,
+				forkVersion: findEnvValue(env, "DOKPLOY_FORK_VERSION") ?? null,
+				officialVersion: findEnvValue(env, "DOKPLOY_OFFICIAL_VERSION") ?? null,
+				isCurrent: imageContainers.some(
+					(container) => container.isDokployTask && container.running,
+				),
+				dokployTaskContainers: imageContainers.filter(
+					(container) => container.isDokployTask && !container.running,
+				).length,
+				otherContainers: imageContainers.filter(
+					(container) => !container.isDokployTask,
+				).length,
+			};
+		})
+		.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+};
+
 export const getAgentHitsUpdateCommand = (
 	currentVersion: string,
 	forkVersion?: string | null,
 	officialVersion?: string | null,
+	keepImages?: number | null,
 ) => {
 	const forkVersionArg = forkVersion?.trim()
 		? `--env-add ${quoteShellArg(`DOKPLOY_FORK_VERSION=${forkVersion.trim()}`)}`
@@ -270,6 +487,8 @@ export const getAgentHitsUpdateCommand = (
 	const officialVersionArg = officialVersion?.trim()
 		? officialVersion.trim()
 		: getOfficialDokployVersion(currentVersion);
+	const keepImagesArg =
+		keepImages === undefined ? "" : getDokployKeepImagesEnvArg(keepImages);
 
 	return `
 fork_version_env_arg=""
@@ -281,6 +500,7 @@ docker service update --force \\
 	--env-add ${quoteShellArg(`RELEASE_TAG=${getAgentHitsUpdateTag()}`)} \\
 	--env-add ${quoteShellArg(`DOKPLOY_OFFICIAL_VERSION=${officialVersionArg}`)} \\
 	${forkVersionArg} \\
+	${keepImagesArg} \\
 	dokploy
 `;
 };

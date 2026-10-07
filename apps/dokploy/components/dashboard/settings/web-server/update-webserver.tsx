@@ -57,8 +57,10 @@ const ServiceStatusItem = ({
 
 export const UpdateWebServer = ({
 	buttonClassName,
+	keepImages,
 }: {
 	buttonClassName?: string;
+	keepImages?: number | null;
 }) => {
 	const [modalState, setModalState] = useState<ModalState>("idle");
 	const [open, setOpen] = useState(false);
@@ -113,7 +115,7 @@ export const UpdateWebServer = ({
 	const handleConfirm = async () => {
 		try {
 			setModalState("updating");
-			await updateServer();
+			await updateServer(keepImages === undefined ? undefined : { keepImages });
 
 			await new Promise((resolve) => setTimeout(resolve, 8000));
 

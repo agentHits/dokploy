@@ -591,6 +591,8 @@ export const PROCEDURE_ACCESS: Record<string, ProcedureAccess> = {
 	"settings.cleanUnusedVolumes": "dangerous",
 	"settings.getDockerDiskUsage": "read",
 	"settings.getDokployCloudIps": "read",
+	"settings.getDokployImageKeepCount": "read",
+	"settings.getDokployImages": "read",
 	"settings.getDokployVersion": "read",
 	"settings.getDokployVersionData": "read",
 	"settings.getIp": "read",

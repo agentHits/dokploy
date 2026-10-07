@@ -12,11 +12,16 @@ import {
 	cleanupSystem,
 	cleanupVolumes,
 	DEFAULT_UPDATE_DATA,
+	DOKPLOY_KEEP_IMAGES_ENV,
+	DOKPLOY_KEEP_IMAGES_MAX,
+	DOKPLOY_KEEP_IMAGES_MIN,
 	filterProtectedTraefikEntries,
 	findServerById,
 	getAccessibleServerIds,
 	getAgentHitsUpdateCommand,
 	getDockerDiskUsage,
+	getDokployImageKeepCount,
+	getDokployImages,
 	getDokployImageTag,
 	getDokployVersionData,
 	getLogCleanupStatus,
@@ -632,41 +637,59 @@ export const settingsRouter = createTRPCRouter({
 
 		return await getUpdateData(packageInfo.version);
 	}),
-	updateServer: adminProcedure.mutation(async ({ ctx }) => {
-		if (IS_CLOUD) {
-			return true;
-		}
-
-		const data = await getUpdateData(packageInfo.version);
-		if (data.updateAvailable) {
-			if (data.updateSource === "agenthits") {
-				void spawnAsync("sh", [
-					"-c",
-					getAgentHitsUpdateCommand(
-						packageInfo.version,
-						data.latestVersion,
-						data.latestOfficialVersion,
-					),
-				]);
-			} else {
-				void spawnAsync("docker", [
-					"service",
-					"update",
-					"--force",
-					"--image",
-					`dokploy/dokploy:${data.latestVersion}`,
-					"dokploy",
-				]);
+	updateServer: adminProcedure
+		.input(
+			z
+				.object({
+					keepImages: z
+						.number()
+						.int()
+						.min(DOKPLOY_KEEP_IMAGES_MIN)
+						.max(DOKPLOY_KEEP_IMAGES_MAX)
+						.nullable(),
+				})
+				.optional(),
+		)
+		.mutation(async ({ ctx, input }) => {
+			if (IS_CLOUD) {
+				return true;
 			}
-			await audit(ctx, {
-				action: "update",
-				resourceType: "settings",
-				resourceName: "dokploy-version",
-			});
-		}
 
-		return true;
-	}),
+			const keepImages = input?.keepImages;
+			const data = await getUpdateData(packageInfo.version);
+			if (data.updateAvailable) {
+				if (data.updateSource === "agenthits") {
+					void spawnAsync("sh", [
+						"-c",
+						getAgentHitsUpdateCommand(
+							packageInfo.version,
+							data.latestVersion,
+							data.latestOfficialVersion,
+							keepImages,
+						),
+					]);
+				} else {
+					void spawnAsync("docker", [
+						"service",
+						"update",
+						"--force",
+						"--image",
+						`dokploy/dokploy:${data.latestVersion}`,
+						...(keepImages === undefined
+							? []
+							: ["--env-add", `${DOKPLOY_KEEP_IMAGES_ENV}=${keepImages ?? 0}`]),
+						"dokploy",
+					]);
+				}
+				await audit(ctx, {
+					action: "update",
+					resourceType: "settings",
+					resourceName: "dokploy-version",
+				});
+			}
+
+			return true;
+		}),
 
 	getDokployVersion: protectedProcedure.query(() => {
 		return packageInfo.version;
@@ -676,6 +699,15 @@ export const settingsRouter = createTRPCRouter({
 	}),
 	getReleaseTag: protectedProcedure.query(() => {
 		return getDokployImageTag();
+	}),
+	getDokployImageKeepCount: adminProcedure.query(() => {
+		return getDokployImageKeepCount();
+	}),
+	getDokployImages: adminProcedure.query(async () => {
+		if (IS_CLOUD) {
+			return [];
+		}
+		return await getDokployImages();
 	}),
 	readDirectories: protectedProcedure
 		.input(apiServerSchema)
