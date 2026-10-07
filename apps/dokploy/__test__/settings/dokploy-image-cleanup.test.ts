@@ -17,6 +17,7 @@ const {
 	getDokployImageCleanupCommand,
 	getDokployImageKeepCount,
 	getDokployImageRepositories,
+	getDokployImages,
 } = await import("@dokploy/server/services/settings");
 
 describe("Dokploy image cleanup", () => {
@@ -107,5 +108,94 @@ describe("Dokploy image cleanup", () => {
 		expect(getAgentHitsUpdateCommand("v0.30.6", null, null, null)).toContain(
 			"--env-add DOKPLOY_KEEP_IMAGES\\=0",
 		);
+	});
+});
+
+describe("Dokploy image list", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.stubEnv("DOKPLOY_AGENTHITS_UPDATE_IMAGE", undefined);
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	const image = (id: string, createdAt: string, fork: string) =>
+		JSON.stringify({
+			id: `sha256:${id}`,
+			createdAt,
+			size: 4455354111,
+			tags: [`ghcr.io/agenthits/dokploy:agenthits-dev-${id}`],
+			config: {
+				Env: [
+					"PATH=/usr/bin|/bin",
+					`DOKPLOY_FORK_VERSION=${fork}`,
+					"DOKPLOY_OFFICIAL_VERSION=v0.30.6",
+				],
+			},
+		});
+	const container = (id: string, running: boolean, service: string) =>
+		JSON.stringify({ image: `sha256:${id}`, running, service });
+
+	it("reads versions, sizes and containers newest first", async () => {
+		execAsync.mockImplementation(async (command: string) => {
+			if (command.startsWith("docker image ls")) {
+				return { stdout: "sha256:aaa\nsha256:bbb\nsha256:ccc\n", stderr: "" };
+			}
+			if (command.startsWith("docker image inspect")) {
+				return {
+					stdout: [
+						image("aaa", "2026-10-07T10:26:35.154227243Z", "Fork_412+aaa"),
+						image("ccc", "2026-10-07T08:50:17.72561574Z", "Fork_400+ccc"),
+						image("bbb", "2026-10-07T09:30:23.012650643Z", "Fork_408+bbb"),
+					].join("\n"),
+					stderr: "",
+				};
+			}
+			if (command.startsWith("docker system df")) {
+				return {
+					stdout: JSON.stringify({
+						Images: [{ ID: "sha256:aaa", UniqueSize: "4.115GB" }],
+					}),
+					stderr: "",
+				};
+			}
+			return {
+				stdout: [
+					container("aaa", true, "dokploy"),
+					container("bbb", false, "dokploy"),
+					container("bbb", false, "dokploy"),
+					container("ccc", false, ""),
+				].join("\n"),
+				stderr: "",
+			};
+		});
+
+		const images = await getDokployImages();
+
+		expect(images.map((item) => item.forkVersion)).toEqual([
+			"Fork_412+aaa",
+			"Fork_408+bbb",
+			"Fork_400+ccc",
+		]);
+		expect(images[0]).toMatchObject({
+			isCurrent: true,
+			uniqueSizeBytes: 4115000000,
+			officialVersion: "v0.30.6",
+		});
+		expect(images[1]).toMatchObject({
+			isCurrent: false,
+			dokployTaskContainers: 2,
+			otherContainers: 0,
+			uniqueSizeBytes: null,
+		});
+		expect(images[2]).toMatchObject({ otherContainers: 1 });
+	});
+
+	it("returns nothing when there are no Dokploy images", async () => {
+		execAsync.mockResolvedValue({ stdout: "", stderr: "" });
+		await expect(getDokployImages()).resolves.toEqual([]);
+		expect(execAsync).toHaveBeenCalledTimes(1);
 	});
 });

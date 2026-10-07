@@ -7,6 +7,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { DokployImagesInfo } from "./dokploy-images-info";
 
 const IMAGE_KEEP_OPTIONS = [3, 4, 5];
 const DEFAULT_IMAGE_KEEP_COUNT = 3;
@@ -15,12 +16,16 @@ interface Props {
 	keepImages: number | null;
 	onChange: (keepImages: number | null) => void;
 	disabled?: boolean;
+	pendingVersion: string | null;
+	loadImages: boolean;
 }
 
 export const ToggleImageCleanup = ({
 	keepImages,
 	onChange,
 	disabled,
+	pendingVersion,
+	loadImages,
 }: Props) => {
 	const enabled = keepImages !== null;
 
@@ -36,7 +41,7 @@ export const ToggleImageCleanup = ({
 					disabled={disabled}
 				/>
 				<Label className="text-primary" htmlFor="imageCleanupToggle">
-					Remove old Dokploy images, keep the last
+					Remove old images, keep the last
 				</Label>
 				<Select
 					value={String(keepImages ?? DEFAULT_IMAGE_KEEP_COUNT)}
@@ -55,10 +60,17 @@ export const ToggleImageCleanup = ({
 					</SelectContent>
 				</Select>
 			</div>
-			<p className="pl-[52px] text-xs text-muted-foreground">
-				Saved with the next update. After restarting, Dokploy deletes older
-				images and the stopped containers that keep them.
-			</p>
+			<div className="flex flex-col items-start gap-2 pl-[52px]">
+				<p className="text-xs text-muted-foreground">
+					Saved with the next update. After restarting, Dokploy deletes older
+					images and the stopped containers that keep them.
+				</p>
+				<DokployImagesInfo
+					keepImages={keepImages}
+					pendingVersion={pendingVersion}
+					enabled={loadImages}
+				/>
+			</div>
 		</div>
 	);
 };

@@ -341,6 +341,140 @@ export const cleanupOldDokployImages = async () => {
 	}
 };
 
+export interface DokployImageInfo {
+	id: string;
+	tags: string[];
+	createdAt: string;
+	sizeBytes: number;
+	/** Bytes not shared with other images, i.e. what deleting it frees. */
+	uniqueSizeBytes: number | null;
+	forkVersion: string | null;
+	officialVersion: string | null;
+	isCurrent: boolean;
+	/** Exited task containers of the dokploy service; the cleanup removes them. */
+	dokployTaskContainers: number;
+	/** Containers of anything else; they keep the image from being removed. */
+	otherContainers: number;
+}
+
+// `docker system df` prints sizes with decimal units (go-units HumanSize).
+const parseDockerHumanSize = (size: string | undefined) => {
+	const match = size?.trim().match(/^([\d.]+)\s*([kKMGTP]?B)$/);
+	if (!match) {
+		return null;
+	}
+	const units: Record<string, number> = {
+		B: 1,
+		KB: 1e3,
+		MB: 1e6,
+		GB: 1e9,
+		TB: 1e12,
+		PB: 1e15,
+	};
+	return Math.round(
+		Number.parseFloat(match[1] as string) *
+			(units[(match[2] as string).toUpperCase()] ?? 0),
+	);
+};
+
+const getDockerUniqueImageSizes = async () => {
+	const sizes = new Map<string, number>();
+	try {
+		const { stdout } = await execAsync(
+			"docker system df -v --format '{{json .}}'",
+		);
+		const data = JSON.parse(stdout) as {
+			Images?: { ID?: string; UniqueSize?: string }[];
+		};
+		for (const image of data.Images ?? []) {
+			const size = parseDockerHumanSize(image.UniqueSize);
+			if (image.ID && size !== null) {
+				sizes.set(image.ID, size);
+			}
+		}
+	} catch (error) {
+		console.error("Could not read Docker image unique sizes", error);
+	}
+	return sizes;
+};
+
+/** Lists Dokploy web server images on this host, newest first. */
+export const getDokployImages = async (): Promise<DokployImageInfo[]> => {
+	const filters = getDokployImageRepositories()
+		.map((repository) => `--filter ${quoteShellArg(`reference=${repository}`)}`)
+		.join(" ");
+	const { stdout: idsOutput } = await execAsync(
+		`docker image ls -q --no-trunc ${filters} | sort -u`,
+	);
+	const ids = idsOutput.split("\n").filter(Boolean);
+	if (ids.length === 0) {
+		return [];
+	}
+
+	const [{ stdout: imagesOutput }, { stdout: containersOutput }, uniqueSizes] =
+		await Promise.all([
+			execAsync(
+				`docker image inspect --format '{"id":{{json .Id}},"createdAt":{{json .Created}},"size":{{json .Size}},"tags":{{json .RepoTags}},"config":{{json .Config}}}' ${ids.join(" ")}`,
+			),
+			execAsync(
+				`ids=$(docker ps -aq); if [ -n "$ids" ]; then docker inspect --format '{"image":{{json .Image}},"running":{{json .State.Running}},"service":{{json (index .Config.Labels "com.docker.swarm.service.name")}}}' $ids; fi`,
+			),
+			getDockerUniqueImageSizes(),
+		]);
+
+	const containers = containersOutput
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => {
+			const container = JSON.parse(line) as {
+				image: string;
+				running: boolean;
+				service: string | null;
+			};
+			return {
+				image: container.image,
+				running: container.running,
+				isDokployTask: container.service === "dokploy",
+			};
+		});
+
+	return imagesOutput
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => {
+			const { id, createdAt, size, tags, config } = JSON.parse(line) as {
+				id: string;
+				createdAt: string;
+				size: number;
+				tags: string[] | null;
+				config: { Env?: string[] | null } | null;
+			};
+			const env = config?.Env ?? [];
+			const imageContainers = containers.filter(
+				(container) => container.image === id,
+			);
+			return {
+				id,
+				tags: tags ?? [],
+				createdAt,
+				sizeBytes: size,
+				uniqueSizeBytes: uniqueSizes.get(id) ?? null,
+				forkVersion: findEnvValue(env, "DOKPLOY_FORK_VERSION") ?? null,
+				officialVersion: findEnvValue(env, "DOKPLOY_OFFICIAL_VERSION") ?? null,
+				isCurrent: imageContainers.some(
+					(container) => container.isDokployTask && container.running,
+				),
+				dokployTaskContainers: imageContainers.filter(
+					(container) => container.isDokployTask && !container.running,
+				).length,
+				otherContainers: imageContainers.filter(
+					(container) => !container.isDokployTask,
+				).length,
+			};
+		})
+		.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+};
+
 export const getAgentHitsUpdateCommand = (
 	currentVersion: string,
 	forkVersion?: string | null,

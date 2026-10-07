@@ -304,6 +304,10 @@ export const UpdateServer = ({
 						keepImages={keepImages ?? null}
 						onChange={setKeepImagesChoice}
 						disabled={isPending || savedKeepImages === undefined}
+						pendingVersion={
+							isUpdateAvailable && latestVersion ? latestVersion : null
+						}
+						loadImages={!!isOpen}
 					/>
 				</div>
 

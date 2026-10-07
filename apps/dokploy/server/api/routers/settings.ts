@@ -21,6 +21,7 @@ import {
 	getAgentHitsUpdateCommand,
 	getDockerDiskUsage,
 	getDokployImageKeepCount,
+	getDokployImages,
 	getDokployImageTag,
 	getDokployVersionData,
 	getLogCleanupStatus,
@@ -701,6 +702,12 @@ export const settingsRouter = createTRPCRouter({
 	}),
 	getDokployImageKeepCount: adminProcedure.query(() => {
 		return getDokployImageKeepCount();
+	}),
+	getDokployImages: adminProcedure.query(async () => {
+		if (IS_CLOUD) {
+			return [];
+		}
+		return await getDokployImages();
 	}),
 	readDirectories: protectedProcedure
 		.input(apiServerSchema)
