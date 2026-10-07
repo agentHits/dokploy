@@ -13,6 +13,17 @@ const getDockerExecShellCommand = (command: string) => {
 	return `docker exec -i $CONTAINER_ID sh -c ${quoteRestoreShellArg(command)}`;
 };
 
+const RESTORE_PASSWORD_ENV = "DOKPLOY_DB_PASSWORD";
+
+// A failed restore streams its command text to the UI. There the password only
+// appears as an env assignment, which redactSensitiveText reliably masks.
+const getDockerExecShellCommandWithPassword = (
+	command: string,
+	databasePassword: string,
+) => {
+	return `docker exec -e ${RESTORE_PASSWORD_ENV}=${quoteRestoreShellArg(databasePassword)} -i $CONTAINER_ID sh -c ${quoteRestoreShellArg(command)}`;
+};
+
 // User-controlled values are passed to the container via `docker exec -e` and
 // read as "$VAR" inside a single-quoted inner script, so they never enter the
 // inner command text. See the matching note in backups/utils.ts.
@@ -32,8 +43,9 @@ export const getMariadbRestoreCommand = (
 	databasePassword: string,
 ) => {
 	const safeDatabase = normalizeRestoreDatabaseName(database);
-	return getDockerExecShellCommand(
-		`mariadb -u ${quoteRestoreShellArg(databaseUser)} -p${quoteRestoreShellArg(databasePassword)} ${quoteRestoreShellArg(safeDatabase)}`,
+	return getDockerExecShellCommandWithPassword(
+		`mariadb -u ${quoteRestoreShellArg(databaseUser)} -p"$${RESTORE_PASSWORD_ENV}" ${quoteRestoreShellArg(safeDatabase)}`,
+		databasePassword,
 	);
 };
 
@@ -42,8 +54,9 @@ export const getMysqlRestoreCommand = (
 	databasePassword: string,
 ) => {
 	const safeDatabase = normalizeRestoreDatabaseName(database);
-	return getDockerExecShellCommand(
-		`mysql -u root -p${quoteRestoreShellArg(databasePassword)} ${quoteRestoreShellArg(safeDatabase)}`,
+	return getDockerExecShellCommandWithPassword(
+		`mysql -u root -p"$${RESTORE_PASSWORD_ENV}" ${quoteRestoreShellArg(safeDatabase)}`,
+		databasePassword,
 	);
 };
 

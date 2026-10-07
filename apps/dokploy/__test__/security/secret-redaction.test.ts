@@ -404,6 +404,35 @@ describe("shared secret redaction helpers", () => {
 		}
 	});
 
+	it("masks passwords glued to mysql/mariadb -p and shell-escaped values", () => {
+		const messages = [
+			"docker exec -i $CONTAINER_ID sh -c 'mysql -u root -phunter2 appdb'",
+			"mariadb -u app -p'hunter2 x' appdb",
+			String.raw`mysqldump -u root -phunter2\&tail appdb`,
+			String.raw`mariadb-dump --user=app --password=hunter2\|tail appdb`,
+			String.raw`docker exec -e DOKPLOY_DB_PASSWORD=hunter2\&tail -i c sh`,
+			String.raw`MYSQL_PWD="hunter2\"tail" mysql -u root`,
+		];
+		for (const message of messages) {
+			const redacted = redactSensitiveText(message);
+
+			expect(redacted).not.toContain("hunter2");
+			expect(redacted).not.toContain("tail");
+			expect(redacted).toContain(REDACTED_SECRET_VALUE);
+		}
+
+		const untouched = [
+			"docker run -p 3306:3306 mysql:8",
+			"ssh -p 22 root@example.com 'mysql -u root -p appdb'",
+			"mysql -h db -P3306 -u root appdb",
+			"docker compose -p mysql-stack up -d",
+			"mkdir -p /var/lib/mysql",
+		];
+		for (const message of untouched) {
+			expect(redactSensitiveText(message)).toBe(message);
+		}
+	});
+
 	it("stores only redacted command output on ExecError", () => {
 		const error = new ExecError(
 			"Command failed: npm run build TOKEN=build-secret",
