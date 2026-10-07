@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/tooltip";
 import { api } from "@/utils/api";
 import { ToggleAutoCheckUpdates } from "./toggle-auto-check-updates";
+import { ToggleImageCleanup } from "./toggle-image-cleanup";
 import { UpdateWebServer } from "./update-webserver";
 
 interface Props {
@@ -58,6 +59,12 @@ export const UpdateServer = ({
 		updateData?.updateSource ?? "official",
 	);
 	const [isOpenInternal, setIsOpenInternal] = useState(false);
+	const { data: savedKeepImages } =
+		api.settings.getDokployImageKeepCount.useQuery();
+	const [keepImagesChoice, setKeepImagesChoice] = useState<number | null>();
+	// Stays undefined until the saved value loads, so the update leaves it as is.
+	const keepImages =
+		keepImagesChoice !== undefined ? keepImagesChoice : savedKeepImages;
 	const isAgentHitsUpdate =
 		updateSource === "agenthits" || dokployVersionData?.isFork;
 
@@ -291,8 +298,13 @@ export const UpdateServer = ({
 					</div>
 				)}
 
-				<div className="flex items-center justify-between pt-2">
+				<div className="flex flex-col gap-4 pt-2">
 					<ToggleAutoCheckUpdates disabled={isPending} />
+					<ToggleImageCleanup
+						keepImages={keepImages ?? null}
+						onChange={setKeepImagesChoice}
+						disabled={isPending || savedKeepImages === undefined}
+					/>
 				</div>
 
 				<div className="flex items-center justify-end mt-4">
@@ -301,7 +313,10 @@ export const UpdateServer = ({
 							Cancel
 						</Button>
 						{isUpdateAvailable ? (
-							<UpdateWebServer buttonClassName="w-auto" />
+							<UpdateWebServer
+								buttonClassName="w-auto"
+								keepImages={keepImages}
+							/>
 						) : (
 							<Button
 								variant="secondary"

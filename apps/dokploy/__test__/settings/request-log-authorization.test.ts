@@ -90,6 +90,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@dokploy/server", () => ({
 	CLEANUP_CRON_JOB: "0 0 * * *",
 	DEFAULT_UPDATE_DATA: {},
+	DOKPLOY_KEEP_IMAGES_ENV: "DOKPLOY_KEEP_IMAGES",
+	DOKPLOY_KEEP_IMAGES_MAX: 5,
+	DOKPLOY_KEEP_IMAGES_MIN: 3,
+	getDokployImageKeepCount: vi.fn(),
 	IS_CLOUD: false,
 	checkGPUStatus: mocks.checkGPUStatus,
 	checkPortInUse: mocks.checkPortInUse,

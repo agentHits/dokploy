@@ -67,6 +67,10 @@ const redactWebServerSettings = <T>(settings: T) => settings;
 vi.mock("@dokploy/server", () => ({
 	CLEANUP_CRON_JOB: "0 0 * * *",
 	DEFAULT_UPDATE_DATA: {},
+	DOKPLOY_KEEP_IMAGES_ENV: "DOKPLOY_KEEP_IMAGES",
+	DOKPLOY_KEEP_IMAGES_MAX: 5,
+	DOKPLOY_KEEP_IMAGES_MIN: 3,
+	getDokployImageKeepCount: vi.fn(),
 	IS_CLOUD: false,
 	checkGPUStatus: mocks.checkGPUStatus,
 	checkPortInUse: mocks.checkPortInUse,
@@ -419,11 +423,43 @@ describe("settings Docker server boundary", () => {
 			"v0.30.6",
 			"off_v0.29.8/Fork_159+next",
 			"v0.30.0",
+			undefined,
 		);
 		expect(mocks.spawnAsync).toHaveBeenCalledWith("sh", [
 			"-c",
 			"agenthits update command",
 		]);
+	});
+
+	it("passes the image keep count to the AgentHits update command", async () => {
+		mocks.getUpdateData.mockResolvedValue({
+			latestVersion: "off_v0.29.8/Fork_159+next",
+			updateAvailable: true,
+			updateSource: "agenthits",
+			latestOfficialVersion: "v0.30.0",
+		});
+		mocks.getAgentHitsUpdateCommand.mockReturnValue("agenthits update command");
+
+		await expect(createCaller().updateServer({ keepImages: 4 })).resolves.toBe(
+			true,
+		);
+
+		expect(mocks.getAgentHitsUpdateCommand).toHaveBeenCalledWith(
+			"v0.30.6",
+			"off_v0.29.8/Fork_159+next",
+			"v0.30.0",
+			4,
+		);
+	});
+
+	it("rejects image keep counts outside 3 to 5", async () => {
+		await expect(
+			createCaller().updateServer({ keepImages: 2 }),
+		).rejects.toThrow();
+		await expect(
+			createCaller().updateServer({ keepImages: 10 }),
+		).rejects.toThrow();
+		expect(mocks.spawnAsync).not.toHaveBeenCalled();
 	});
 
 	it("keeps official updates on the official Dokploy image path", async () => {
@@ -444,6 +480,29 @@ describe("settings Docker server boundary", () => {
 			"dokploy",
 		]);
 		expect(mocks.getAgentHitsUpdateCommand).not.toHaveBeenCalled();
+	});
+
+	it("turns the image cleanup off on official updates", async () => {
+		mocks.getUpdateData.mockResolvedValue({
+			latestVersion: "v0.30.0",
+			updateAvailable: true,
+			updateSource: "official",
+		});
+
+		await expect(
+			createCaller().updateServer({ keepImages: null }),
+		).resolves.toBe(true);
+
+		expect(mocks.spawnAsync).toHaveBeenCalledWith("docker", [
+			"service",
+			"update",
+			"--force",
+			"--image",
+			"dokploy/dokploy:v0.30.0",
+			"--env-add",
+			"DOKPLOY_KEEP_IMAGES=0",
+			"dokploy",
+		]);
 	});
 
 	it("requires api.read before generating the OpenAPI document", async () => {

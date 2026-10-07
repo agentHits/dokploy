@@ -259,10 +259,93 @@ export const getAgentHitsUpdateData = async (
 	};
 };
 
+export const DOKPLOY_KEEP_IMAGES_ENV = "DOKPLOY_KEEP_IMAGES";
+export const DOKPLOY_KEEP_IMAGES_MIN = 3;
+export const DOKPLOY_KEEP_IMAGES_MAX = 5;
+
+/** Returns how many Dokploy images to keep, or null when the cleanup is off. */
+export const getDokployImageKeepCount = () => {
+	const value = Number(process.env[DOKPLOY_KEEP_IMAGES_ENV]);
+	if (
+		!Number.isInteger(value) ||
+		value < DOKPLOY_KEEP_IMAGES_MIN ||
+		value > DOKPLOY_KEEP_IMAGES_MAX
+	) {
+		return null;
+	}
+	return value;
+};
+
+/** `--env-add` argument that stores the cleanup choice on the dokploy service; 0 turns it off. */
+export const getDokployKeepImagesEnvArg = (keepImages: number | null) =>
+	`--env-add ${quoteShellArg(`${DOKPLOY_KEEP_IMAGES_ENV}=${keepImages ?? 0}`)}`;
+
+const getImageRepository = (image: string) => {
+	const withoutDigest = image.split("@")[0] ?? image;
+	const lastSlash = withoutDigest.lastIndexOf("/");
+	const lastColon = withoutDigest.lastIndexOf(":");
+	// A colon before the last slash is a registry port, not a tag.
+	return lastColon > lastSlash
+		? withoutDigest.slice(0, lastColon)
+		: withoutDigest;
+};
+
+export const getDokployImageRepositories = () => [
+	...new Set([
+		getImageRepository(getAgentHitsUpdateImage()),
+		"dokploy/dokploy",
+	]),
+];
+
+/**
+ * Removes Dokploy web server images except the `keep` newest ones. Swarm keeps
+ * exited task containers of the dokploy service, and they pin old images, so
+ * those are removed first. Images used by running containers are never forced.
+ */
+export const getDokployImageCleanupCommand = (keep: number) => {
+	const filters = getDokployImageRepositories()
+		.map((repository) => `--filter ${quoteShellArg(`reference=${repository}`)}`)
+		.join(" ");
+
+	return `
+ids=$(docker image ls -q --no-trunc ${filters} | sort -u)
+if [ -z "$ids" ]; then
+	exit 0
+fi
+docker image inspect --format '{{.Created}} {{.Id}}' $ids | sort -r | awk '{print $2}' | tail -n +${keep + 1} | while read -r id; do
+	containers=$(docker ps -aq --filter "ancestor=$id" --filter status=exited --filter status=created --filter label=com.docker.swarm.service.name=dokploy)
+	if [ -n "$containers" ]; then
+		docker rm $containers || true
+	fi
+	echo "Removing old Dokploy image $id"
+	tags=$(docker image inspect --format '{{range .RepoTags}}{{.}} {{end}}' "$id")
+	if [ -n "$tags" ]; then
+		docker image rm $tags || true
+	fi
+	if docker image inspect "$id" >/dev/null 2>&1; then
+		docker image rm "$id" || true
+	fi
+done
+`;
+};
+
+export const cleanupOldDokployImages = async () => {
+	const keep = getDokployImageKeepCount();
+	if (!keep) {
+		return;
+	}
+	try {
+		await execAsync(getDokployImageCleanupCommand(keep));
+	} catch (error) {
+		console.error("Failed to clean up old Dokploy images", error);
+	}
+};
+
 export const getAgentHitsUpdateCommand = (
 	currentVersion: string,
 	forkVersion?: string | null,
 	officialVersion?: string | null,
+	keepImages?: number | null,
 ) => {
 	const forkVersionArg = forkVersion?.trim()
 		? `--env-add ${quoteShellArg(`DOKPLOY_FORK_VERSION=${forkVersion.trim()}`)}`
@@ -270,6 +353,8 @@ export const getAgentHitsUpdateCommand = (
 	const officialVersionArg = officialVersion?.trim()
 		? officialVersion.trim()
 		: getOfficialDokployVersion(currentVersion);
+	const keepImagesArg =
+		keepImages === undefined ? "" : getDokployKeepImagesEnvArg(keepImages);
 
 	return `
 fork_version_env_arg=""
@@ -281,6 +366,7 @@ docker service update --force \\
 	--env-add ${quoteShellArg(`RELEASE_TAG=${getAgentHitsUpdateTag()}`)} \\
 	--env-add ${quoteShellArg(`DOKPLOY_OFFICIAL_VERSION=${officialVersionArg}`)} \\
 	${forkVersionArg} \\
+	${keepImagesArg} \\
 	dokploy
 `;
 };
