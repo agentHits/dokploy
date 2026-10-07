@@ -365,6 +365,7 @@ export const RequestsTable = ({ dateRange }: RequestsTableProps) => {
 													<div className="flex items-center gap-2 bg-muted p-1 rounded">
 														<span>{value}</span>
 														<Copy
+															aria-label="Copy request address"
 															onClick={() => {
 																copy(value);
 																toast.success("Copied to clipboard");

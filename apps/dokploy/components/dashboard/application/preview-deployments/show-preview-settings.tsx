@@ -256,6 +256,7 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 														>
 															{label}
 															<X
+																aria-label={`Remove ${label}`}
 																className="size-3 cursor-pointer hover:text-destructive"
 																onClick={() => {
 																	const newLabels = [...(field.value || [])];
