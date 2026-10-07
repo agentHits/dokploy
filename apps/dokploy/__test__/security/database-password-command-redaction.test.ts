@@ -15,8 +15,12 @@ import {
 	getMysqlRestoreCommand,
 	getRestoreCommand,
 } from "@dokploy/server/utils/restore/utils";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildMysqlPasswordChangeCommand } from "../../server/api/utils/database-password";
+
+// Each case spawns bash plus stub binaries; on a busy CI runner the first
+// spawn alone has taken over the default 5 s.
+vi.setConfig({ testTimeout: 20_000 });
 
 const ROOT_PASSWORD = "Root&Secret|Pw(1)";
 const NEW_PASSWORD = "New&Secret|Pw(2)";

@@ -1,6 +1,10 @@
 import bcrypt from "bcrypt";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// The service hashes and compares with bcrypt at cost 12; the lock tests run
+// six of those, ~1.5 s locally and past the 5 s default on a busy CI runner.
+vi.setConfig({ testTimeout: 20_000 });
+
 const mocks = vi.hoisted(() => ({
 	sendEmailNotification: vi.fn(),
 	sendResendNotification: vi.fn(),

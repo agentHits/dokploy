@@ -9,14 +9,11 @@ RUN apt-get update \
     && ln -sf "$BUN_INSTALL/bin/bun" "$BUN_INSTALL/bin/bunx" \
     && npm install -g node-gyp@13.0.1
 
-FROM base AS build
-ARG DOKPLOY_OFFICIAL_VERSION=v0.29.8
-ARG DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_local
-ENV DOKPLOY_OFFICIAL_VERSION=$DOKPLOY_OFFICIAL_VERSION
-ENV DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION
+FROM base AS deps
+RUN apt-get update && apt-get install -y python3 make g++ git python3-pip pkg-config libsecret-1-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /usr/src/app
 
-# Copy workspace manifests first so the dependency install layer stays cached
+# Copy workspace manifests first so the dependency install layers stay cached
 # unless dependencies actually change.
 COPY package.json bun.lock ./
 COPY apps/api/package.json ./apps/api/package.json
@@ -24,7 +21,21 @@ COPY apps/dokploy/package.json ./apps/dokploy/package.json
 COPY apps/schedules/package.json ./apps/schedules/package.json
 COPY packages/server/package.json ./packages/server/package.json
 
-RUN apt-get update && apt-get install -y python3 make g++ git python3-pip pkg-config libsecret-1-dev && rm -rf /var/lib/apt/lists/*
+# Production dependencies get their own clean tree. Installing them over the
+# build-stage install kept Bun's isolated store (node_modules/.bun, 1.6 GB) in
+# the image, and packages/server resolved its imports through that store, so
+# the panel loaded every shared dependency into memory twice.
+FROM deps AS prod-deps
+RUN --mount=type=cache,id=bun,target=/root/.bun/install/cache \
+    bun install --production --frozen-lockfile --linker hoisted \
+    && rm -f node_modules/dokploy node_modules/@dokploy/api node_modules/@dokploy/schedules \
+    && mkdir -p packages/server/node_modules
+
+FROM deps AS build
+ARG DOKPLOY_OFFICIAL_VERSION=v0.29.8
+ARG DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_local
+ENV DOKPLOY_OFFICIAL_VERSION=$DOKPLOY_OFFICIAL_VERSION
+ENV DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION
 
 # Install dependencies
 RUN --mount=type=cache,id=bun,target=/root/.bun/install/cache bun install --frozen-lockfile
@@ -36,14 +47,9 @@ COPY . /usr/src/app
 
 ENV NODE_ENV=production
 RUN bun run --filter './packages/server' build
-RUN bun run --filter './apps/dokploy' build
-
-RUN bun install --production --frozen-lockfile --linker hoisted
-
-# Drop workspace symlinks in place so the runtime stage can copy node_modules
-# straight from this layer. Re-copying it through a staging dir gave it fresh
-# mtimes, which invalidated the layer cache and re-pushed ~2GB on every build.
-RUN rm -f node_modules/dokploy node_modules/@dokploy/api node_modules/@dokploy/schedules
+# The webpack cache (~700 MB) only speeds up the next build; keep it out of the image.
+RUN bun run --filter './apps/dokploy' build \
+    && rm -rf apps/dokploy/.next/cache
 
 FROM base AS dokploy
 WORKDIR /app
@@ -66,8 +72,10 @@ COPY --from=build /usr/src/app/apps/dokploy/package.json ./package.json
 COPY --from=build /usr/src/app/apps/dokploy/drizzle ./drizzle
 COPY .env.production ./.env
 COPY --from=build /usr/src/app/apps/dokploy/components.json ./components.json
-COPY --from=build /usr/src/app/node_modules ./node_modules
-COPY --from=build /usr/src/app/packages/server ./packages/server
+COPY --from=prod-deps /usr/src/app/node_modules ./node_modules
+COPY --from=prod-deps /usr/src/app/packages/server/node_modules ./packages/server/node_modules
+COPY --from=build /usr/src/app/packages/server/package.json ./packages/server/package.json
+COPY --from=build /usr/src/app/packages/server/dist ./packages/server/dist
 
 
 # Install docker

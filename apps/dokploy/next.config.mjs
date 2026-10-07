@@ -8,6 +8,9 @@ const nextConfig = {
 	reactStrictMode: true,
 	experimental: {
 		webpackMemoryOptimizations: true,
+		// By default every page bundle is loaded at startup; on a small server
+		// that is ~100 MB the panel holds even for pages nobody opens.
+		preloadEntriesOnStart: false,
 	},
 	typescript: {
 		ignoreBuildErrors: true,
