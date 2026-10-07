@@ -56,6 +56,7 @@ export const WebServer = () => {
 								Server IP: {webServerSettings?.serverIp}
 								{webServerSettings?.serverIp && (
 									<CopyIcon
+										aria-label="Copy server IP"
 										className="size-3.5 cursor-pointer hover:text-foreground transition-colors"
 										onClick={() => {
 											copy(webServerSettings.serverIp ?? "");
