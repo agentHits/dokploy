@@ -11,7 +11,7 @@ concurrency:
 jobs:
   cherry-pick:
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'hotfix')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:

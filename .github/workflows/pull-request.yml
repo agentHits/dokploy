@@ -16,7 +16,7 @@ jobs:
     name: audit and typecheck
     # Only the owner's own PRs reach the Mac mini runners. A fork PR could rewrite
     # this line, so the repo also requires approval for every outside contributor.
-    runs-on: ${{ (github.event.pull_request.user.login == github.repository_owner && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "dokploy-ci"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event.pull_request.user.login == github.repository_owner && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "dokploy-ci"]') || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -39,7 +39,7 @@ jobs:
         if: ${{ !cancelled() }}
 
   pr-check:
-    runs-on: ${{ (github.event.pull_request.user.login == github.repository_owner && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "dokploy-ci"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event.pull_request.user.login == github.repository_owner && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "dokploy-ci"]') || 'ubuntu-24.04' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
