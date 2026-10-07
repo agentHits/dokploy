@@ -29,6 +29,7 @@ const writeFakeDocker = (
 		latestOfficialVersion?: string;
 		latestForkVersion?: string;
 		serviceEnv: string[];
+		failPull?: boolean;
 	},
 ) => {
 	const dockerPath = path.join(dir, "docker");
@@ -63,6 +64,10 @@ Manifests:
   Platform:    linux/amd64
 EOF
 	exit 0
+fi
+
+if [ "$1" = "pull" ]; then
+	exit ${options.failPull ? 1 : 0}
 fi
 
 if [ "$1" = "service" ] && [ "$2" = "update" ]; then
@@ -134,6 +139,7 @@ const runUpdateScript = (
 			env: {
 				...process.env,
 				AGENTHITS_SKIP_HOST_CHECK: "1",
+				AGENTHITS_PULL_RETRY_DELAY: "0",
 				DOCKER_CALL_LOG: callLog,
 				PATH: `${tempDir}:${process.env.PATH}`,
 			},
@@ -206,10 +212,14 @@ describe("AgentHits update script", () => {
 		expect(result.status).toBe(0);
 		expect(result.stdout).toContain("Updating AgentHits Dokploy");
 		expect(calls).toContain("service update");
-		expect(calls).not.toContain("pull ");
+		expect(calls).toContain("--update-failure-action rollback");
+		expect(calls.indexOf("pull ")).toBeGreaterThanOrEqual(0);
+		expect(calls.indexOf("pull ")).toBeLessThan(
+			calls.indexOf("service update"),
+		);
 	});
 
-	it("updates the service without a separate docker pull when the digest changed", () => {
+	it("pulls the new image before updating the service when the digest changed", () => {
 		const { result, calls } = runUpdateScript({
 			currentDigest: "sha256:old",
 			latestIndexDigest: "sha256:index",
@@ -223,10 +233,14 @@ describe("AgentHits update script", () => {
 		expect(result.status).toBe(0);
 		expect(result.stdout).toContain("Updating AgentHits Dokploy");
 		expect(calls).toContain("service update");
-		expect(calls).not.toContain("pull ");
+		expect(calls).toContain("--update-failure-action rollback");
+		expect(calls.indexOf("pull ")).toBeGreaterThanOrEqual(0);
+		expect(calls.indexOf("pull ")).toBeLessThan(
+			calls.indexOf("service update"),
+		);
 	});
 
-	it("updates metadata without a separate docker pull when only service env is stale", () => {
+	it("pulls before refreshing metadata when only service env is stale", () => {
 		const { result, calls } = runUpdateScript({
 			currentDigest: "sha256:index",
 			latestIndexDigest: "sha256:index",
@@ -244,7 +258,28 @@ describe("AgentHits update script", () => {
 		expect(calls).toContain(
 			"--env-add DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_160+latest",
 		);
-		expect(calls).not.toContain("pull ");
+		expect(calls.indexOf("pull ")).toBeGreaterThanOrEqual(0);
+		expect(calls.indexOf("pull ")).toBeLessThan(
+			calls.indexOf("service update"),
+		);
+	});
+
+	it("leaves the running service untouched when the image cannot be pulled", () => {
+		const { result, calls } = runUpdateScript({
+			currentDigest: "sha256:old",
+			latestIndexDigest: "sha256:index",
+			latestPlatformDigest: "sha256:platform",
+			failPull: true,
+			serviceEnv: [
+				"RELEASE_TAG=agenthits-dev",
+				"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+			],
+		});
+
+		expect(result.status).not.toBe(0);
+		expect(result.stderr).toContain("left unchanged");
+		expect(calls.match(/^pull /gm)).toHaveLength(3);
+		expect(calls).not.toContain("service update");
 	});
 
 	it("keeps install-agenthits.sh update as a compatibility entrypoint", () => {
