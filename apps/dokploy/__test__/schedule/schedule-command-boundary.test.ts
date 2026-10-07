@@ -69,6 +69,7 @@ describe("schedule command boundary", () => {
 		});
 		mocks.execAsyncRemote.mockResolvedValue({ stdout: "", stderr: "" });
 		mocks.getServiceContainer.mockResolvedValue({ Id: "container-one" });
+		mocks.spawnAsync.mockResolvedValue(undefined);
 	});
 
 	it("quotes remote application docker exec command and log paths", async () => {
@@ -117,6 +118,70 @@ describe("schedule command boundary", () => {
 			"bash '/remote schedules/schedule-one/script.sh'",
 		);
 		expect(command).toContain("tee -a '/tmp/deployment log;id.log'");
+	});
+
+	it("runs dokploy-server schedule scripts from the local schedule directory", async () => {
+		mocks.findScheduleById.mockResolvedValue({
+			appName: "schedule-one",
+			command: "",
+			shellType: "bash",
+			scheduleType: "dokploy-server",
+		});
+
+		await expect(runCommand("schedule-1")).resolves.toMatchObject({
+			deploymentId: "deployment-1",
+			status: "done",
+		});
+
+		expect(mocks.spawnAsync).toHaveBeenCalledTimes(1);
+		expect(mocks.spawnAsync).toHaveBeenCalledWith(
+			"bash",
+			["-c", "./script.sh"],
+			expect.any(Function),
+			{ cwd: "/local schedules/schedule-one" },
+		);
+		expect(mocks.execAsyncRemote).not.toHaveBeenCalled();
+	});
+
+	it("marks dokploy-server schedule runs as failed when the script fails", async () => {
+		mocks.findScheduleById.mockResolvedValue({
+			appName: "schedule-one",
+			command: "",
+			shellType: "bash",
+			scheduleType: "dokploy-server",
+		});
+		mocks.spawnAsync.mockRejectedValue(new Error("exit code 1"));
+
+		await expect(runCommand("schedule-1")).resolves.toMatchObject({
+			deploymentId: "deployment-1",
+			status: "error",
+		});
+		expect(mocks.updateDeploymentStatus).toHaveBeenCalledWith(
+			"deployment-1",
+			"error",
+		);
+	});
+
+	it("runs only the container command for application schedules", async () => {
+		mocks.findScheduleById.mockResolvedValue({
+			appName: "schedule-one",
+			application: { appName: "app-one", serverId: null },
+			command: "echo done",
+			shellType: "sh",
+			scheduleType: "application",
+		});
+
+		await expect(runCommand("schedule-1")).resolves.toMatchObject({
+			deploymentId: "deployment-1",
+			status: "done",
+		});
+
+		expect(mocks.spawnAsync).toHaveBeenCalledTimes(1);
+		expect(mocks.spawnAsync).toHaveBeenCalledWith(
+			"docker",
+			["exec", "container-one", "sh", "-c", "echo done"],
+			expect.any(Function),
+		);
 	});
 
 	it("rejects unsafe stored schedule app names before remote script execution", async () => {

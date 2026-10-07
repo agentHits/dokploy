@@ -31,6 +31,7 @@ import { getServiceContainerCommand } from "@dokploy/server/utils/backups/utils"
 import {
 	preserveSecretPlaceholderFields,
 	redactDatabaseServiceSecrets,
+	redactDatabaseServiceSecretsFor,
 } from "@dokploy/server/utils/security/redaction";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
@@ -39,7 +40,10 @@ import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import { buildMongoPasswordChangeCommand } from "@/server/api/utils/database-password";
 import { assertTargetEnvironmentAccess } from "@/server/api/utils/placement-access";
-import { assertServiceEnvironmentReadAccess } from "@/server/api/utils/service-environment";
+import {
+	assertServiceEnvironmentReadAccess,
+	getSharedEnvReadAccess,
+} from "@/server/api/utils/service-environment";
 import {
 	apiChangeMongoStatus,
 	apiCreateMongo,
@@ -144,7 +148,10 @@ export const mongoRouter = createTRPCRouter({
 					message: "You are not authorized to access this mongo",
 				});
 			}
-			return redactDatabaseServiceSecrets(mongo);
+			return redactDatabaseServiceSecretsFor(
+				mongo,
+				await getSharedEnvReadAccess(ctx),
+			);
 		}),
 
 	revealEnvironment: protectedProcedure
