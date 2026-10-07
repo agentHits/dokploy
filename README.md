@@ -31,32 +31,31 @@ Fork: off_v0.29.8/Fork_<commits-since-official>+<short-sha>
 базы. Преимущества форка описаны в
 [docs/agenthits-fork.md](docs/agenthits-fork.md).
 
-## Установка последней версии на VPS
+## Установка последней версии
 
-Требования:
+Installer сам определяет систему: Linux (Ubuntu, Debian, Fedora, CentOS, RHEL,
+Rocky, Alma, Arch, openSUSE, Alpine и их производные, x86 и ARM), macOS (через
+OrbStack) и Windows (через WSL2). Подробности:
+[docs/agenthits-install.md](docs/agenthits-install.md).
 
-- чистый Linux VPS с root или sudo доступом;
-- архитектура `x86_64 / amd64`;
-- свободные порты `80`, `443` и `3000`;
-- публичный доступ к GitHub, GHCR и Docker Hub.
+Требования: свободные порты `80`, `443` и `3000`, доступ к GitHub, GHCR и
+Docker Hub.
 
-Быстрая установка под root:
+Linux, macOS, WSL (на Linux без root скрипт сам вызовет `sudo`, на macOS
+запускайте без `sudo`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev/install-agenthits.sh | bash
 ```
 
-Если вы подключены не под root:
+Windows, PowerShell от администратора:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev/install-agenthits.sh | sudo bash
+```powershell
+irm https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev/install-agenthits.ps1 | iex
 ```
 
-После установки откройте:
-
-```text
-http://YOUR_VPS_IP:3000
-```
+После установки откройте адрес, который напечатает installer, обычно
+`http://<IP>:3000`.
 
 Проверка:
 
