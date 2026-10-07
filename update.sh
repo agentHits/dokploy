@@ -36,6 +36,24 @@ install_docker_if_missing() {
 	fi
 }
 
+# The service updates stop-first, so a pull that fails after the old task has
+# stopped leaves Dokploy down; pulling first keeps it running on failure.
+pull_update_image() {
+	local attempt=1
+	while [ "$attempt" -le 3 ]; do
+		if docker pull "$DOKPLOY_IMAGE"; then
+			return 0
+		fi
+		if [ "$attempt" -lt 3 ]; then
+			echo "docker pull failed (attempt $attempt of 3), retrying in 10 seconds" >&2
+			sleep "${AGENTHITS_PULL_RETRY_DELAY:-10}"
+		fi
+		attempt=$((attempt + 1))
+	done
+	echo "Error: could not pull $DOKPLOY_IMAGE; the running Dokploy service was left unchanged." >&2
+	exit 1
+}
+
 get_service_image() {
 	docker service inspect dokploy --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}'
 }
@@ -249,27 +267,20 @@ update_agenthits_dokploy() {
 		echo "Latest image digest: $latest_index_digest"
 	fi
 
+	pull_update_image
+
+	local update_args=(
+		--image "$DOKPLOY_IMAGE"
+		--update-failure-action rollback
+		--env-add RELEASE_TAG="$DOKPLOY_RELEASE_TAG"
+		--env-add "DOKPLOY_OFFICIAL_VERSION=$DOKPLOY_OFFICIAL_VERSION"
+	)
 	if [ -n "${DOKPLOY_FORK_VERSION:-}" ]; then
-		docker service update \
-			--image "$DOKPLOY_IMAGE" \
-			--env-add RELEASE_TAG="$DOKPLOY_RELEASE_TAG" \
-			--env-add "DOKPLOY_OFFICIAL_VERSION=$DOKPLOY_OFFICIAL_VERSION" \
-			--env-add "DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION" \
-			dokploy
+		update_args+=(--env-add "DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION")
 	elif printf '%s\n' "$service_env" | grep -q '^DOKPLOY_FORK_VERSION='; then
-		docker service update \
-			--image "$DOKPLOY_IMAGE" \
-			--env-add RELEASE_TAG="$DOKPLOY_RELEASE_TAG" \
-			--env-add "DOKPLOY_OFFICIAL_VERSION=$DOKPLOY_OFFICIAL_VERSION" \
-			--env-rm DOKPLOY_FORK_VERSION \
-			dokploy
-	else
-		docker service update \
-			--image "$DOKPLOY_IMAGE" \
-			--env-add RELEASE_TAG="$DOKPLOY_RELEASE_TAG" \
-			--env-add "DOKPLOY_OFFICIAL_VERSION=$DOKPLOY_OFFICIAL_VERSION" \
-			dokploy
+		update_args+=(--env-rm DOKPLOY_FORK_VERSION)
 	fi
+	docker service update "${update_args[@]}" dokploy
 
 	echo "AgentHits Dokploy updated to $DOKPLOY_IMAGE"
 }
