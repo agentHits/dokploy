@@ -13,6 +13,7 @@ import { getDockerHost } from "../utils/docker";
 import { canAccessTerminalOverWss } from "./authorize";
 import { verifyWebSocketOrigin } from "./origin";
 import { canAccessServerTerminalWebSocket } from "./server-permission";
+import { rejectTerminalWithoutSuperSession } from "./super-session";
 import {
 	parseResizeMessage,
 	parseTerminalSize,
@@ -114,6 +115,10 @@ export const setupTerminalWebSocketServer = (
 
 		if (!(await canAccessTerminalOverWss(user, session, serverId))) {
 			ws.close(4003, "Not authorized");
+			return;
+		}
+
+		if (await rejectTerminalWithoutSuperSession(ws, user, session)) {
 			return;
 		}
 
