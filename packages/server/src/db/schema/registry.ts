@@ -65,10 +65,10 @@ const createSchema = createInsertSchema(registry, {
 	registryName: z.string().min(1),
 	username: registryUsernameSchema,
 	password: z.string().min(1),
-	registryUrl: registryUrlSchema,
+	registryUrl: registryUrlSchema.optional(),
 	organizationId: z.string().min(1),
-	registryId: z.string().min(1),
-	registryType: z.enum(["cloud"]),
+	registryId: z.string().min(1).optional(),
+	registryType: z.enum(["cloud"]).optional(),
 	imagePrefix: z.string().nullable().optional(),
 });
 

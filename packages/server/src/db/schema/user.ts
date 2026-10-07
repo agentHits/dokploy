@@ -90,7 +90,7 @@ export const usersRelations = relations(user, ({ one, many }) => ({
 }));
 
 const createSchema = createInsertSchema(user, {
-	id: z.string().min(1),
+	id: z.string().min(1).optional(),
 	isRegistered: z.boolean().optional(),
 }).omit({
 	role: true,

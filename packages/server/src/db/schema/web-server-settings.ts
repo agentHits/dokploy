@@ -130,7 +130,7 @@ export const webServerSettingsRelations = relations(
 );
 
 const createSchema = createInsertSchema(webServerSettings, {
-	id: z.string().min(1),
+	id: z.string().min(1).optional(),
 });
 
 export const apiUpdateWebServerSettings = createSchema.partial().extend({

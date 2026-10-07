@@ -111,7 +111,7 @@ export const MountssRelations = relations(mounts, ({ one }) => ({
 }));
 
 const createSchema = createInsertSchema(mounts, {
-	applicationId: z.string(),
+	applicationId: z.string().nullable().optional(),
 	type: z.enum(["bind", "volume", "file"]),
 	hostPath: z.string().nullable().optional(),
 	volumeName: dockerVolumeNameSchema.nullable().optional(),
@@ -119,16 +119,18 @@ const createSchema = createInsertSchema(mounts, {
 	mountPath: z.string().min(1),
 	mountId: z.string().optional(),
 	filePath: z.string().nullable().optional(),
-	serviceType: z.enum([
-		"application",
-		"postgres",
-		"mysql",
-		"mariadb",
-		"mongo",
-		"redis",
-		"compose",
-		"libsql",
-	]),
+	serviceType: z
+		.enum([
+			"application",
+			"postgres",
+			"mysql",
+			"mariadb",
+			"mongo",
+			"redis",
+			"compose",
+			"libsql",
+		])
+		.optional(),
 });
 
 export const apiCreateMount = createSchema

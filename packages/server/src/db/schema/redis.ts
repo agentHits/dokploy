@@ -108,43 +108,43 @@ export const redisRelations = relations(redis, ({ one, many }) => ({
 }));
 
 const createSchema = createInsertSchema(redis, {
-	redisId: z.string(),
+	redisId: z.string().optional(),
 	appName: z
 		.string()
 		.min(1)
 		.max(63)
 		.regex(APP_NAME_REGEX, APP_NAME_MESSAGE)
 		.optional(),
-	createdAt: z.string(),
+	createdAt: z.string().optional(),
 	name: z.string().min(1),
 	databasePassword: z.string().regex(DATABASE_PASSWORD_REGEX, {
 		message: DATABASE_PASSWORD_MESSAGE,
 	}),
 	dockerImage: z.string().default("redis:8"),
-	command: z.string().optional(),
-	args: z.array(z.string()).optional(),
-	env: z.string().optional(),
+	command: z.string().nullable().optional(),
+	args: z.array(z.string()).nullable().optional(),
+	env: z.string().nullable().optional(),
 	memoryReservation: z.string().nullable().optional(),
 	memoryLimit: z.string().nullable().optional(),
 	cpuReservation: z.string().nullable().optional(),
 	cpuLimit: z.string().nullable().optional(),
 	environmentId: z.string(),
-	applicationStatus: z.enum(["idle", "running", "done", "error"]),
+	applicationStatus: z.enum(["idle", "running", "done", "error"]).optional(),
 	externalPort: z.number().nullable().optional(),
 	description: z.string().nullable().optional(),
 	serverId: z.string().nullable().optional(),
-	healthCheckSwarm: HealthCheckSwarmSchema.nullable(),
-	restartPolicySwarm: RestartPolicySwarmSchema.nullable(),
-	placementSwarm: PlacementSwarmSchema.nullable(),
-	updateConfigSwarm: UpdateConfigSwarmSchema.nullable(),
-	rollbackConfigSwarm: UpdateConfigSwarmSchema.nullable(),
-	modeSwarm: ServiceModeSwarmSchema.nullable(),
-	labelsSwarm: LabelsSwarmSchema.nullable(),
-	networkSwarm: NetworkSwarmSchema.nullable(),
-	stopGracePeriodSwarm: z.number().nullable(),
-	endpointSpecSwarm: EndpointSpecSwarmSchema.nullable(),
-	ulimitsSwarm: UlimitsSwarmSchema.nullable(),
-	networkIds: z.array(z.string()).optional(),
+	healthCheckSwarm: HealthCheckSwarmSchema.nullable().optional(),
+	restartPolicySwarm: RestartPolicySwarmSchema.nullable().optional(),
+	placementSwarm: PlacementSwarmSchema.nullable().optional(),
+	updateConfigSwarm: UpdateConfigSwarmSchema.nullable().optional(),
+	rollbackConfigSwarm: UpdateConfigSwarmSchema.nullable().optional(),
+	modeSwarm: ServiceModeSwarmSchema.nullable().optional(),
+	labelsSwarm: LabelsSwarmSchema.nullable().optional(),
+	networkSwarm: NetworkSwarmSchema.nullable().optional(),
+	stopGracePeriodSwarm: z.number().nullable().optional(),
+	endpointSpecSwarm: EndpointSpecSwarmSchema.nullable().optional(),
+	ulimitsSwarm: UlimitsSwarmSchema.nullable().optional(),
+	networkIds: z.array(z.string()).nullable().optional(),
 	detachDokployNetwork: z.boolean().optional(),
 });
 

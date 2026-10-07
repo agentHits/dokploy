@@ -74,9 +74,9 @@ export const projectTagRelations = relations(projectTags, ({ one }) => ({
 }));
 
 const createSchema = createInsertSchema(tags, {
-	tagId: z.string().min(1),
+	tagId: z.string().min(1).optional(),
 	name: z.string().min(1),
-	color: z.string().optional(),
+	color: z.string().nullable().optional(),
 });
 
 export const apiCreateTag = createSchema.pick({

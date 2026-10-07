@@ -179,13 +179,13 @@ export const deploymentsRelations = relations(deployments, ({ one }) => ({
 
 const schema = createInsertSchema(deployments, {
 	title: z.string().min(1),
-	status: z.string().default("running"),
+	status: z.string().default("running").nullable().optional(),
 	logPath: z.string().min(1),
-	applicationId: z.string(),
-	composeId: z.string(),
-	description: z.string().optional(),
-	previewDeploymentId: z.string(),
-	buildServerId: z.string(),
+	applicationId: z.string().nullable().optional(),
+	composeId: z.string().nullable().optional(),
+	description: z.string().nullable().optional(),
+	previewDeploymentId: z.string().nullable().optional(),
+	buildServerId: z.string().nullable().optional(),
 });
 export const apiCreateDeployment = schema
 	.pick({

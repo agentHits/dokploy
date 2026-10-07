@@ -182,7 +182,7 @@ export const backupsRelations = relations(backups, ({ one, many }) => ({
 }));
 
 const createSchema = createInsertSchema(backups, {
-	backupId: z.string(),
+	backupId: z.string().optional(),
 	destinationId: z.string(),
 	enabled: z.boolean().nullable().optional(),
 	prefix: z.string().min(1),

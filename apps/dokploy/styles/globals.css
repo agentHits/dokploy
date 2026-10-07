@@ -306,6 +306,9 @@ body[data-scroll-locked] [data-slot="sidebar-inset"] {
 
 	.xterm .xterm-viewport {
 		overflow-y: auto !important;
+		/* xterm 6 paints the theme background on its new scroll container and
+		   leaves this element on xterm.css's #000, which hid our transparent theme. */
+		background-color: transparent !important;
 	}
 
 	.xterm .xterm-screen {

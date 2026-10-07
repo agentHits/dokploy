@@ -58,8 +58,8 @@ const createSchema = createInsertSchema(patch, {
 	content: z.string(),
 	type: z.enum(["create", "update", "delete"]).optional(),
 	enabled: z.boolean().optional(),
-	applicationId: z.string().optional(),
-	composeId: z.string().optional(),
+	applicationId: z.string().nullable().optional(),
+	composeId: z.string().nullable().optional(),
 });
 
 export const apiCreatePatch = createSchema

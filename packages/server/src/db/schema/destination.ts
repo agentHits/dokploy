@@ -43,9 +43,9 @@ export const destinationsRelations = relations(
 );
 
 const createSchema = createInsertSchema(destinations, {
-	destinationId: z.string(),
+	destinationId: z.string().optional(),
 	name: z.string().min(1),
-	provider: z.string(),
+	provider: z.string().nullable().optional(),
 	accessKey: z.string(),
 	bucket: z.string(),
 	endpoint: z.string(),
@@ -58,7 +58,9 @@ const createSchema = createInsertSchema(destinations, {
 				.regex(ADDITIONAL_FLAG_REGEX, ADDITIONAL_FLAG_ERROR)
 				.refine(isRcloneAdditionalFlagAllowed, RCLONE_ADDITIONAL_FLAG_ERROR),
 		)
-		.default([]),
+		.default([])
+		.nullable()
+		.optional(),
 });
 
 export const apiCreateDestination = createSchema

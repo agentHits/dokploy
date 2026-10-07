@@ -33,7 +33,7 @@ export const securityRelations = relations(security, ({ one }) => ({
 	}),
 }));
 const createSchema = createInsertSchema(security, {
-	securityId: z.string().min(1),
+	securityId: z.string().min(1).optional(),
 	username: z.string().min(1),
 	password: z.string().min(1),
 });
