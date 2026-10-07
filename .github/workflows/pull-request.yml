@@ -32,6 +32,8 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # Leaves Mac mini runners free for a second PR instead of one PR taking all.
+      max-parallel: 2
       matrix:
         job: [build, test, typecheck]
     steps:
