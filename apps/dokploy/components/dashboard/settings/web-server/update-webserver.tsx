@@ -6,7 +6,7 @@ import {
 	RefreshCw,
 	XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
 	AlertDialog,
@@ -22,6 +22,16 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { api } from "@/utils/api";
+import {
+	advanceUpdateProgress,
+	createUpdateProgress,
+	failUpdateProgress,
+	isUpdateFinished,
+	UPDATE_POLL_MS,
+	type UpdateProgress,
+	type UpdateProgressEvent,
+} from "./update-progress";
+import { UpdateStatusPanel } from "./update-status-panel";
 
 type ServiceStatus = {
 	status: "healthy" | "unhealthy";
@@ -33,10 +43,7 @@ type HealthResult = {
 	traefik: ServiceStatus;
 };
 
-const HEALTH_POLL_MS = 2000;
 const HEALTH_TIMEOUT_MS = 5000;
-// Pulling a 4+ GB image on a slow link can take several minutes.
-const RESTART_WAIT_MS = 20 * 60 * 1000;
 
 type ModalState = "idle" | "checking" | "results" | "updating";
 
@@ -70,7 +77,11 @@ export const UpdateWebServer = ({
 	const [modalState, setModalState] = useState<ModalState>("idle");
 	const [open, setOpen] = useState(false);
 	const [healthResult, setHealthResult] = useState<HealthResult | null>(null);
+	const [progress, setProgress] = useState<UpdateProgress | null>(null);
+	const [now, setNow] = useState(() => Date.now());
+	const unmountedRef = useRef(false);
 
+	const utils = api.useUtils();
 	const { mutateAsync: updateServer } = api.settings.updateServer.useMutation();
 	const { refetch: checkHealth } =
 		api.settings.checkInfrastructureHealth.useQuery(undefined, {
@@ -112,47 +123,108 @@ export const UpdateWebServer = ({
 	const sleep = (ms: number) =>
 		new Promise((resolve) => setTimeout(resolve, ms));
 
-	// The old server keeps answering while the new image is pulled, so wait
-	// until it goes down once before treating a healthy answer as the new one.
-	const waitForRestart = async () => {
-		const startedAt = Date.now();
-		while (await isServerUp()) {
-			if (Date.now() - startedAt > RESTART_WAIT_MS) {
-				throw new Error("The server did not restart");
-			}
-			await sleep(HEALTH_POLL_MS);
+	useEffect(() => {
+		unmountedRef.current = false;
+		return () => {
+			unmountedRef.current = true;
+		};
+	}, []);
+
+	const isTracking =
+		modalState === "updating" &&
+		progress !== null &&
+		!isUpdateFinished(progress);
+
+	useEffect(() => {
+		if (!isTracking) {
+			return;
 		}
-		while (!(await isServerUp())) {
-			await sleep(HEALTH_POLL_MS);
+		const interval = setInterval(() => setNow(Date.now()), 1000);
+		return () => clearInterval(interval);
+	}, [isTracking]);
+
+	// The old server answers the status query while it pulls the image; while
+	// Dokploy restarts only /api/health tells when it is back.
+	const probe = async (
+		current: UpdateProgress,
+	): Promise<UpdateProgressEvent> => {
+		if (current.phase === "restarting") {
+			return (await isServerUp())
+				? { type: "up", at: Date.now() }
+				: { type: "tick", at: Date.now() };
+		}
+		try {
+			const status = await utils.client.settings.getServerUpdateStatus.query(
+				undefined,
+				{ signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) },
+			);
+			return { type: "status", status, at: Date.now() };
+		} catch {
+			return (await isServerUp())
+				? { type: "tick", at: Date.now() }
+				: { type: "down", at: Date.now() };
 		}
 	};
 
-	const handleConfirm = async () => {
-		try {
-			setModalState("updating");
-			await updateServer(keepImages === undefined ? undefined : { keepImages });
-			await waitForRestart();
+	const trackUpdate = async () => {
+		let current = createUpdateProgress(Date.now());
+		setNow(current.startedAt);
+		setProgress(current);
 
+		try {
+			await updateServer(keepImages === undefined ? undefined : { keepImages });
+		} catch (error) {
+			console.error("Error updating server:", error);
+			current = failUpdateProgress(
+				current,
+				"downloading",
+				error instanceof Error && error.message
+					? error.message
+					: "Could not start the update.",
+				Date.now(),
+			);
+		}
+
+		while (!isUpdateFinished(current) && !unmountedRef.current) {
+			await sleep(UPDATE_POLL_MS);
+			const event = await probe(current);
+			current = advanceUpdateProgress(advanceUpdateProgress(current, event), {
+				type: "tick",
+				at: Date.now(),
+			});
+			setProgress(current);
+		}
+		setProgress(current);
+		setNow(Date.now());
+		return current;
+	};
+
+	const handleConfirm = async () => {
+		setModalState("updating");
+		const result = await trackUpdate();
+
+		if (result.phase === "done") {
 			toast.success(
 				"The server has been updated. The page will be reloaded to reflect the changes...",
 			);
 			setTimeout(() => {
 				window.location.reload();
 			}, 2000);
-		} catch (error) {
-			setModalState("results");
-			console.error("Error updating server:", error);
+		} else if (result.phase === "failed") {
 			toast.error(
 				"The server did not restart with the new version. Check the Dokploy service logs and try again.",
 			);
 		}
 	};
 
+	const updateFailed = progress?.phase === "failed";
+
 	const handleClose = () => {
-		if (modalState !== "updating") {
+		if (modalState !== "updating" || updateFailed) {
 			setOpen(false);
 			setModalState("idle");
 			setHealthResult(null);
+			setProgress(null);
 		}
 	};
 
@@ -179,7 +251,12 @@ export const UpdateWebServer = ({
 						{modalState === "checking" && "Verifying Services..."}
 						{modalState === "results" &&
 							(allHealthy ? "Ready to Update" : "Service Issues Detected")}
-						{modalState === "updating" && "Server update in progress"}
+						{modalState === "updating" &&
+							(updateFailed
+								? "Server update failed"
+								: progress?.phase === "done"
+									? "Server updated"
+									: "Server update in progress")}
 					</AlertDialogTitle>
 					<AlertDialogDescription asChild>
 						<div>
@@ -187,10 +264,9 @@ export const UpdateWebServer = ({
 								<span>
 									This will update the web server to the selected latest build.
 									AgentHits fork installs update from the AgentHits GHCR image.
-									The new image is downloaded first, so the panel is
-									unavailable only for about 20 seconds while Dokploy
-									restarts. The page will be reloaded once the update is
-									finished.
+									The new image is downloaded first, so the panel is unavailable
+									only for about 20 seconds while Dokploy restarts. The page
+									will be reloaded once the update is finished.
 									<br />
 									<br />
 									We recommend verifying that all services are running before
@@ -246,12 +322,8 @@ export const UpdateWebServer = ({
 								</div>
 							)}
 
-							{modalState === "updating" && (
-								<span className="flex items-center gap-2">
-									<Loader2 className="animate-spin h-4 w-4" />
-									Downloading the new image. The panel keeps working meanwhile;
-									it is unavailable for about 20 seconds while Dokploy restarts.
-								</span>
+							{modalState === "updating" && progress && (
+								<UpdateStatusPanel progress={progress} now={now} />
 							)}
 						</div>
 					</AlertDialogDescription>
@@ -266,6 +338,11 @@ export const UpdateWebServer = ({
 						<AlertDialogAction onClick={handleConfirm}>
 							Confirm
 						</AlertDialogAction>
+					</AlertDialogFooter>
+				)}
+				{modalState === "updating" && updateFailed && (
+					<AlertDialogFooter>
+						<AlertDialogCancel onClick={handleClose}>Close</AlertDialogCancel>
 					</AlertDialogFooter>
 				)}
 				{modalState === "results" && (

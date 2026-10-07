@@ -25,6 +25,7 @@ import {
 	getDokployVersionData,
 	getLogCleanupStatus,
 	getOfficialUpdateCommand,
+	getServerUpdateStatus,
 	getUpdateData,
 	getWebServerSettings,
 	IS_CLOUD,
@@ -45,8 +46,8 @@ import {
 	resolveDockerDiskUsageDetailLimit,
 	sendDockerCleanupNotifications,
 	setupGPUSupport,
-	spawnAsync,
 	startLogCleanup,
+	startServerUpdate,
 	stopLogCleanup,
 	updateLetsEncryptEmail,
 	updateServerById,
@@ -658,22 +659,16 @@ export const settingsRouter = createTRPCRouter({
 			const keepImages = input?.keepImages;
 			const data = await getUpdateData(packageInfo.version);
 			if (data.updateAvailable) {
-				if (data.updateSource === "agenthits") {
-					void spawnAsync("sh", [
-						"-c",
-						getAgentHitsUpdateCommand(
-							packageInfo.version,
-							data.latestVersion,
-							data.latestOfficialVersion,
-							keepImages,
-						),
-					]);
-				} else {
-					void spawnAsync("sh", [
-						"-c",
-						getOfficialUpdateCommand(data.latestVersion ?? "", keepImages),
-					]);
-				}
+				startServerUpdate(
+					data.updateSource === "agenthits"
+						? getAgentHitsUpdateCommand(
+								packageInfo.version,
+								data.latestVersion,
+								data.latestOfficialVersion,
+								keepImages,
+							)
+						: getOfficialUpdateCommand(data.latestVersion ?? "", keepImages),
+				);
 				await audit(ctx, {
 					action: "update",
 					resourceType: "settings",
@@ -683,6 +678,10 @@ export const settingsRouter = createTRPCRouter({
 
 			return true;
 		}),
+
+	getServerUpdateStatus: adminProcedure.query(() => {
+		return getServerUpdateStatus();
+	}),
 
 	getDokployVersion: protectedProcedure.query(() => {
 		return packageInfo.version;

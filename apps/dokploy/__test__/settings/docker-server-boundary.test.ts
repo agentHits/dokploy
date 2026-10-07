@@ -51,6 +51,8 @@ const mocks = vi.hoisted(() => ({
 	sendDockerCleanupNotifications: vi.fn(),
 	setupGPUSupport: vi.fn(),
 	spawnAsync: vi.fn(),
+	startServerUpdate: vi.fn(),
+	getServerUpdateStatus: vi.fn(),
 	startLogCleanup: vi.fn(),
 	stopLogCleanup: vi.fn(),
 	updateLetsEncryptEmail: vi.fn(),
@@ -114,6 +116,8 @@ vi.mock("@dokploy/server", () => ({
 	sendDockerCleanupNotifications: mocks.sendDockerCleanupNotifications,
 	setupGPUSupport: mocks.setupGPUSupport,
 	spawnAsync: mocks.spawnAsync,
+	startServerUpdate: mocks.startServerUpdate,
+	getServerUpdateStatus: mocks.getServerUpdateStatus,
 	startLogCleanup: mocks.startLogCleanup,
 	stopLogCleanup: mocks.stopLogCleanup,
 	updateLetsEncryptEmail: mocks.updateLetsEncryptEmail,
@@ -427,10 +431,9 @@ describe("settings Docker server boundary", () => {
 			"v0.30.0",
 			undefined,
 		);
-		expect(mocks.spawnAsync).toHaveBeenCalledWith("sh", [
-			"-c",
+		expect(mocks.startServerUpdate).toHaveBeenCalledWith(
 			"agenthits update command",
-		]);
+		);
 	});
 
 	it("passes the image keep count to the AgentHits update command", async () => {
@@ -461,7 +464,7 @@ describe("settings Docker server boundary", () => {
 		await expect(
 			createCaller().updateServer({ keepImages: 10 }),
 		).rejects.toThrow();
-		expect(mocks.spawnAsync).not.toHaveBeenCalled();
+		expect(mocks.startServerUpdate).not.toHaveBeenCalled();
 	});
 
 	it("keeps official updates on the official Dokploy image path", async () => {
@@ -479,10 +482,9 @@ describe("settings Docker server boundary", () => {
 			"v0.30.0",
 			undefined,
 		);
-		expect(mocks.spawnAsync).toHaveBeenCalledWith("sh", [
-			"-c",
+		expect(mocks.startServerUpdate).toHaveBeenCalledWith(
 			"official update command",
-		]);
+		);
 		expect(mocks.getAgentHitsUpdateCommand).not.toHaveBeenCalled();
 	});
 
@@ -500,6 +502,37 @@ describe("settings Docker server boundary", () => {
 		expect(mocks.getOfficialUpdateCommand).toHaveBeenCalledWith(
 			"v0.30.0",
 			null,
+		);
+	});
+
+	it("does not start an update when none is available", async () => {
+		mocks.getUpdateData.mockResolvedValue({
+			latestVersion: null,
+			updateAvailable: false,
+			updateSource: "official",
+		});
+
+		await expect(createCaller().updateServer()).resolves.toBe(true);
+
+		expect(mocks.startServerUpdate).not.toHaveBeenCalled();
+	});
+
+	it("returns the web server update status", async () => {
+		const status = {
+			phase: "pulling",
+			startedAt: 1,
+			pulledAt: null,
+			finishedAt: null,
+			error: null,
+			layersTotal: 3,
+			layersDownloaded: 1,
+			layersExtracted: 0,
+			output: [],
+		};
+		mocks.getServerUpdateStatus.mockReturnValue(status);
+
+		await expect(createCaller().getServerUpdateStatus()).resolves.toEqual(
+			status,
 		);
 	});
 

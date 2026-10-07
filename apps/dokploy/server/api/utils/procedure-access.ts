@@ -599,6 +599,7 @@ export const PROCEDURE_ACCESS: Record<string, ProcedureAccess> = {
 	"settings.getLogCleanupStatus": "read",
 	"settings.getOpenApiDocument": "read",
 	"settings.getReleaseTag": "read",
+	"settings.getServerUpdateStatus": "read",
 	"settings.getTraefikPorts": "read",
 	"settings.getUpdateData": "write",
 	"settings.getWebServerSettings": "read",
