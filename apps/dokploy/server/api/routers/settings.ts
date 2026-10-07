@@ -15,6 +15,7 @@ import {
 	DOKPLOY_KEEP_IMAGES_ENV,
 	DOKPLOY_KEEP_IMAGES_MAX,
 	DOKPLOY_KEEP_IMAGES_MIN,
+	dockerDiskUsageDetailLimitSchema,
 	filterProtectedTraefikEntries,
 	findServerById,
 	getAccessibleServerIds,
@@ -333,10 +334,7 @@ export const settingsRouter = createTRPCRouter({
 		.input(
 			z
 				.object({
-					detailLimit: z
-						.union([z.literal(5), z.literal(10), z.literal(15)])
-						.nullable()
-						.optional(),
+					detailLimit: dockerDiskUsageDetailLimitSchema,
 				})
 				.optional(),
 		)

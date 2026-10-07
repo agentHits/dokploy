@@ -81,6 +81,16 @@ const GITHUB_APP_SETUP_STATE_TTL_MS = 60 * 60 * 1000;
 
 export const githubRouter = createTRPCRouter({
 	appSetupState: withPermission("gitProviders", "create")
+		// The generator can't express a discriminated-union query input, and this
+		// state only drives the in-panel GitHub App setup redirect.
+		.meta({
+			openapi: {
+				path: "/github-app-setup-state",
+				method: "GET",
+				override: true,
+				enabled: false,
+			},
+		})
 		.input(apiGithubAppSetupState)
 		.query(async ({ input, ctx }) => {
 			if (

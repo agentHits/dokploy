@@ -1,5 +1,6 @@
 import {
 	cleanupBuilders,
+	dockerDiskUsageDetailLimitSchema,
 	findServerById,
 	getBuildCache,
 	getDockerDiskUsage,
@@ -14,10 +15,7 @@ export const dockerDiskUsageRouter = createTRPCRouter({
 	getDiskUsage: withPermission("docker", "read")
 		.input(
 			z.object({
-				detailLimit: z
-					.union([z.literal(5), z.literal(10), z.literal(15)])
-					.nullable()
-					.optional(),
+				detailLimit: dockerDiskUsageDetailLimitSchema,
 				serverId: z.string().optional(),
 			}),
 		)
