@@ -2,13 +2,28 @@ import {
 	ADDITIONAL_FLAG_ERROR,
 	ADDITIONAL_FLAG_REGEX,
 } from "@dokploy/server/db/validations/destination";
+import {
+	DESTINATION_ACCESS_CHECK_LABELS,
+	DESTINATION_ACCESS_CHECKS,
+	type DestinationConnectionTestReport,
+	isDestinationConnectionTestPassed,
+	parseDestinationConnectionTestReport,
+} from "@dokploy/server/utils/destination/connection-test-report";
 import { standardSchemaResolver as zodResolver } from "@hookform/resolvers/standard-schema";
-import { PenBoxIcon, PlusIcon, Trash2 } from "lucide-react";
+import {
+	CheckCircle2,
+	MinusCircle,
+	PenBoxIcon,
+	PlusIcon,
+	Trash2,
+	XCircle,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { AlertBlock } from "@/components/shared/alert-block";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -68,6 +83,58 @@ interface Props {
 	destinationId?: string;
 }
 
+const CHECK_STATUS_DISPLAY = {
+	ok: { icon: CheckCircle2, label: "OK", className: "text-green-500" },
+	failed: { icon: XCircle, label: "Failed", className: "text-red-500" },
+	skipped: {
+		icon: MinusCircle,
+		label: "Skipped",
+		className: "text-muted-foreground",
+	},
+};
+
+const ConnectionTestResults = ({
+	report,
+}: {
+	report: DestinationConnectionTestReport;
+}) => {
+	const passed = isDestinationConnectionTestPassed(report);
+	return (
+		<Alert className={cn(!passed && "border-destructive/50")}>
+			<AlertTitle className={cn(!passed && "text-destructive")}>
+				{passed
+					? "Read, write and delete access confirmed"
+					: "Some S3 permissions are missing"}
+			</AlertTitle>
+			<AlertDescription>
+				<ul className="flex flex-col gap-1.5">
+					{DESTINATION_ACCESS_CHECKS.map((name) => {
+						const check = report[name];
+						const display =
+							CHECK_STATUS_DISPLAY[
+								check.ok ? "ok" : check.skipped ? "skipped" : "failed"
+							];
+						return (
+							<li key={name} className="flex items-start gap-2">
+								<display.icon
+									aria-hidden
+									className={cn("mt-0.5 size-4 shrink-0", display.className)}
+								/>
+								<span className="min-w-0 wrap-anywhere">
+									<span className="font-medium text-foreground">
+										{DESTINATION_ACCESS_CHECK_LABELS[name]}: {display.label}
+									</span>
+									{check.reason ? ` - ${check.reason}` : null}
+								</span>
+							</li>
+						);
+					})}
+				</ul>
+			</AlertDescription>
+		</Alert>
+	);
+};
+
 export const HandleDestinations = ({ destinationId }: Props) => {
 	const [open, setOpen] = useState(false);
 	const utils = api.useUtils();
@@ -91,8 +158,16 @@ export const HandleDestinations = ({ destinationId }: Props) => {
 		mutateAsync: testConnection,
 		isPending: isPendingConnection,
 		error: connectionError,
-		isError: isErrorConnection,
+		data: connectionResult,
 	} = api.destination.testConnection.useMutation();
+	const connectionReport =
+		connectionResult ??
+		(connectionError
+			? parseDestinationConnectionTestReport(connectionError.message)
+			: null);
+	const connectionErrorMessage = connectionReport
+		? undefined
+		: connectionError?.message;
 
 	const form = useForm<AddDestination>({
 		defaultValues: {
@@ -212,9 +287,17 @@ export const HandleDestinations = ({ destinationId }: Props) => {
 				form.getValues("additionalFlags")?.map((f) => f.value) ?? [],
 		})
 			.then(() => {
-				toast.success("Connection Success");
+				toast.success("Connection Success", {
+					description: "Read, write and delete access confirmed",
+				});
 			})
 			.catch((e) => {
+				if (parseDestinationConnectionTestReport(e.message)) {
+					toast.error("Destination test failed", {
+						description: "See the check results in the dialog.",
+					});
+					return;
+				}
 				toast.error("Error connecting to provider", {
 					description: `${e.message}\n\nTry manually: rclone ls ${connectionString}`,
 				});
@@ -250,9 +333,9 @@ export const HandleDestinations = ({ destinationId }: Props) => {
 						guarantee secure and efficient storage.
 					</DialogDescription>
 				</DialogHeader>
-				{(isError || isErrorConnection) && (
+				{(isError || connectionErrorMessage) && (
 					<AlertBlock type="error" className="w-full">
-						{connectionError?.message || error?.message}
+						{connectionErrorMessage || error?.message}
 					</AlertBlock>
 				)}
 
@@ -432,6 +515,10 @@ export const HandleDestinations = ({ destinationId }: Props) => {
 							))}
 						</div>
 					</form>
+
+					{connectionReport && (
+						<ConnectionTestResults report={connectionReport} />
+					)}
 
 					<DialogFooter
 						className={cn(

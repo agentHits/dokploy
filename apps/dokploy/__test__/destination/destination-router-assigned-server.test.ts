@@ -68,6 +68,12 @@ const destinationInput = {
 	serverId: "server-1",
 };
 
+const allChecksPassed = {
+	read: { ok: true },
+	write: { ok: true },
+	delete: { ok: true },
+};
+
 const createCaller = () =>
 	destinationRouter.createCaller({
 		db: {},
@@ -200,7 +206,7 @@ describe("destination router assigned-server boundary", () => {
 	it("allows cloud connection tests on accessible servers", async () => {
 		await expect(
 			createCaller().testConnection(destinationInput),
-		).resolves.toBeUndefined();
+		).resolves.toEqual(allChecksPassed);
 
 		expect(mocks.execAsyncRemote).toHaveBeenCalledWith(
 			"server-1",
@@ -218,7 +224,7 @@ describe("destination router assigned-server boundary", () => {
 				secretAccessKey: REDACTED_SECRET_VALUE,
 				destinationId: "destination-1",
 			}),
-		).resolves.toBeUndefined();
+		).resolves.toEqual(allChecksPassed);
 
 		expect(mocks.findDestinationById).toHaveBeenCalledWith("destination-1");
 		const command = mocks.execAsync.mock.calls[0]?.[0] as string;
@@ -238,7 +244,7 @@ describe("destination router assigned-server boundary", () => {
 				secretAccessKey: "new-secret",
 				destinationId: "destination-1",
 			}),
-		).resolves.toBeUndefined();
+		).resolves.toEqual(allChecksPassed);
 
 		expect(mocks.findDestinationById).not.toHaveBeenCalled();
 		expect(mocks.execAsync).toHaveBeenCalledWith(
@@ -308,7 +314,7 @@ describe("destination router assigned-server boundary", () => {
 				secretAccessKey: REDACTED_SECRET_VALUE,
 				destinationId: "destination-1",
 			}),
-		).resolves.toBeUndefined();
+		).resolves.toEqual(allChecksPassed);
 
 		expect(mocks.execAsyncRemote).toHaveBeenCalledWith(
 			"server-1",
