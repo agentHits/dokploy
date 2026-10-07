@@ -46,5 +46,7 @@ describe("Better Auth schema compatibility", () => {
 				Promise.resolve(context.checkSchema?.()),
 			).resolves.toBeUndefined();
 		},
+		// The first case imports lib/auth and its whole module graph from scratch.
+		60_000,
 	);
 });
