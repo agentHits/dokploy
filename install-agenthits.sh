@@ -34,11 +34,23 @@ PASSTHROUGH_VARS=(
 	HARDEN_SSH
 	HARDEN_UFW
 	HARDEN_FAIL2BAN
+	DOCKER_ENGINE_UPGRADE
+	AGENTHITS_BACKUP_DIR
+	AGENTHITS_HEALTH_TIMEOUT
+	AGENTHITS_HEALTH_INTERVAL
+	AGENTHITS_TRAEFIK_SETTLE
+	AGENTHITS_PULL_RETRY_DELAY
 )
 ORB=""
 HARDEN_UFW="${HARDEN_UFW:-0}"
 HARDEN_SSH="${HARDEN_SSH:-0}"
 HARDEN_FAIL2BAN="${HARDEN_FAIL2BAN:-0}"
+DOCKER_ENGINE_UPGRADE="${DOCKER_ENGINE_UPGRADE:-0}"
+AGENTHITS_BACKUP_DIR="${AGENTHITS_BACKUP_DIR:-/var/backups/agenthits}"
+AGENTHITS_HEALTH_TIMEOUT="${AGENTHITS_HEALTH_TIMEOUT:-240}"
+AGENTHITS_HEALTH_INTERVAL="${AGENTHITS_HEALTH_INTERVAL:-3}"
+AGENTHITS_TRAEFIK_SETTLE="${AGENTHITS_TRAEFIK_SETTLE:-10}"
+AGENTHITS_PULL_RETRY_DELAY="${AGENTHITS_PULL_RETRY_DELAY:-10}"
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -941,18 +953,7 @@ install_agenthits_dokploy() {
 		-e DEPLOYMENTS_SIGNING_KEY_FILE=/run/secrets/dokploy_deployments_signing_key \
 		"$DOKPLOY_IMAGE"
 
-	docker run -d \
-		--name dokploy-traefik \
-		--restart always \
-		-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
-		-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
-		-v /var/run/docker.sock:/var/run/docker.sock:ro \
-		-p 80:80/tcp \
-		-p 443:443/tcp \
-		-p 443:443/udp \
-		"$TRAEFIK_IMAGE"
-
-	docker network connect dokploy-network dokploy-traefik
+	run_dokploy_traefik "$TRAEFIK_IMAGE"
 
 	apply_hardening
 
@@ -967,24 +968,336 @@ install_agenthits_dokploy() {
 	echo "http://${formatted_addr}:3000"
 }
 
-update_agenthits_dokploy() {
+download_with_retry() {
+	local attempt=1
+	while [ "$attempt" -le 3 ]; do
+		if "$@"; then
+			return 0
+		fi
+		if [ "$attempt" -lt 3 ]; then
+			sleep "$AGENTHITS_PULL_RETRY_DELAY"
+		fi
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+
+# Docker's packages are pinned by version string; the epoch and the
+# distribution suffix come from the repository.
+docker_package_version() {
+	apt-cache madison docker-ce | awk -F'|' '{ gsub(/ /, "", $2); print $2 }' | grep -m1 -E "^([0-9]+:)?${DOCKER_VERSION//./\\.}-" || true
+}
+
+docker_engine_version() {
+	docker version --format '{{.Server.Version}}' 2>/dev/null || true
+}
+
+predownload_docker_packages() {
+	if ! command_exists apt-get; then
+		echo "Pre-download failed: DOCKER_ENGINE_UPGRADE=1 needs apt-get on this host. Nothing was changed." >&2
+		exit 1
+	fi
+	if ! download_with_retry apt-get update -qq; then
+		echo "Pre-download failed: the apt package lists could not be refreshed. Nothing was changed." >&2
+		exit 1
+	fi
+	DOCKER_PACKAGE_VERSION="$(docker_package_version)"
+	if [ -z "$DOCKER_PACKAGE_VERSION" ]; then
+		echo "Pre-download failed: Docker $DOCKER_VERSION is not in the apt sources. Nothing was changed." >&2
+		exit 1
+	fi
+	if ! download_with_retry apt-get install -y -qq --download-only "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin; then
+		echo "Pre-download failed: the Docker packages. Nothing was changed." >&2
+		exit 1
+	fi
+}
+
+# update.sh runs from this checkout when it is present; otherwise it is
+# downloaded here, so the panel step cannot fail on a download mid-update.
+resolve_panel_update_script() {
 	local script_dir=""
 	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-
 	if [ -f "$script_dir/update.sh" ]; then
-		bash "$script_dir/update.sh"
-		return
+		PANEL_UPDATE_SCRIPT="$script_dir/update.sh"
+		PANEL_UPDATE_IS_TEMP=0
+		return 0
+	fi
+	PANEL_UPDATE_SCRIPT="$(mktemp)"
+	PANEL_UPDATE_IS_TEMP=1
+	if ! download_with_retry curl -fsSL "$AGENTHITS_SCRIPT_BASE_URL/update.sh" -o "$PANEL_UPDATE_SCRIPT"; then
+		rm -f "$PANEL_UPDATE_SCRIPT"
+		echo "Pre-download failed: update.sh. Nothing was changed." >&2
+		exit 1
+	fi
+}
+
+# The one pre-download gate of the operator update. Every image and package
+# the update needs is local before any service, container or daemon is touched.
+predownload_update_artifacts() {
+	resolve_panel_update_script
+	local image=""
+	for image in "$POSTGRES_IMAGE" "$REDIS_IMAGE" "$TRAEFIK_IMAGE" "$DOKPLOY_IMAGE"; do
+		if ! download_with_retry docker pull "$image"; then
+			echo "Pre-download failed: $image. Nothing was changed." >&2
+			exit 1
+		fi
+	done
+	DOCKER_ENGINE_UPGRADE_NEEDED=0
+	if [ "$DOCKER_ENGINE_UPGRADE" = "1" ] && [ "$(docker_engine_version)" != "$DOCKER_VERSION" ]; then
+		DOCKER_ENGINE_UPGRADE_NEEDED=1
+		predownload_docker_packages
+	fi
+}
+
+image_without_digest() {
+	echo "${1%%@*}"
+}
+
+service_image() {
+	docker service inspect "$1" --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null || true
+}
+
+# The running task container of a swarm service; with an image, only one that runs it.
+task_container() {
+	local service="$1"
+	local image="${2:-}"
+	if [ -n "$image" ]; then
+		docker ps -q --no-trunc --filter "label=com.docker.swarm.service.name=$service" --filter status=running --filter "ancestor=$(image_without_digest "$image")" | head -n1 || true
+	else
+		docker ps -q --no-trunc --filter "label=com.docker.swarm.service.name=$service" --filter status=running | head -n1 || true
+	fi
+}
+
+redis_ready() {
+	local container=""
+	container="$(task_container dokploy-redis "$REDIS_IMAGE")"
+	[ -n "$container" ] && [ "$(docker exec "$container" redis-cli ping 2>/dev/null)" = "PONG" ]
+}
+
+postgres_ready() {
+	local container=""
+	container="$(task_container dokploy-postgres "$POSTGRES_IMAGE")"
+	[ -n "$container" ] && docker exec "$container" pg_isready -U dokploy -d dokploy >/dev/null 2>&1
+}
+
+panel_ready() {
+	local container=""
+	container="$(task_container dokploy)"
+	[ -n "$container" ] && [ "$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null)" = "healthy" ]
+}
+
+wait_until_ready() {
+	local check="$1"
+	local deadline=$(($(date +%s) + AGENTHITS_HEALTH_TIMEOUT))
+	until "$check"; do
+		if [ "$(date +%s)" -ge "$deadline" ]; then
+			return 1
+		fi
+		sleep "$AGENTHITS_HEALTH_INTERVAL"
+	done
+}
+
+# Swarm reports a failed update as paused or rolled back. Those states are read
+# only once the update is registered (Version.Index has moved), so a state left
+# over from an earlier update is not taken for this one.
+swap_swarm_service() {
+	local service="$1"
+	local image="$2"
+	local ready="$3"
+	local previous_image=""
+	local previous_index=""
+	local index=""
+	local state=""
+	previous_image="$(service_image "$service")"
+	previous_index="$(docker service inspect "$service" --format '{{.Version.Index}}' 2>/dev/null || true)"
+
+	if ! docker service update --detach --update-order stop-first --update-failure-action rollback --image "$image" "$service" >/dev/null; then
+		echo "Error: docker service update was refused for $service; it was not changed." >&2
+		exit 1
 	fi
 
-	# Not a RETURN trap: it stays set after this function and fires again
-	# when main returns, where update_script is unbound under set -u.
-	local update_script=""
-	update_script="$(mktemp)"
-	curl -fsSL "$AGENTHITS_SCRIPT_BASE_URL/update.sh" -o "$update_script"
+	local deadline=$(($(date +%s) + AGENTHITS_HEALTH_TIMEOUT))
+	while :; do
+		index="$(docker service inspect "$service" --format '{{.Version.Index}}' 2>/dev/null || true)"
+		state="$(docker service inspect "$service" --format '{{.UpdateStatus.State}}' 2>/dev/null || true)"
+		if [ "${index:-0}" -gt "${previous_index:-0}" ]; then
+			case "$state" in
+				rollback_*)
+					echo "Error: $service did not start on $image (swarm state: $state). Previous image: $previous_image. Check with: docker service ps $service --no-trunc" >&2
+					exit 1
+					;;
+				paused)
+					echo "Error: $service is paused after its update to $image (swarm state: paused). Previous image: $previous_image. Roll back with: docker service update --image $previous_image $service" >&2
+					exit 1
+					;;
+			esac
+			if [ "$state" = "completed" ] && "$ready"; then
+				echo "$service runs $image (previous image kept: $previous_image)"
+				return 0
+			fi
+		fi
+		if [ "$(date +%s)" -ge "$deadline" ]; then
+			echo "Error: $service was not ready on $image within $AGENTHITS_HEALTH_TIMEOUT seconds. Roll back with: docker service update --image $previous_image $service" >&2
+			exit 1
+		fi
+		sleep "$AGENTHITS_HEALTH_INTERVAL"
+	done
+}
+
+backup_postgres() {
+	local container=""
+	local file=""
+	container="$(task_container dokploy-postgres)"
+	if [ -z "$container" ]; then
+		echo "Error: no running dokploy-postgres task to back up. Nothing was changed." >&2
+		exit 1
+	fi
+	mkdir -p "$AGENTHITS_BACKUP_DIR"
+	file="$AGENTHITS_BACKUP_DIR/postgres-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+	if ! docker exec "$container" pg_dumpall -U dokploy | gzip >"$file" || [ ! -s "$file" ]; then
+		rm -f "$file"
+		echo "Error: the Postgres backup failed. Nothing was changed." >&2
+		exit 1
+	fi
+	echo "Postgres backup written to $file"
+}
+
+run_dokploy_traefik() {
+	docker run -d \
+		--name dokploy-traefik \
+		--restart always \
+		-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
+		-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
+		-v /var/run/docker.sock:/var/run/docker.sock:ro \
+		-p 80:80/tcp \
+		-p 443:443/tcp \
+		-p 443:443/udp \
+		"$1"
+
+	docker network connect dokploy-network dokploy-traefik
+}
+
+TRAEFIK_TARGET_IMAGE=""
+TRAEFIK_PREVIOUS_KEPT=0
+TRAEFIK_SWAPPED=0
+
+# Ports 80 and 443 are free only after the old container stops, so the old one
+# is put back when the new one does not come up.
+restore_dokploy_traefik() {
+	trap - ERR HUP INT TERM
+	if [ "$TRAEFIK_SWAPPED" = "0" ]; then
+		echo "Error: Traefik did not start on $TRAEFIK_TARGET_IMAGE; restoring the previous container." >&2
+		if [ "$TRAEFIK_PREVIOUS_KEPT" = "1" ]; then
+			docker rm -f dokploy-traefik >/dev/null 2>&1 || true
+			docker rename dokploy-traefik-previous dokploy-traefik || true
+			docker update --restart always dokploy-traefik >/dev/null 2>&1 || true
+		fi
+		docker start dokploy-traefik >/dev/null 2>&1 || true
+	fi
+	exit 1
+}
+
+swap_dokploy_traefik() {
+	local current=""
+	current="$(docker inspect --format '{{.Config.Image}}' dokploy-traefik 2>/dev/null || true)"
+	if [ "$(image_without_digest "$current")" = "$(image_without_digest "$TRAEFIK_IMAGE")" ]; then
+		echo "Traefik already runs $TRAEFIK_IMAGE"
+		return 0
+	fi
+
+	TRAEFIK_TARGET_IMAGE="$TRAEFIK_IMAGE"
+	TRAEFIK_PREVIOUS_KEPT=0
+	TRAEFIK_SWAPPED=0
+	# errtrace makes the ERR trap fire for a failed docker run inside run_dokploy_traefik.
+	set -o errtrace
+	trap restore_dokploy_traefik ERR HUP INT TERM
+
+	if docker inspect dokploy-traefik >/dev/null 2>&1; then
+		docker stop dokploy-traefik >/dev/null
+		docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
+		docker rename dokploy-traefik dokploy-traefik-previous
+		TRAEFIK_PREVIOUS_KEPT=1
+		# A stopped container with restart=always is started again when the daemon restarts.
+		docker update --restart no dokploy-traefik-previous >/dev/null
+	fi
+
+	run_dokploy_traefik "$TRAEFIK_IMAGE"
+	sleep "$AGENTHITS_TRAEFIK_SETTLE"
+	if [ "$(docker inspect --format '{{.State.Running}}' dokploy-traefik 2>/dev/null)" != "true" ]; then
+		restore_dokploy_traefik
+	fi
+
+	TRAEFIK_SWAPPED=1
+	trap - ERR HUP INT TERM
+	echo "Traefik runs $TRAEFIK_IMAGE (previous container kept stopped as dokploy-traefik-previous)"
+}
+
+require_update_services() {
+	local service=""
+	for service in dokploy dokploy-postgres dokploy-redis; do
+		if ! docker service inspect "$service" >/dev/null 2>&1; then
+			echo "Error: Docker service '$service' was not found. Run install first." >&2
+			exit 1
+		fi
+	done
+	if ! docker inspect dokploy-traefik >/dev/null 2>&1; then
+		echo "Error: container 'dokploy-traefik' was not found. Run install first." >&2
+		exit 1
+	fi
+}
+
+run_panel_update() {
 	local status=0
-	bash "$update_script" || status=$?
-	rm -f "$update_script"
+	bash "$PANEL_UPDATE_SCRIPT" || status=$?
+	if [ "$PANEL_UPDATE_IS_TEMP" = "1" ]; then
+		rm -f "$PANEL_UPDATE_SCRIPT"
+	fi
 	return "$status"
+}
+
+# Docker Engine restarts dockerd, and live-restore does not cover swarm services,
+# so every service on the host restarts here. It runs last, on pre-downloaded packages.
+upgrade_docker_engine() {
+	if [ "$DOCKER_ENGINE_UPGRADE_NEEDED" != "1" ]; then
+		return 0
+	fi
+	echo "Upgrading Docker Engine to $DOCKER_VERSION; the daemon restarts and the swarm services on this host restart with it."
+	if ! apt-get install -y -qq --no-download "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin; then
+		echo "Error: installing the pre-downloaded Docker packages failed. Check with: apt-get install -f" >&2
+		exit 1
+	fi
+	ensure_docker_running
+	if ! wait_until_ready panel_ready; then
+		echo "Error: the panel was not healthy after the Docker restart. See: docker service ps dokploy --no-trunc" >&2
+		exit 1
+	fi
+	echo "Docker Engine is $DOCKER_VERSION"
+}
+
+# Order: Redis, Traefik, Postgres, then the panel. A failed Redis or Traefik swap
+# stops before the database changes. Postgres follows its backup and comes
+# before the panel, because the new panel migrates the database when it starts.
+# The panel is last, so its dependencies are already on their pinned versions
+# and healthy when its rollback-protected update runs.
+update_agenthits_dokploy() {
+	require_update_services
+	predownload_update_artifacts
+
+	local postgres_swap=0
+	if [ "$(image_without_digest "$(service_image dokploy-postgres)")" != "$(image_without_digest "$POSTGRES_IMAGE")" ]; then
+		postgres_swap=1
+		backup_postgres
+	fi
+	if [ "$(image_without_digest "$(service_image dokploy-redis)")" != "$(image_without_digest "$REDIS_IMAGE")" ]; then
+		swap_swarm_service dokploy-redis "$REDIS_IMAGE" redis_ready
+	fi
+	swap_dokploy_traefik
+	if [ "$postgres_swap" = "1" ]; then
+		swap_swarm_service dokploy-postgres "$POSTGRES_IMAGE" postgres_ready
+	fi
+	run_panel_update
+	upgrade_docker_engine
+	echo "AgentHits operator update finished."
 }
 
 parse_hardening_flags() {
