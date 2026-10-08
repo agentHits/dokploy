@@ -50,8 +50,35 @@ describe("buildHostStackRows", () => {
 		for (const row of rowsFor({})) {
 			expect(row.status, row.name).toBe("current");
 			expect(row.outdated, row.name).toBe(false);
-			expect(row.reason, row.name).toBeNull();
-			expect(row.command, row.name).toBeNull();
+		}
+	});
+
+	it("keeps the reason and command of the maintenance-window steps even when they are current", () => {
+		const rows = rowsFor({});
+
+		expect(rowNamed(rows, "docker")).toMatchObject({
+			action: "manual",
+			command: "DOCKER_ENGINE_UPGRADE=1 bash install-agenthits.sh update",
+		});
+		expect(rowNamed(rows, "docker").reason).toContain("maintenance window");
+		expect(rowNamed(rows, "postgres")).toMatchObject({
+			action: "manual",
+			command: `POSTGRES_IMAGE=postgres:${pinnedPostgresMajor} bash install-agenthits.sh update`,
+		});
+	});
+
+	it("gives Traefik and Redis no reason or command, since the panel runs them", () => {
+		const rows = rowsFor({
+			traefikImage: "traefik:v3.6.1",
+			redisImage: "redis:7",
+		});
+
+		for (const name of ["traefik", "redis"] as const) {
+			expect(rowNamed(rows, name)).toMatchObject({
+				action: "ui",
+				reason: null,
+				command: null,
+			});
 		}
 	});
 
@@ -130,9 +157,9 @@ describe("buildHostStackRows", () => {
 			installed: pinnedPostgresMajor,
 			status: "current",
 			outdated: false,
-			reason: null,
-			command: null,
+			command: `POSTGRES_IMAGE=postgres:${pinnedPostgresMajor}.5-alpine bash install-agenthits.sh update`,
 		});
+		expect(postgres.reason).toContain("maintenance window");
 	});
 
 	it("keeps the image digest out of the Postgres command", () => {
@@ -176,7 +203,11 @@ describe("buildHostStackRows", () => {
 			expect(row.status, name).toBe("unknown");
 			expect(row.outdated, name).toBe(false);
 			expect(row.installed, name).toBeNull();
-			expect(row.command, name).toBeNull();
+			expect(row.command, name).toBe(
+				name === "docker"
+					? "DOCKER_ENGINE_UPGRADE=1 bash install-agenthits.sh update"
+					: null,
+			);
 			expect(row.reason, name).not.toBeNull();
 		}
 	});

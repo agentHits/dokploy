@@ -55,6 +55,8 @@ const PANEL_UNKNOWN_REASON =
 	"The update check did not return a version for this panel.";
 const DOCKER_REASON =
 	"Docker Engine upgrades restart the daemon, which stops this panel. Run them only in the maintenance window.";
+const POSTGRES_REASON =
+	"Postgres changes only in the maintenance window, and keeps its major version.";
 
 const HOST_STACK_REFUSALS: Record<
 	Exclude<HostStackComponent, HostStackUiComponent>,
@@ -149,7 +151,10 @@ const dockerRow = (readout: string | null): HostStackRow => {
 	const target = PINNED_VERSIONS.docker;
 	const installed = versionOf(readout);
 	if (installed === null) {
-		return unknownRow("docker", target, "manual");
+		return {
+			...unknownRow("docker", target, "manual"),
+			command: DOCKER_UPGRADE_COMMAND,
+		};
 	}
 	const outdated = compareVersions(installed, target) < 0;
 	return {
@@ -159,8 +164,8 @@ const dockerRow = (readout: string | null): HostStackRow => {
 		status: outdated ? "outdated" : "current",
 		outdated,
 		action: "manual",
-		reason: outdated ? DOCKER_REASON : null,
-		command: outdated ? DOCKER_UPGRADE_COMMAND : null,
+		reason: DOCKER_REASON,
+		command: DOCKER_UPGRADE_COMMAND,
 	};
 };
 
@@ -200,10 +205,8 @@ const postgresRow = (image: string | null): HostStackRow => {
 		action: "manual",
 		reason: outdated
 			? `Major version change (${installedMajor} to ${targetMajor}) needs a migration. The panel never changes the Postgres major version.`
-			: null,
-		command: outdated
-			? `POSTGRES_IMAGE=${withoutDigest(image)} ${INSTALLER_UPDATE}`
-			: null,
+			: POSTGRES_REASON,
+		command: `POSTGRES_IMAGE=${withoutDigest(image)} ${INSTALLER_UPDATE}`,
 	};
 };
 
