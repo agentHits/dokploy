@@ -35,6 +35,8 @@ const { UPDATE_IMAGE_PULLED_MARKER } = await import(
 );
 
 const PREVIOUS = `sha256:${"a".repeat(64)}`;
+// Each case spawns sh; the 5s default times out on a CI runner under load.
+const SPAWN_TEST_TIMEOUT_MS = 30_000;
 
 describe("Dokploy image cleanup", () => {
 	beforeEach(() => {
@@ -148,6 +150,7 @@ esac
 				rmSync(dir, { recursive: true, force: true });
 			}
 		},
+		SPAWN_TEST_TIMEOUT_MS,
 	);
 
 	it("does nothing at startup when the cleanup is off", async () => {
