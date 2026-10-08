@@ -91,7 +91,8 @@ create_secret_if_missing() {
 }
 
 get_postgres_major_version() {
-	local tag="${POSTGRES_IMAGE##*:}"
+	local image="${1:-$POSTGRES_IMAGE}"
+	local tag="${image##*:}"
 	tag="${tag%%-*}"
 	tag="${tag%%.*}"
 
@@ -1282,6 +1283,14 @@ upgrade_docker_engine() {
 # and healthy when its rollback-protected update runs.
 update_agenthits_dokploy() {
 	require_update_services
+
+	local current_postgres=""
+	current_postgres="$(image_without_digest "$(service_image dokploy-postgres)")"
+	if [ "$(get_postgres_major_version "$current_postgres" || true)" != "$(get_postgres_major_version || true)" ]; then
+		echo "Error: Postgres $current_postgres -> $POSTGRES_IMAGE changes the major version, which this update does not migrate. Nothing was changed." >&2
+		exit 1
+	fi
+
 	predownload_update_artifacts
 
 	local postgres_swap=0

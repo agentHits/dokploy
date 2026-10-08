@@ -359,4 +359,21 @@ describe("install-agenthits.sh update", () => {
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);
+	it(
+		"refuses a Postgres major version change before anything runs",
+		() => {
+			const { result, calls } = runInstaller({
+				postgresImage: "postgres:17.5",
+			});
+
+			expect(result.status).not.toBe(0);
+			expect(result.stderr).toContain("changes the major version");
+			expect(result.stderr).toContain("Nothing was changed");
+			expect(calls.some((call) => call.startsWith("pull "))).toBe(false);
+			expect(calls.some((call) => call.startsWith("service update"))).toBe(
+				false,
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
 });
