@@ -113,27 +113,30 @@ const HostStackRowItem = ({
 						Web Server Update
 					</Button>
 				)}
-				{row.action === "ui" && row.outdated && (
+				{row.action === "ui" && (
 					<div className="flex items-center gap-2">
 						<Checkbox
 							id={checkboxId}
-							checked={checked}
+							checked={row.outdated && checked}
+							disabled={!row.outdated}
 							onCheckedChange={(value) => onCheckedChange(value === true)}
 						/>
-						<Label htmlFor={checkboxId}>Update to {row.target}</Label>
+						<Label
+							htmlFor={checkboxId}
+							className={cn(!row.outdated && "text-muted-foreground")}
+						>
+							{row.outdated ? `Update to ${row.target}` : "Nothing to update"}
+						</Label>
 					</div>
 				)}
-				{row.action === "manual" &&
-					(row.outdated || row.status === "unknown") && (
+				{row.reason &&
+					(row.action === "manual" || row.status === "unknown") && (
 						<p className="text-xs text-muted-foreground">{row.reason}</p>
 					)}
-				{row.action === "manual" && row.outdated && row.command && (
+				{row.action === "manual" && row.command && (
 					<code className="block max-w-full overflow-x-auto rounded bg-muted px-2 py-1 text-xs select-all">
 						{row.command}
 					</code>
-				)}
-				{row.action !== "manual" && row.status === "unknown" && row.reason && (
-					<p className="text-xs text-muted-foreground">{row.reason}</p>
 				)}
 			</div>
 		</div>
