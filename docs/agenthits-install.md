@@ -239,9 +239,12 @@ Windows (PowerShell от администратора):
    0600) и не удаляется автоматически. Делается, только если Postgres будет заменён, до любой замены.
 2. Redis: `docker service update` с остановкой старой задачи до запуска новой и
    откатом при сбое. Ждёт ответа `PONG`.
-3. Traefik: старый контейнер останавливается и переименовывается в
-   `dokploy-traefik-previous`, новый запускается и подключается к
-   `dokploy-network`. Через `DOKPLOY_TRAEFIK_SETTLE` секунд (10 по умолчанию)
+3. Traefik: старый контейнер переименовывается в `dokploy-traefik-previous`, новый
+   создаётся и подключается к `dokploy-network` и ко всем сетям, к которым был
+   подключен старый контейнер (кроме `bridge`); сети читаются на хосте во время
+   обновления. Затем старый контейнер останавливается и запускается новый. Пауза,
+   когда Traefik не работает, тем самым ограничена остановкой старого контейнера
+   и запуском нового. Через `DOKPLOY_TRAEFIK_SETTLE` секунд (10 по умолчанию)
    проверяется, что он работает; если нет, старый контейнер возвращается.
    Старый контейнер остаётся остановленным, с `--restart no`, чтобы перезапуск
    демона не запустил его рядом с новым. При следующем обновлении Traefik он
@@ -251,9 +254,27 @@ Windows (PowerShell от администратора):
 5. Панель: `update.sh`. Ждёт `healthy`-статуса контейнера; при откате swarm или
    нездоровом статусе команда завершается с ошибкой.
 6. Docker Engine: только при `DOCKER_ENGINE_UPGRADE=1` и если установленная
-   версия отличается от `DOCKER_VERSION`. Пакеты скачиваются заранее, установка
-   идёт в самом конце. Перезапуск демона перезапускает все сервисы swarm на
-   хосте: live-restore к сервисам swarm не применяется.
+   версия отличается от `DOCKER_VERSION`. Включайте переменную в окружении
+   команды `update`, например `DOCKER_ENGINE_UPGRADE=1 bash install-agenthits.sh update`;
+   она передаётся через launcher на macOS и в Windows (WSL). По умолчанию выключено.
+   Перед любыми изменениями installer сохраняет текущие пакеты Docker в
+   `DOKPLOY_BACKUP_DIR/docker-rollback-<UTC>/` (каталог 0700, файлы 0600):
+   `docker-ce` и `docker-ce-cli` всегда, остальные пакеты, если их версия меняется.
+   Если сохранить пакеты не удалось, обновление останавливается с сообщением
+   `Pre-download failed: current Docker packages for rollback. Nothing was changed.`
+   Если источник Docker в `/etc/apt/sources.list.d` предназначен для другого
+   релиза, обновление тоже останавливается до изменений: installer не переписывает
+   источник сам. Новые пакеты скачиваются заранее, установка идёт в самом конце.
+   Перезапуск демона перезапускает все сервисы swarm на хосте: live-restore к
+   сервисам swarm не применяется.
+   После установки installer ждёт до `DOKPLOY_HEALTH_TIMEOUT` секунд, пока
+   Docker Engine отвечает версией `DOCKER_VERSION`, swarm активен, `dokploy`,
+   `dokploy-postgres` и `dokploy-redis` готовы, а `dokploy-traefik` запущен.
+   Если установка пакетов не удалась или проверка не прошла, installer
+   автоматически устанавливает сохранённые пакеты обратно, ждёт демон,
+   запускает `dokploy-traefik`, проверяет старую версию и сервисы и завершает
+   команду с ошибкой с указанием каталога копии. Если откат тоже не удался,
+   выводятся команды для ручного отката (см. ниже).
 
 Смена major-версии Postgres (например, 17 → 18) этим обновлением не выполняется:
 команда останавливается до любых изменений. Перенос данных между major-версиями
@@ -266,6 +287,20 @@ Windows (PowerShell от администратора):
 Ручной откат. Для сервисов swarm: `docker service update --image <предыдущий образ> <сервис>`,
 предыдущий образ печатается в логе шага. Для Traefik:
 `docker rm -f dokploy-traefik && docker rename dokploy-traefik-previous dokploy-traefik && docker update --restart always dokploy-traefik && docker start dokploy-traefik`.
+
+Ручной откат Docker Engine, если автоматический не завершился. Каталог копии
+имеет вид `DOKPLOY_BACKUP_DIR/docker-rollback-<UTC>/`, например
+`/var/backups/dokploy/docker-rollback-20261008T120000Z`; подставьте свой:
+
+```bash
+apt-get install -y --allow-downgrades --no-download /var/backups/dokploy/docker-rollback-<UTC>/*.deb
+systemctl start docker
+docker start dokploy-traefik
+docker version --format '{{.Server.Version}}'
+```
+
+Последняя команда должна показать версию Engine, которая была до обновления.
+`docker start dokploy-traefik` безопасен, даже если контейнер уже запущен.
 
 В dashboard кнопка `Check for updates` для AgentHits fork сравнивает текущий
 Docker service image digest с `ghcr.io/agenthits/dokploy:agenthits-dev`.
