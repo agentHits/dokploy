@@ -31,7 +31,7 @@ const traefikContainerOptions = (
 	--restart ${restart} \
 	-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
 	-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
-	-v /var/run/docker.sock:/var/run/docker.sock \
+	-v /var/run/docker.sock:/var/run/docker.sock:ro \
 	-p ${TRAEFIK_SSL_PORT}:${TRAEFIK_SSL_PORT} \
 	-p ${TRAEFIK_PORT}:${TRAEFIK_PORT} \
 	-p ${TRAEFIK_HTTP3_PORT}:${TRAEFIK_HTTP3_PORT}/udp \
