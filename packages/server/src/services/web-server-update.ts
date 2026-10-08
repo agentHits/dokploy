@@ -1,3 +1,14 @@
+import {
+	addByteSample,
+	type ByteSample,
+	downloadedBytes,
+	downloadRate,
+	estimateRemainingSeconds,
+	type LayerDownload,
+	parsePullLine,
+	recordLayerDownload,
+	summarizeDownload,
+} from "../utils/docker/pull-progress";
 import { spawnAsync } from "../utils/process/spawnAsync";
 
 /** Printed by the update scripts once `docker pull` succeeded. */
@@ -19,6 +30,12 @@ export interface ServerUpdateStatus {
 	layersTotal: number;
 	layersDownloaded: number;
 	layersExtracted: number;
+	/** Share of the image downloaded: by bytes once every unfinished layer has a known size, otherwise by layers. */
+	downloadPercent: number | null;
+	/** Download rate over the last five seconds; null until there is enough data. */
+	downloadBytesPerSecond: number | null;
+	/** Estimated seconds until the download finishes; null while unknown. */
+	downloadRemainingSeconds: number | null;
 	/** Docker reported "no space left on device" while the update ran. */
 	diskFull: boolean;
 	/** Last lines of the update script output: image refs and layer ids only. */
@@ -37,6 +54,9 @@ const createIdleStatus = (): ServerUpdateStatus => ({
 	layersTotal: 0,
 	layersDownloaded: 0,
 	layersExtracted: 0,
+	downloadPercent: null,
+	downloadBytesPerSecond: null,
+	downloadRemainingSeconds: null,
 	diskFull: false,
 	output: [],
 });
@@ -45,23 +65,42 @@ const createIdleStatus = (): ServerUpdateStatus => ({
 // process starting from "idle" is how the UI knows the restart happened.
 let status = createIdleStatus();
 let layers = new Map<string, string>();
+let layerDownloads = new Map<string, LayerDownload>();
+let downloadSamples: readonly ByteSample[] = [];
 let pendingOutput = "";
+
+const getDownloadEstimates = (now: number) => {
+	const { percent, remainingBytes } = summarizeDownload(layers, layerDownloads);
+	// Without any byte counts the rate would read as zero instead of unknown.
+	const bytesPerSecond =
+		layerDownloads.size > 0 ? downloadRate(downloadSamples, now) : null;
+	return {
+		downloadPercent: percent,
+		downloadBytesPerSecond: bytesPerSecond,
+		downloadRemainingSeconds: estimateRemainingSeconds(
+			remainingBytes,
+			bytesPerSecond,
+		),
+	};
+};
 
 export const getServerUpdateStatus = (): ServerUpdateStatus => ({
 	...status,
 	output: [...status.output],
+	...getDownloadEstimates(Date.now()),
 });
 
 export const resetServerUpdateStatus = () => {
 	status = createIdleStatus();
 	layers = new Map();
+	layerDownloads = new Map();
+	downloadSamples = [];
 	pendingOutput = "";
 };
 
 export const isServerUpdateRunning = () =>
 	status.phase === "pulling" || status.phase === "updating";
 
-const LAYER_LINE = /^([0-9a-f]{12,64}): (.+)$/;
 const DOWNLOADED_LAYER_STATES = new Set([
 	"Download complete",
 	"Pull complete",
@@ -90,13 +129,18 @@ const handleOutputLine = (rawLine: string) => {
 		status.diskFull = true;
 	}
 
-	const layer = line.match(LAYER_LINE);
+	const layer = parsePullLine(line);
 	if (layer && status.phase === "pulling") {
-		const [, id, state] = layer as unknown as [string, string, string];
+		const { id, status: state } = layer;
 		// Docker repeats a layer's earlier states while it is retried, so a
 		// layer that already finished must not go back to "downloading".
 		if (!EXTRACTED_LAYER_STATES.has(layers.get(id) ?? "")) {
 			layers.set(id, state);
+			recordLayerDownload(layerDownloads, id, state);
+			downloadSamples = addByteSample(downloadSamples, {
+				at: Date.now(),
+				bytes: downloadedBytes(layerDownloads),
+			});
 		}
 		status.layersTotal = layers.size;
 		status.layersDownloaded = countLayers(DOWNLOADED_LAYER_STATES);
@@ -144,7 +188,10 @@ export const startServerUpdate = (command: string) => {
 
 	resetServerUpdateStatus();
 	status.phase = "pulling";
-	status.startedAt = Date.now();
+	const startedAt = Date.now();
+	status.startedAt = startedAt;
+	// The first progress line is measured against zero bytes at the start.
+	downloadSamples = [{ at: startedAt, bytes: 0 }];
 
 	spawnAsync("sh", ["-c", command], handleOutput).then(
 		() => finish(null),

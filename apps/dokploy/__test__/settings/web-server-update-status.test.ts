@@ -223,6 +223,38 @@ describe("web server update status", () => {
 		});
 	});
 
+	it("reports the download share and rate from layer sizes", () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		try {
+			vi.setSystemTime(10_000);
+			const script = startFakeScript();
+			expect(getServerUpdateStatus()).toMatchObject({
+				downloadPercent: null,
+				downloadBytesPerSecond: null,
+			});
+
+			vi.setSystemTime(10_500);
+			script.write(
+				"aaaaaaaaaaaa: Downloading [=====>   ]  10MB/40MB\nbbbbbbbbbbbb: Downloading [==>        ]  2MB/10MB\n",
+			);
+			vi.setSystemTime(12_000);
+			script.write("aaaaaaaaaaaa: Download complete\n");
+
+			const status = getServerUpdateStatus();
+			expect(status.downloadPercent).toBe(84);
+			expect(status.downloadBytesPerSecond).toBe(21_000_000);
+			expect(status.downloadRemainingSeconds).toBeCloseTo(8 / 21, 6);
+
+			script.write("cccccccccccc: Pulling fs layer\n");
+			expect(getServerUpdateStatus()).toMatchObject({
+				downloadPercent: 33,
+				downloadRemainingSeconds: null,
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("returns a copy of the status", () => {
 		const script = startFakeScript();
 		script.write("line\n");

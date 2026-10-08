@@ -203,3 +203,14 @@ export const formatElapsed = (ms: number) => {
 	const seconds = totalSeconds % 60;
 	return `${minutes} min ${String(seconds).padStart(2, "0")} s`;
 };
+
+const isKnownAmount = (value: number | null): value is number =>
+	value !== null && Number.isFinite(value) && value >= 0;
+
+export const formatSpeed = (bytesPerSecond: number | null) =>
+	isKnownAmount(bytesPerSecond)
+		? `${(bytesPerSecond / 1_000_000).toFixed(1)} MB/s`
+		: "unknown";
+
+export const formatRemaining = (seconds: number | null) =>
+	isKnownAmount(seconds) ? formatElapsed(seconds * 1000) : "unknown";
