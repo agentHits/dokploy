@@ -58,6 +58,9 @@ DOCKER_ENGINE_UPGRADE_NEEDED=0
 DOCKER_ENGINE_PREVIOUS_VERSION=""
 DOCKER_ROLLBACK_DIR=""
 DOCKER_ROLLBACK_DIR_CREATED=0
+TRAEFIK_EXTRA_NETWORKS=""
+TRAEFIK_OLD_IMAGE=""
+TRAEFIK_OLD_STOPPED=0
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -1302,51 +1305,54 @@ traefik_extra_networks() {
 	done
 }
 
-# The container is created and connected to all its networks before it starts,
-# so the time without a running Traefik stays short.
+# Created but not started, with the given restart policy, and connected to all its
+# networks before it starts, so the time without a running Traefik stays short.
 create_dokploy_traefik() {
+	local image="$1"
+	local restart="$2"
 	docker create \
 		--name dokploy-traefik \
-		--restart always \
+		--restart "$restart" \
 		-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
 		-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
 		-v /var/run/docker.sock:/var/run/docker.sock:ro \
 		-p 80:80/tcp \
 		-p 443:443/tcp \
 		-p 443:443/udp \
-		"$1" >/dev/null
+		"$image" >/dev/null || return 1
 
-	docker network connect dokploy-network dokploy-traefik
+	docker network connect dokploy-network dokploy-traefik || return 1
 	local network=""
 	for network in $TRAEFIK_EXTRA_NETWORKS; do
 		if docker network inspect "$network" >/dev/null 2>&1; then
-			docker network connect "$network" dokploy-traefik
+			docker network connect "$network" dokploy-traefik || return 1
 		fi
 	done
 }
 
 run_dokploy_traefik() {
-	create_dokploy_traefik "$1"
+	create_dokploy_traefik "$1" always
 	docker start dokploy-traefik >/dev/null
 }
 
-TRAEFIK_TARGET_IMAGE=""
-TRAEFIK_EXTRA_NETWORKS=""
-TRAEFIK_PREVIOUS_KEPT=0
-TRAEFIK_SWAPPED=0
+traefik_check_running() {
+	[ "$(docker inspect --format '{{.State.Running}} {{.RestartCount}}' dokploy-traefik 2>/dev/null)" = "true 0" ]
+}
 
-# Ports 80 and 443 are free only after the old container stops, so the old one
-# is put back when the new one does not come up.
-restore_dokploy_traefik() {
-	trap - ERR HUP INT TERM
-	if [ "$TRAEFIK_SWAPPED" = "0" ]; then
-		echo "Error: Traefik on $TRAEFIK_TARGET_IMAGE did not come up with all its networks; restoring the previous container." >&2
-		if [ "$TRAEFIK_PREVIOUS_KEPT" = "1" ]; then
-			docker rm -f dokploy-traefik >/dev/null 2>&1 || true
-			docker rename dokploy-traefik-previous dokploy-traefik || true
-			docker update --restart always dokploy-traefik >/dev/null 2>&1 || true
+# Names the step that failed. Once the old container is stopped, it is created again
+# from its image with the same networks and started, before the script exits.
+traefik_restore() {
+	local failed_step="$1"
+	trap - HUP INT TERM
+	echo "Error: Traefik update failed while $failed_step." >&2
+	if [ "$TRAEFIK_OLD_STOPPED" = "1" ]; then
+		echo "Restoring the previous Traefik container from $TRAEFIK_OLD_IMAGE." >&2
+		docker rm -f dokploy-traefik >/dev/null 2>&1 || true
+		if create_dokploy_traefik "$TRAEFIK_OLD_IMAGE" no && docker update --restart always dokploy-traefik >/dev/null && docker start dokploy-traefik >/dev/null && traefik_check_running; then
+			echo "The previous Traefik container is running again." >&2
+		else
+			echo "Error: restoring the previous Traefik container failed as well. Check with: docker ps -a --filter name=dokploy-traefik" >&2
 		fi
-		docker start dokploy-traefik >/dev/null 2>&1 || true
 	fi
 	exit 1
 }
@@ -1359,35 +1365,39 @@ swap_dokploy_traefik() {
 		return 0
 	fi
 
-	TRAEFIK_TARGET_IMAGE="$TRAEFIK_IMAGE"
-	TRAEFIK_PREVIOUS_KEPT=0
-	TRAEFIK_SWAPPED=0
-	# errtrace makes the ERR trap fire for a failed docker command inside create_dokploy_traefik.
-	set -o errtrace
-	trap restore_dokploy_traefik ERR HUP INT TERM
-	TRAEFIK_EXTRA_NETWORKS="$(traefik_extra_networks)"
-
+	local existed=0
 	if docker inspect dokploy-traefik >/dev/null 2>&1; then
-		docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
-		docker rename dokploy-traefik dokploy-traefik-previous
-		TRAEFIK_PREVIOUS_KEPT=1
+		existed=1
 	fi
-
-	create_dokploy_traefik "$TRAEFIK_IMAGE"
-	if [ "$TRAEFIK_PREVIOUS_KEPT" = "1" ]; then
-		# A stopped container with restart=always is started again when the daemon restarts.
-		docker update --restart no dokploy-traefik-previous >/dev/null
-		docker stop dokploy-traefik-previous >/dev/null
+	TRAEFIK_OLD_IMAGE="$current"
+	TRAEFIK_EXTRA_NETWORKS="$(traefik_extra_networks)"
+	TRAEFIK_OLD_STOPPED=0
+	trap 'traefik_restore "being interrupted"' HUP INT TERM
+	docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
+	if [ "$existed" = "1" ]; then
+		if ! docker stop dokploy-traefik >/dev/null; then
+			traefik_restore "stopping the running Traefik container"
+		fi
+		TRAEFIK_OLD_STOPPED=1
+		if ! docker rm dokploy-traefik >/dev/null; then
+			traefik_restore "removing the stopped Traefik container"
+		fi
 	fi
-	docker start dokploy-traefik >/dev/null
+	if ! create_dokploy_traefik "$TRAEFIK_IMAGE" no; then
+		traefik_restore "creating the new Traefik container and connecting its networks"
+	fi
+	if ! docker start dokploy-traefik >/dev/null; then
+		traefik_restore "starting the new Traefik container"
+	fi
 	sleep "$DOKPLOY_TRAEFIK_SETTLE"
-	if [ "$(docker inspect --format '{{.State.Running}}' dokploy-traefik 2>/dev/null)" != "true" ]; then
-		restore_dokploy_traefik
+	if ! traefik_check_running; then
+		traefik_restore "checking the new Traefik container (running, with no restarts)"
 	fi
-
-	TRAEFIK_SWAPPED=1
-	trap - ERR HUP INT TERM
-	echo "Traefik runs $TRAEFIK_IMAGE (previous container kept stopped as dokploy-traefik-previous)"
+	if ! docker update --restart always dokploy-traefik >/dev/null; then
+		traefik_restore "setting the restart policy of the new Traefik container"
+	fi
+	trap - HUP INT TERM
+	echo "Traefik runs $TRAEFIK_IMAGE"
 }
 
 require_update_services() {

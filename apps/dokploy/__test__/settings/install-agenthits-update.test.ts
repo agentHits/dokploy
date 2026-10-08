@@ -66,9 +66,21 @@ case "$1" in
 		case "$*" in
 			*Config.Image*) echo "$FAKE_TRAEFIK_IMAGE" ;;
 			*NetworkSettings*) echo "$FAKE_TRAEFIK_NETWORKS" ;;
-			*State.Running*) echo "$FAKE_TRAEFIK_RUNNING" ;;
+			*RestartCount*)
+				traefik_now="$(cat "$DOCKER_TRAEFIK_IMAGE_FILE" 2>/dev/null || echo "$FAKE_TRAEFIK_IMAGE")"
+				if [ "$FAKE_TRAEFIK_RUNNING" = "false" ] && [ "$traefik_now" != "$FAKE_TRAEFIK_IMAGE" ]; then echo "false 0"; else echo "true 0"; fi
+				;;
+			*State.Running*)
+				traefik_now="$(cat "$DOCKER_TRAEFIK_IMAGE_FILE" 2>/dev/null || echo "$FAKE_TRAEFIK_IMAGE")"
+				if [ "$FAKE_TRAEFIK_RUNNING" = "false" ] && [ "$traefik_now" != "$FAKE_TRAEFIK_IMAGE" ]; then echo false; else echo true; fi
+				;;
 			*State.Health.Status*) echo healthy ;;
 		esac
+		exit 0
+		;;
+	create)
+		for traefik_arg in "$@"; do traefik_image_arg="$traefik_arg"; done
+		printf '%s\\n' "$traefik_image_arg" > "$DOCKER_TRAEFIK_IMAGE_FILE"
 		exit 0
 		;;
 	network)
@@ -299,6 +311,7 @@ const runInstaller = (
 				DOCKER_CALL_LOG: callLog,
 				DOCKER_INDEX_FILE: indexFile,
 				DOCKER_ENGINE_FILE: engineFile,
+				DOCKER_TRAEFIK_IMAGE_FILE: path.join(dir, "traefik-image"),
 				AGENTHITS_SKIP_HOST_CHECK: "1",
 				DOKPLOY_BACKUP_DIR: backupDir,
 				DOKPLOY_APT_SOURCES_DIR: sourcesDir,
@@ -436,12 +449,9 @@ describe("install-agenthits.sh update", () => {
 				calls,
 				"service update --detach --update-order stop-first --update-failure-action rollback --image redis:8.10.2 dokploy-redis",
 			);
-			const traefikRename = firstIndex(
-				calls,
-				"rename dokploy-traefik dokploy-traefik-previous",
-			);
+			const traefikStop = firstIndex(calls, "stop dokploy-traefik");
+			const traefikRemove = firstIndex(calls, "rm dokploy-traefik");
 			const traefikCreate = firstIndex(calls, "create --name dokploy-traefik");
-			const traefikStop = firstIndex(calls, "stop dokploy-traefik-previous");
 			const traefikStart = firstIndex(calls, "start dokploy-traefik");
 			const postgres = firstIndex(
 				calls,
@@ -455,9 +465,9 @@ describe("install-agenthits.sh update", () => {
 			for (const step of [
 				backup,
 				redis,
-				traefikRename,
-				traefikCreate,
 				traefikStop,
+				traefikRemove,
+				traefikCreate,
 				traefikStart,
 				postgres,
 				panel,
@@ -466,16 +476,15 @@ describe("install-agenthits.sh update", () => {
 			}
 			expect(lastPull).toBeLessThan(backup);
 			expect(backup).toBeLessThan(redis);
-			expect(redis).toBeLessThan(traefikRename);
-			expect(traefikRename).toBeLessThan(traefikCreate);
-			expect(traefikCreate).toBeLessThan(traefikStop);
-			expect(traefikStop).toBeLessThan(traefikStart);
+			expect(redis).toBeLessThan(traefikStop);
+			expect(traefikStop).toBeLessThan(traefikRemove);
+			expect(traefikRemove).toBeLessThan(traefikCreate);
+			expect(traefikCreate).toBeLessThan(traefikStart);
 			expect(traefikStart).toBeLessThan(postgres);
 			expect(postgres).toBeLessThan(panel);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);
-
 	it(
 		"stops before any swap when the Postgres backup fails",
 		() => {
@@ -520,7 +529,7 @@ describe("install-agenthits.sh update", () => {
 	);
 
 	it(
-		"restores the previous Traefik container when the new one is not running",
+		"restores the previous Traefik image when the new one is not running",
 		() => {
 			const { result, calls } = runInstaller({
 				traefikImage: "traefik:v3.6.25",
@@ -528,18 +537,23 @@ describe("install-agenthits.sh update", () => {
 			});
 
 			expect(result.status).not.toBe(0);
-			expect(result.stderr).toContain("restoring the previous container");
-			expect(calls).toContain(
-				"rename dokploy-traefik-previous dokploy-traefik",
+			expect(result.stderr).toContain(
+				"Error: Traefik update failed while checking the new Traefik container",
 			);
-			expect(calls.at(-1)).toBe("start dokploy-traefik");
+			expect(result.stderr).toContain(
+				"The previous Traefik container is running again.",
+			);
+			const recreated = calls.filter((call) =>
+				call.startsWith("create --name dokploy-traefik"),
+			);
+			expect(recreated).toHaveLength(2);
+			expect(recreated[1]?.endsWith("traefik:v3.6.25")).toBe(true);
 			expect(calls.some((call) => call.startsWith("service update"))).toBe(
 				false,
 			);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);
-
 	it(
 		"reconnects every network of the old Traefik container before the new one starts",
 		() => {
@@ -585,7 +599,7 @@ describe("install-agenthits.sh update", () => {
 	);
 
 	it(
-		"restores the previous Traefik container when a network cannot be connected",
+		"reports the failed step when a network cannot be connected and the old container cannot be restored",
 		() => {
 			const { result, calls } = runInstaller({
 				traefikImage: "traefik:v3.6.25",
@@ -594,18 +608,23 @@ describe("install-agenthits.sh update", () => {
 			});
 
 			expect(result.status).not.toBe(0);
-			expect(result.stderr).toContain("restoring the previous container");
-			expect(calls).toContain(
-				"rename dokploy-traefik-previous dokploy-traefik",
+			expect(result.stderr).toContain(
+				"Error: Traefik update failed while creating the new Traefik container and connecting its networks.",
 			);
-			expect(calls.at(-1)).toBe("start dokploy-traefik");
+			expect(result.stderr).toContain("failed as well");
+			expect(
+				calls.some(
+					(call) =>
+						call.startsWith("create --name dokploy-traefik") &&
+						call.endsWith("traefik:v3.6.25"),
+				),
+			).toBe(true);
 			expect(calls.some((call) => call.startsWith("service update"))).toBe(
 				false,
 			);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);
-
 	it(
 		"refuses a Postgres major version change before anything runs",
 		() => {
@@ -874,14 +893,15 @@ describe("install-agenthits.sh Traefik and host settings", () => {
 		expect(installer).toContain("docker-rollback-");
 	});
 
-	it("reattaches the Traefik networks and starts the new container last in the installer", () => {
+	it("reattaches the Traefik networks, starts the new container last, and never renames", () => {
 		const installer = readFileSync(installerScript, "utf8");
 		const swap = installer.slice(installer.indexOf("swap_dokploy_traefik() {"));
 		const order = [
-			swap.indexOf('TRAEFIK_EXTRA_NETWORKS="$(traefik_extra_networks)"'),
-			swap.indexOf('create_dokploy_traefik "$TRAEFIK_IMAGE"'),
-			swap.indexOf("docker stop dokploy-traefik-previous"),
+			swap.indexOf("docker stop dokploy-traefik"),
+			swap.indexOf("docker rm dokploy-traefik"),
+			swap.indexOf('create_dokploy_traefik "$TRAEFIK_IMAGE" no'),
 			swap.indexOf("docker start dokploy-traefik >/dev/null"),
+			swap.indexOf("docker update --restart always dokploy-traefik"),
 		];
 
 		expect(order.every((position) => position >= 0)).toBe(true);
@@ -889,24 +909,27 @@ describe("install-agenthits.sh Traefik and host settings", () => {
 		expect(installer).toContain(
 			'docker network connect "$network" dokploy-traefik',
 		);
+		expect(installer).not.toContain("docker rename");
 		expect(installer).not.toContain("docker run -d");
 	});
 });
 
 describe("install-agenthits.sh Traefik restart policy", () => {
-	it("sets --restart no on the replaced Traefik before stopping it", () => {
+	it("creates the new Traefik with --restart no and raises the policy only after the check", () => {
 		const { result, calls } = runInstaller({ traefikImage: "traefik:v3.6.25" });
 
 		expect(result.status).toBe(0);
-		const noRestart = calls.indexOf(
-			"update --restart no dokploy-traefik-previous",
+		const created =
+			calls.find((call) => call.startsWith("create --name dokploy-traefik")) ??
+			"";
+		expect(created).toContain("--restart no");
+		expect(calls.some((call) => call.startsWith("update --restart no"))).toBe(
+			false,
 		);
-		expect(noRestart).toBeGreaterThanOrEqual(0);
-		expect(noRestart).toBeLessThan(
-			calls.indexOf("stop dokploy-traefik-previous"),
-		);
+		expect(
+			calls.indexOf("update --restart always dokploy-traefik"),
+		).toBeGreaterThan(calls.indexOf("start dokploy-traefik"));
 	});
-
 	it("restores --restart always on the Traefik it puts back", () => {
 		const { result, calls } = runInstaller({
 			traefikImage: "traefik:v3.6.25",

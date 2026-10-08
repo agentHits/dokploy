@@ -30,6 +30,7 @@ import {
 } from "@dokploy/server/setup/server-components";
 import {
 	buildTraefikCreateCommand,
+	buildTraefikCreateWithImage,
 	buildTraefikRunCommand,
 	TRAEFIK_VERSION,
 } from "@dokploy/server/setup/traefik-setup";
@@ -119,34 +120,32 @@ describe("buildComponentStatuses", () => {
 });
 
 describe("buildComponentUpdateScript", () => {
-	it("recreates the Traefik container from the pinned image, keeping the old one until the new one runs", () => {
+	it("replaces the Traefik container from the pinned image without renaming the old one", () => {
 		const script = buildComponentUpdateScript(["traefik"]);
 
 		expect(script).toContain(`docker pull traefik:v${TRAEFIK_VERSION}`);
-		expect(script).toContain(
-			"docker rename dokploy-traefik dokploy-traefik-previous",
-		);
-		expect(script).toContain(buildTraefikCreateCommand(TRAEFIK_VERSION).trim());
+		expect(script).toContain(`traefik_create "traefik:v${TRAEFIK_VERSION}"`);
+		expect(script).toContain(buildTraefikCreateWithImage('"$1"').trim());
+		expect(script).not.toContain("docker rename");
 	});
-
-	it("creates the replacement Traefik, attaches its networks, and starts it last", () => {
+	it("stops and removes the old Traefik, creates the new one, attaches its networks, and starts it last", () => {
 		const script = buildComponentUpdateScript(["traefik"]);
 		const order = [
-			script.indexOf("docker rename dokploy-traefik dokploy-traefik-previous"),
-			script.indexOf("docker create --name dokploy-traefik"),
-			script.indexOf("docker network connect dokploy-network dokploy-traefik"),
+			script.indexOf("if ! $SUDO_CMD docker stop dokploy-traefik >/dev/null;"),
+			script.indexOf("if ! $SUDO_CMD docker rm dokploy-traefik >/dev/null;"),
+			script.indexOf('if ! traefik_create "traefik:v'),
+			script.indexOf('if ! traefik_connect "$traefik_extra_networks";'),
+			script.indexOf("if ! $SUDO_CMD docker start dokploy-traefik >/dev/null;"),
 			script.indexOf(
-				'docker network connect "$traefik_network" dokploy-traefik',
+				"if ! $SUDO_CMD docker update --restart always dokploy-traefik >/dev/null;",
 			),
-			script.indexOf("docker stop dokploy-traefik-previous"),
-			script.indexOf("\n$SUDO_CMD docker start dokploy-traefik >/dev/null\n"),
 		];
 
 		expect(order.every((position) => position >= 0)).toBe(true);
 		expect(order).toEqual([...order].sort((a, b) => a - b));
 		expect(script).not.toContain("docker run");
+		expect(script).not.toContain("docker rename");
 	});
-
 	it("reads the networks of the running Traefik on the host, before it is replaced", () => {
 		const script = buildComponentUpdateScript(["traefik"]);
 		const read = script.indexOf(
@@ -155,29 +154,23 @@ describe("buildComponentUpdateScript", () => {
 
 		expect(read).toBeGreaterThanOrEqual(0);
 		expect(read).toBeLessThan(
-			script.indexOf("docker rename dokploy-traefik dokploy-traefik-previous"),
+			script.indexOf("if ! $SUDO_CMD docker stop dokploy-traefik >/dev/null;"),
 		);
 		expect(script).toContain("bridge | dokploy-network) continue ;;");
 	});
-
-	it("sets the restart policy of the replaced Traefik around the swap", () => {
+	it("raises the restart policy of the new Traefik only after it passes the check", () => {
 		const script = buildComponentUpdateScript(["traefik"]);
-		const restore = script.slice(
-			script.indexOf("restore_traefik() {"),
-			script.indexOf("trap restore_traefik ERR"),
+		const check = script.indexOf("if ! traefik_check_running; then");
+		const raise = script.indexOf(
+			"if ! $SUDO_CMD docker update --restart always dokploy-traefik >/dev/null; then",
 		);
 
-		expect(
-			script.indexOf("docker update --restart no dokploy-traefik-previous"),
-		).toBeLessThan(script.indexOf("docker stop dokploy-traefik-previous"));
-		expect(
-			restore.indexOf("docker update --restart always dokploy-traefik"),
-		).toBeGreaterThanOrEqual(0);
-		expect(
-			restore.indexOf("docker update --restart always dokploy-traefik"),
-		).toBeLessThan(restore.indexOf("docker start dokploy-traefik"));
+		expect(script).toMatch(
+			/docker create --name dokploy-traefik\s+--restart no\s/,
+		);
+		expect(check).toBeGreaterThanOrEqual(0);
+		expect(raise).toBeGreaterThan(check);
 	});
-
 	it("passes the pinned versions into the installers through env", () => {
 		const script = buildComponentUpdateScript(["nixpacks", "railpack"]);
 
@@ -344,7 +337,11 @@ const FAKE_TOOLS: Record<string, string> = {
 printf 'docker %s\\n' "$*" >> "$CALL_LOG"
 case "$1" in
 	pull) [ "$FAKE_PULL_FAILS" = 1 ] && exit 1 ;;
-	create) [ "$FAKE_CREATE_FAILS" = 1 ] && exit 1 ;;
+	create)
+		[ "$FAKE_CREATE_FAILS" = 1 ] && exit 1
+		for traefik_arg in "$@"; do traefik_image_arg="$traefik_arg"; done
+		printf '%s\\n' "$traefik_image_arg" > "$FAKE_STATE/traefik-image"
+		;;
 	version) cat "$FAKE_STATE/engine" ;;
 	network)
 		case "$2" in
@@ -354,9 +351,15 @@ case "$1" in
 		;;
 	inspect)
 		case "$*" in
+			*Config.Image*) echo "$FAKE_OLD_IMAGE" ;;
 			*NetworkSettings*) echo "$FAKE_TRAEFIK_NETWORKS" ;;
+			*RestartCount*)
+				traefik_now="$(cat "$FAKE_STATE/traefik-image" 2>/dev/null || echo "$FAKE_OLD_IMAGE")"
+				if [ "$FAKE_NOT_RUNNING" = 1 ] && [ "$traefik_now" != "$FAKE_OLD_IMAGE" ]; then echo "false 0"; else echo "true 0"; fi
+				;;
 			*State.Running*)
-				if [ "$FAKE_NOT_RUNNING" = 1 ]; then echo false; else echo true; fi
+				traefik_now="$(cat "$FAKE_STATE/traefik-image" 2>/dev/null || echo "$FAKE_OLD_IMAGE")"
+				if [ "$FAKE_NOT_RUNNING" = 1 ] && [ "$traefik_now" != "$FAKE_OLD_IMAGE" ]; then echo false; else echo true; fi
 				;;
 		esac
 		;;
@@ -584,6 +587,7 @@ const runComponentScript = (
 				FAKE_STATE: dir,
 				FAKE_PREVIOUS_ENGINE: "28.3.0",
 				FAKE_TARGET_ENGINE: "29.8.2",
+				FAKE_OLD_IMAGE: "traefik:v3.6.25",
 				TRAEFIK_SETTLE_SECONDS: "0",
 				DOKPLOY_BACKUP_DIR: backups,
 				DOKPLOY_OS_RELEASE: osRelease,
@@ -706,7 +710,7 @@ describe("buildComponentUpdateScript run order", () => {
 				call.startsWith("docker pull traefik:v"),
 			);
 			const firstChange = run.calls.findIndex((call) =>
-				call.startsWith("docker rename dokploy-traefik"),
+				call.startsWith("docker stop dokploy-traefik"),
 			);
 			expect(download).toBeGreaterThanOrEqual(0);
 			expect(pull).toBeGreaterThanOrEqual(0);
@@ -716,51 +720,47 @@ describe("buildComponentUpdateScript run order", () => {
 		SPAWN_TEST_TIMEOUT_MS,
 	);
 
-	it(
-		"replaces Traefik only after the new container has run",
-		() => {
-			const run = runComponentScript(["traefik"]);
+	it("replaces Traefik only after the new container has run", () => {
+		const run = runComponentScript(["traefik"]);
 
-			expect(run.status).toBe(0);
-			expect(run.stdout).toContain(
-				`Traefik version ${TRAEFIK_VERSION} installed`,
-			);
-			const at = (prefix: string) =>
-				run.calls.findIndex((call) => call.startsWith(prefix));
-			const order = [
-				at("docker pull traefik:v"),
-				at("docker rename dokploy-traefik dokploy-traefik-previous"),
-				at("docker create --name dokploy-traefik"),
-				at("docker network connect dokploy-network dokploy-traefik"),
-				at("docker update --restart no dokploy-traefik-previous"),
-				at("docker stop dokploy-traefik-previous"),
-				at("docker start dokploy-traefik"),
-				at("docker inspect -f {{.State.Running}} dokploy-traefik"),
-			];
-			expect(order.every((position) => position >= 0)).toBe(true);
-			expect(order).toEqual([...order].sort((a, b) => a - b));
-			expect(run.calls.at(-1)).toBe("docker rm -f dokploy-traefik-previous");
-		},
-		SPAWN_TEST_TIMEOUT_MS,
-	);
+		expect(run.status).toBe(0);
+		expect(run.stdout).toContain(
+			`Traefik version ${TRAEFIK_VERSION} installed`,
+		);
+		const at = (prefix: string) =>
+			run.calls.findIndex((call) => call.startsWith(prefix));
+		const order = [
+			at("docker pull traefik:v"),
+			at("docker stop dokploy-traefik"),
+			at("docker rm dokploy-traefik"),
+			at("docker create --name dokploy-traefik"),
+			at("docker network connect dokploy-network dokploy-traefik"),
+			at("docker start dokploy-traefik"),
+			at(
+				"docker inspect -f {{.State.Running}} {{.RestartCount}} dokploy-traefik",
+			),
+			at("docker update --restart always dokploy-traefik"),
+		];
+		expect(order.every((position) => position >= 0)).toBe(true);
+		expect(order).toEqual([...order].sort((a, b) => a - b));
+		expect(run.calls.at(-1)).toBe(
+			"docker update --restart always dokploy-traefik",
+		);
+	});
+	it("creates the new Traefik with --restart no and raises the policy only after the start", () => {
+		const run = runComponentScript(["traefik"]);
 
-	it(
-		"sets --restart no on the replaced Traefik before stopping it",
-		() => {
-			const run = runComponentScript(["traefik"]);
-
-			expect(run.status).toBe(0);
-			const noRestart = run.calls.indexOf(
-				"docker update --restart no dokploy-traefik-previous",
-			);
-			expect(noRestart).toBeGreaterThanOrEqual(0);
-			expect(noRestart).toBeLessThan(
-				run.calls.indexOf("docker stop dokploy-traefik-previous"),
-			);
-		},
-		SPAWN_TEST_TIMEOUT_MS,
-	);
-
+		expect(run.status).toBe(0);
+		const created =
+			run.calls.find((call) =>
+				call.startsWith("docker create --name dokploy-traefik"),
+			) ?? "";
+		expect(created).toContain("--restart no");
+		expect(created).not.toContain("--restart always");
+		expect(
+			run.calls.indexOf("docker update --restart always dokploy-traefik"),
+		).toBeGreaterThan(run.calls.indexOf("docker start dokploy-traefik"));
+	});
 	it(
 		"restores --restart always on the Traefik it puts back",
 		() => {
@@ -780,43 +780,39 @@ describe("buildComponentUpdateScript run order", () => {
 		SPAWN_TEST_TIMEOUT_MS,
 	);
 
-	it(
-		"restores the previous Traefik container when the new one is not running",
-		() => {
-			const run = runComponentScript(["traefik"], {
-				env: { FAKE_NOT_RUNNING: "1" },
-			});
+	it("restores the previous Traefik image when the new one is not running", () => {
+		const run = runComponentScript(["traefik"], {
+			env: { FAKE_NOT_RUNNING: "1" },
+		});
 
-			expect(run.status).not.toBe(0);
-			expect(run.stderr).toContain("restoring the previous container");
-			expect(run.calls).toContain(
-				"docker rename dokploy-traefik-previous dokploy-traefik",
-			);
-			expect(run.calls.at(-1)).toBe("docker start dokploy-traefik");
-			expect(run.stdout).not.toContain("installed");
-		},
-		SPAWN_TEST_TIMEOUT_MS,
-	);
+		expect(run.status).not.toBe(0);
+		expect(run.stderr).toContain(
+			"Error: Traefik update failed while checking the new Traefik container",
+		);
+		expect(run.stderr).toContain(
+			"The previous Traefik container is running again.",
+		);
+		expect(run.stdout).not.toContain("installed");
+		const recreated = run.calls.filter((call) =>
+			call.startsWith("docker create --name dokploy-traefik"),
+		);
+		expect(recreated).toHaveLength(2);
+		expect(recreated[1]?.endsWith("traefik:v3.6.25")).toBe(true);
+	});
+	it("reports the failed step when the new container cannot be created and the old one cannot be restored", () => {
+		const run = runComponentScript(["traefik"], {
+			env: { FAKE_CREATE_FAILS: "1" },
+		});
 
-	it(
-		"restores the previous Traefik container when docker create fails",
-		() => {
-			const run = runComponentScript(["traefik"], {
-				env: { FAKE_CREATE_FAILS: "1" },
-			});
-
-			expect(run.status).not.toBe(0);
-			expect(run.calls).toContain(
-				"docker rename dokploy-traefik-previous dokploy-traefik",
-			);
-			expect(
-				run.calls.some((call) => call.startsWith("docker network connect")),
-			).toBe(false);
-			expect(run.calls.at(-1)).toBe("docker start dokploy-traefik");
-		},
-		SPAWN_TEST_TIMEOUT_MS,
-	);
-
+		expect(run.status).not.toBe(0);
+		expect(run.stderr).toContain(
+			"Error: Traefik update failed while creating the new Traefik container.",
+		);
+		expect(run.stderr).toContain("failed as well");
+		expect(
+			run.calls.some((call) => call.startsWith("docker network connect")),
+		).toBe(false);
+	});
 	it(
 		"connects every network of the old Traefik container before the new one starts",
 		() => {
@@ -868,23 +864,24 @@ describe("buildComponentUpdateScript run order", () => {
 		SPAWN_TEST_TIMEOUT_MS,
 	);
 
-	it(
-		"restores the previous Traefik container when a network cannot be connected",
-		() => {
-			const run = runComponentScript(["traefik"], {
-				env: { FAKE_TRAEFIK_NETWORKS: "app-a", FAKE_CONNECT_FAILS: "app-a" },
-			});
+	it("reports the failed step when a network cannot be connected and the old container cannot be restored", () => {
+		const run = runComponentScript(["traefik"], {
+			env: { FAKE_TRAEFIK_NETWORKS: "app-a", FAKE_CONNECT_FAILS: "app-a" },
+		});
 
-			expect(run.status).not.toBe(0);
-			expect(run.stderr).toContain("restoring the previous container");
-			expect(run.calls).toContain(
-				"docker rename dokploy-traefik-previous dokploy-traefik",
-			);
-			expect(run.calls.at(-1)).toBe("docker start dokploy-traefik");
-		},
-		SPAWN_TEST_TIMEOUT_MS,
-	);
-
+		expect(run.status).not.toBe(0);
+		expect(run.stderr).toContain(
+			"Error: Traefik update failed while connecting the new Traefik container to its networks.",
+		);
+		expect(run.stderr).toContain("failed as well");
+		expect(
+			run.calls.some(
+				(call) =>
+					call.startsWith("docker create --name dokploy-traefik") &&
+					call.endsWith("traefik:v3.6.25"),
+			),
+		).toBe(true);
+	});
 	it(
 		"downloads the pinned Docker packages before the Docker step runs",
 		() => {

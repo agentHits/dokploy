@@ -24,25 +24,32 @@ export const TRAEFIK_HTTP3_PORT =
 export const TRAEFIK_VERSION =
 	process.env.TRAEFIK_VERSION || PINNED_VERSIONS.traefik;
 
-const traefikContainerOptions = (version: string) => `--name dokploy-traefik \
-	--restart always \
+const traefikContainerOptions = (
+	image: string,
+	restart: string,
+) => `--name dokploy-traefik \
+	--restart ${restart} \
 	-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
 	-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
 	-v /var/run/docker.sock:/var/run/docker.sock \
 	-p ${TRAEFIK_SSL_PORT}:${TRAEFIK_SSL_PORT} \
 	-p ${TRAEFIK_PORT}:${TRAEFIK_PORT} \
 	-p ${TRAEFIK_HTTP3_PORT}:${TRAEFIK_HTTP3_PORT}/udp \
-	traefik:v${version}`;
+	${image}`;
 
 export const buildTraefikRunCommand = (version: string) => `
-		$SUDO_CMD docker run -d ${traefikContainerOptions(version)}
+		$SUDO_CMD docker run -d ${traefikContainerOptions(`traefik:v${version}`, "always")}
 		$SUDO_CMD docker network connect dokploy-network dokploy-traefik
 `;
 
-// Created but not started, so networks are attached before the ports are taken.
-export const buildTraefikCreateCommand = (version: string) => `
-		$SUDO_CMD docker create ${traefikContainerOptions(version)}
+// Created with no restart policy and not started: networks are attached before the
+// ports are taken, and the policy is raised only after the new container runs.
+export const buildTraefikCreateWithImage = (image: string) => `
+		$SUDO_CMD docker create ${traefikContainerOptions(image, "no")}
 `;
+
+export const buildTraefikCreateCommand = (version: string) =>
+	buildTraefikCreateWithImage(`traefik:v${version}`);
 
 export interface TraefikOptions {
 	env?: string[];
