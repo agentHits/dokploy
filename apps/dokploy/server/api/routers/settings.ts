@@ -1,5 +1,6 @@
 import {
 	CLEANUP_CRON_JOB,
+	COMPONENTS_UPDATE_FAILED,
 	checkGPUStatus,
 	checkPortInUse,
 	checkPostgresHealth,
@@ -30,7 +31,11 @@ import {
 	getUpdateData,
 	getUpdateDiskSpace,
 	getWebServerSettings,
+	HOST_STACK_COMPONENTS,
+	hostStackRefusals,
 	IS_CLOUD,
+	isHostStackUiComponent,
+	isHostStackUpdateRunning,
 	isServerUpdateRunning,
 	parseRawConfig,
 	paths,
@@ -40,6 +45,7 @@ import {
 	readConfigInPath,
 	readDirectory,
 	readEnvironmentVariables,
+	readHostStackRows,
 	readMainConfig,
 	readMonitoringConfig,
 	readPorts,
@@ -53,6 +59,7 @@ import {
 	startLogCleanup,
 	startServerUpdate,
 	stopLogCleanup,
+	updateHostStackComponents,
 	updateLetsEncryptEmail,
 	updateServerById,
 	updateServerTraefik,
@@ -67,6 +74,7 @@ import { checkPermission } from "@dokploy/server/services/permission";
 import { isProtectedTraefikPath } from "@dokploy/server/utils/traefik/application";
 import { generateOpenApiDocument } from "@dokploy/trpc-openapi";
 import { TRPCError } from "@trpc/server";
+import { observable } from "@trpc/server/observable";
 import { eq, sql } from "drizzle-orm";
 import { scheduledJobs, scheduleJob } from "node-schedule";
 import { parse, stringify } from "yaml";
@@ -192,6 +200,70 @@ export const settingsRouter = createTRPCRouter({
 				resourceName: "dokploy-traefik",
 			});
 			return true;
+		}),
+	hostStack: adminProcedure.query(async ({ ctx }) => {
+		await assertLocalHostAccess(ctx);
+		if (IS_CLOUD) {
+			return null;
+		}
+		return await readHostStackRows(packageInfo.version);
+	}),
+	updateHostStack: adminProcedure
+		.meta({
+			openapi: {
+				path: "/settings/update-host-stack",
+				method: "POST",
+				override: true,
+				enabled: false,
+			},
+		})
+		.input(
+			z.object({
+				components: z.array(z.enum(HOST_STACK_COMPONENTS)).min(1),
+			}),
+		)
+		.subscription(async ({ input, ctx }) => {
+			await assertLocalHostAccess(ctx);
+			if (IS_CLOUD) {
+				throw new TRPCError({
+					code: "FORBIDDEN",
+					message: "The panel host components are not managed here.",
+				});
+			}
+			const refusals = hostStackRefusals(input.components);
+			if (refusals.length > 0) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: refusals.join(" "),
+				});
+			}
+			if (isServerUpdateRunning() || isHostStackUpdateRunning()) {
+				throw new TRPCError({
+					code: "CONFLICT",
+					message:
+						"Another update of this panel host is running. Try again when it finishes.",
+				});
+			}
+			const components = input.components.filter(isHostStackUiComponent);
+			await audit(ctx, {
+				action: "update",
+				resourceType: "settings",
+				resourceName: "panel-host",
+				metadata: { components },
+			});
+			return observable<string>((emit) => {
+				updateHostStackComponents(components, (log) => {
+					emit.next(log);
+				})
+					.catch((error) => {
+						emit.next(
+							`${error instanceof Error ? error.message : error}\n${COMPONENTS_UPDATE_FAILED}\n`,
+						);
+					})
+					.finally(() => {
+						emit.complete();
+					});
+			});
 		}),
 	toggleDashboard: adminProcedure
 		.input(apiEnableDashboard)
