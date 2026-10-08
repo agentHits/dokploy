@@ -94,14 +94,60 @@ export const buildComponentStatuses = (
 		};
 	});
 
+// Runs before any step: a failed download stops the update while nothing
+// running has been touched. Only Docker and Traefik replace running services;
+// the other components are plain binaries with no running state to protect.
+const predownloadGate = (components: UpdatableComponent[]) => {
+	const downloads: string[] = [];
+	if (components.includes("traefik")) {
+		downloads.push(
+			`download_with_retry $SUDO_CMD docker pull traefik:v${TRAEFIK_VERSION} || abort_before_change "Pre-download failed: traefik:v${TRAEFIK_VERSION}."`,
+		);
+	}
+	if (components.includes("docker")) {
+		const dockerVersionPattern = PINNED_VERSIONS.docker.replace(/\./g, "\\.");
+		downloads.push(`GET_DOCKER_SCRIPT="$(mktemp)"
+download_with_retry curl -fsSL https://get.docker.com -o "$GET_DOCKER_SCRIPT" || abort_before_change "Pre-download failed: get.docker.com."
+if command -v apt-get >/dev/null 2>&1; then
+	$SUDO_CMD apt-get update -qq || abort_before_change "Pre-download failed: the apt package lists could not be refreshed."
+	DOCKER_PACKAGE_VERSION="$(apt-cache madison docker-ce | awk -F'|' '{ gsub(/ /, "", $2); print $2 }' | grep -m1 -E '^([0-9]+:)?${dockerVersionPattern}-' || true)"
+	[ -n "$DOCKER_PACKAGE_VERSION" ] || abort_before_change "Pre-download failed: Docker ${PINNED_VERSIONS.docker} is not in the apt sources."
+	download_with_retry $SUDO_CMD apt-get install -y -qq --download-only "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin || abort_before_change "Pre-download failed: the Docker packages."
+else
+	echo "No apt-get on this host: the Docker packages are not pre-downloaded; the Docker step fetches them."
+fi`);
+	}
+	if (downloads.length === 0) {
+		return "";
+	}
+	return `
+abort_before_change() {
+	echo "$1 Nothing was changed." >&2
+	exit 1
+}
+download_with_retry() {
+	local attempt=1
+	while [ "$attempt" -le 3 ]; do
+		if "$@"; then
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		sleep 5
+	done
+	return 1
+}
+echo "Downloading update artifacts before anything is changed"
+${downloads.join("\n")}
+`;
+};
+
 const updateStepFor = (component: UpdatableComponent) => {
 	switch (component) {
 		case "docker":
 			return `
 echo "Updating Docker to ${PINNED_VERSIONS.docker}"
-curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-$SUDO_CMD sh /tmp/get-docker.sh --version ${PINNED_VERSIONS.docker}
-rm -f /tmp/get-docker.sh
+$SUDO_CMD sh "$GET_DOCKER_SCRIPT" --version ${PINNED_VERSIONS.docker}
+rm -f "$GET_DOCKER_SCRIPT"
 echo "Docker version ${PINNED_VERSIONS.docker} installed ✅"
 `;
 		case "rclone":
@@ -111,9 +157,34 @@ ${rcloneInstallCommand()}
 		case "traefik":
 			return `
 echo "Updating Traefik to ${TRAEFIK_VERSION}"
-$SUDO_CMD docker pull traefik:v${TRAEFIK_VERSION}
-$SUDO_CMD docker rm -f dokploy-traefik >/dev/null 2>&1 || true
+traefik_previous_kept=0
+traefik_swapped=0
+restore_traefik() {
+	if [ "$traefik_swapped" = 0 ]; then
+		echo "Traefik ${TRAEFIK_VERSION} did not start; restoring the previous container." >&2
+		if [ "$traefik_previous_kept" = 1 ]; then
+			$SUDO_CMD docker rm -f dokploy-traefik >/dev/null 2>&1 || true
+			$SUDO_CMD docker rename dokploy-traefik-previous dokploy-traefik || true
+		fi
+		$SUDO_CMD docker start dokploy-traefik >/dev/null 2>&1 || true
+	fi
+	exit 1
+}
+trap restore_traefik ERR HUP INT TERM
+if $SUDO_CMD docker inspect dokploy-traefik >/dev/null 2>&1; then
+	$SUDO_CMD docker stop dokploy-traefik >/dev/null
+	$SUDO_CMD docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
+	$SUDO_CMD docker rename dokploy-traefik dokploy-traefik-previous
+	traefik_previous_kept=1
+fi
 ${buildTraefikRunCommand(TRAEFIK_VERSION)}
+sleep "\${TRAEFIK_SETTLE_SECONDS:-10}"
+if [ "$($SUDO_CMD docker inspect -f '{{.State.Running}}' dokploy-traefik 2>/dev/null)" != "true" ]; then
+	restore_traefik
+fi
+traefik_swapped=1
+trap - ERR HUP INT TERM
+$SUDO_CMD docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
 echo "Traefik version ${TRAEFIK_VERSION} installed ✅"
 `;
 		case "nixpacks":
@@ -147,6 +218,7 @@ export const buildComponentUpdateScript = (
 ) => `
 set -e
 if [ "$(id -u)" -eq 0 ]; then SUDO_CMD=""; else SUDO_CMD="sudo"; fi
+${predownloadGate(components)}
 ${components.map(updateStepFor).join("\n")}
 echo "${COMPONENTS_UPDATE_DONE}"
 `;
