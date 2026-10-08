@@ -579,15 +579,20 @@ echo "Buildpacks version ${PINNED_VERSIONS.buildpacks} installed ✅"
 	}
 };
 
-export const buildComponentUpdateScript = (
-	components: UpdatableComponent[],
-) => `
-set -e
-if [ "$(id -u)" -eq 0 ]; then SUDO_CMD=""; else SUDO_CMD="sudo"; fi
+export const buildComponentUpdateSteps = (components: UpdatableComponent[]) => `
 ${predownloadGate(components)}
 ${components.map(updateStepFor).join("\n")}
+`;
+
+export const wrapComponentUpdateSteps = (steps: string) => `
+set -e
+if [ "$(id -u)" -eq 0 ]; then SUDO_CMD=""; else SUDO_CMD="sudo"; fi
+${steps}
 echo "${COMPONENTS_UPDATE_DONE}"
 `;
+
+export const buildComponentUpdateScript = (components: UpdatableComponent[]) =>
+	wrapComponentUpdateSteps(buildComponentUpdateSteps(components));
 
 const runSshCommand = async (
 	serverId: string,
