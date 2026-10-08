@@ -175,13 +175,25 @@ describe("buildComponentUpdateScript", () => {
 		const script = buildComponentUpdateScript(["nixpacks", "railpack"]);
 
 		expect(script).toContain(
-			`env NIXPACKS_VERSION=${NIXPACKS_VERSION} bash -c`,
+			`env NIXPACKS_VERSION=${NIXPACKS_VERSION} bash "$nixpacks_installer"`,
 		);
 		expect(script).toContain(
-			`env RAILPACK_VERSION=${RAILPACK_VERSION} bash -c`,
+			`env RAILPACK_VERSION=${RAILPACK_VERSION} bash "$railpack_installer"`,
 		);
 	});
 
+	it("downloads the Nixpacks and Railpack install scripts to files and checks them before running them", () => {
+		const script = buildComponentUpdateScript(["nixpacks", "railpack"]);
+
+		expect(script).toContain(
+			'curl -fsSL https://nixpacks.com/install.sh -o "$nixpacks_installer"',
+		);
+		expect(script).toContain(
+			'curl -fsSL https://railpack.com/install.sh -o "$railpack_installer"',
+		);
+		expect(script).toContain('bash -n "$nixpacks_installer"');
+		expect(script).not.toContain('bash -c "$(curl');
+	});
 	it("installs the pinned Docker and RClone", () => {
 		const script = buildComponentUpdateScript(["docker", "rclone"]);
 
@@ -451,6 +463,11 @@ printf 'systemctl %s\\n' "$*" >> "$CALL_LOG"
 `,
 	curl: `#!/bin/sh
 printf 'curl %s\\n' "$*" >> "$CALL_LOG"
+if [ -n "$FAKE_CURL_FAILS_FOR" ]; then
+	case "$*" in
+		*"$FAKE_CURL_FAILS_FOR"*) exit 22 ;;
+	esac
+fi
 out=""
 while [ "$#" -gt 0 ]; do
 	if [ "$1" = "-o" ]; then out="$2"; fi
@@ -1286,6 +1303,39 @@ describe("buildComponentUpdateScript run order", () => {
 				"Pre-download failed: the Docker packages. Nothing was changed.",
 			);
 			expect(run.backups).toEqual([]);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"fails the update when the Nixpacks install script cannot be downloaded",
+		() => {
+			const run = runComponentScript(["nixpacks"], {
+				env: { FAKE_CURL_FAILS_FOR: "nixpacks.com" },
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.stderr).toContain(
+				"the Nixpacks install script could not be downloaded or checked",
+			);
+			expect(run.stdout).not.toContain("Nixpacks version");
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"installs Railpack from the downloaded script when the download succeeds",
+		() => {
+			const run = runComponentScript(["railpack"]);
+
+			expect(run.status).toBe(0);
+			expect(
+				run.calls.some((call) =>
+					call.startsWith("curl -fsSL https://railpack.com/install.sh -o "),
+				),
+			).toBe(true);
+			expect(run.stdout).toContain(
+				`Railpack version ${RAILPACK_VERSION} installed`,
+			);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);
