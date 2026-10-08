@@ -126,7 +126,7 @@ function Set-WslFirewall {
 	if (-not (Get-Command New-NetFirewallHyperVRule -ErrorAction SilentlyContinue)) { return }
 
 	$rules = @(
-		@{ Name = 'AgentHitsDokploy-TCP'; Protocol = 'TCP'; Ports = @('80', '443', '3000') },
+		@{ Name = 'AgentHitsDokploy-TCP'; Protocol = 'TCP'; Ports = @('443', '3000') },
 		@{ Name = 'AgentHitsDokploy-UDP'; Protocol = 'UDP'; Ports = @('443') }
 	)
 	foreach ($rule in $rules) {
@@ -139,7 +139,7 @@ function Set-WslFirewall {
 
 function Test-PortsFree {
 	$busy = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-		Where-Object { $_.LocalPort -in 80, 443, 3000 } |
+		Where-Object { $_.LocalPort -in 443, 3000 } |
 		ForEach-Object {
 			$process = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
 			if ($process -and $process.ProcessName -notmatch '^(wslrelay|wslservice|vmmem|vmmemWSL)$') {

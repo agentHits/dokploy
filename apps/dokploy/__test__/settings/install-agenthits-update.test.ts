@@ -1177,6 +1177,42 @@ describe("install-agenthits.sh Docker verification window", () => {
 	});
 });
 
+const PORT_80_PUBLICATION =
+	/(?:-p|--publish)[=\s]+\S*\b80\b|published=80\b|\b80\/tcp\b/;
+
+describe("install-agenthits.sh publishes no port 80", () => {
+	it(
+		"creates the Traefik container with HTTPS and HTTP/3 and never port 80",
+		() => {
+			const { result, calls } = runInstaller({
+				traefikImage: "traefik:v3.6.25",
+			});
+
+			expect(result.status).toBe(0);
+			const created = calls.filter((call) =>
+				call.startsWith("create --name dokploy-traefik"),
+			);
+			expect(created).not.toHaveLength(0);
+			for (const call of created) {
+				expect(call).not.toMatch(PORT_80_PUBLICATION);
+				expect(call).toContain("-p 443:443/tcp");
+				expect(call).toContain("-p 443:443/udp");
+			}
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it("keeps port 80 out of the static Traefik config, the firewall and the preflight checks", () => {
+		const installer = readFileSync(installerScript, "utf8");
+
+		expect(installer).toContain("tlsChallenge: {}");
+		expect(installer).not.toContain("httpChallenge");
+		expect(installer).not.toContain("TRAEFIK_HTTP_PUBLISH");
+		expect(installer).not.toMatch(/ufw allow 80\//);
+		expect(installer).not.toMatch(/require_free_port 80\b/);
+	});
+});
+
 describe("install-agenthits.sh Traefik settle check", () => {
 	it("polls the new Traefik once a second over the settle time, then checks it once more", () => {
 		const installer = readFileSync(installerScript, "utf8");

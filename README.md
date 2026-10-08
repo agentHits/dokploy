@@ -38,7 +38,7 @@ Rocky, Alma, Arch, openSUSE, Alpine и их производные, x86 и ARM),
 OrbStack) и Windows (через WSL2). Подробности:
 [docs/agenthits-install.md](docs/agenthits-install.md).
 
-Требования: свободные порты `80`, `443` и `3000`, доступ к GitHub, GHCR и
+Требования: свободные порты `443` и `3000`, доступ к GitHub, GHCR и
 Docker Hub.
 
 Linux, macOS, WSL (на Linux без root скрипт сам вызовет `sudo`, на macOS
@@ -152,7 +152,7 @@ Requirements:
 
 - fresh Linux VPS with root or sudo access;
 - `x86_64 / amd64` architecture;
-- free ports `80`, `443`, and `3000`;
+- free ports `443` and `3000`;
 - public access to GitHub, GHCR, and Docker Hub.
 
 Install as root:

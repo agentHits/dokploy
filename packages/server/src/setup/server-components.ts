@@ -6,11 +6,7 @@ import {
 } from "../utils/servers/destination";
 import { PINNED_VERSIONS } from "./component-versions";
 import { rcloneInstallCommand } from "./server-setup";
-import {
-	buildTraefikCreateWithImage,
-	TRAEFIK_PORT,
-	TRAEFIK_VERSION,
-} from "./traefik-setup";
+import { buildTraefikCreateWithImage, TRAEFIK_VERSION } from "./traefik-setup";
 
 export const COMPONENT_NAMES = [
 	"docker",
@@ -466,12 +462,8 @@ traefik_keep_bridge=1
 if [ "$traefik_existed" = 1 ] && ! echo " $traefik_extra_networks " | grep -q " bridge "; then
 	traefik_keep_bridge=0
 fi
-traefik_http_publish="-p ${TRAEFIK_PORT}:${TRAEFIK_PORT}"
-if [ "$traefik_existed" = 1 ] && ! $SUDO_CMD docker inspect -f '{{json .HostConfig.PortBindings}}' dokploy-traefik | grep -q '"${TRAEFIK_PORT}/tcp"'; then
-	traefik_http_publish=""
-fi
 traefik_create() {
-${buildTraefikCreateWithImage('"$1"', "$traefik_http_publish")}
+${buildTraefikCreateWithImage('"$1"')}
 }
 traefik_connect() {
 	$SUDO_CMD docker network connect dokploy-network dokploy-traefik || return 1

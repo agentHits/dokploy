@@ -27,14 +27,12 @@ export const TRAEFIK_VERSION =
 const traefikContainerOptions = (
 	image: string,
 	restart: string,
-	httpPublish = `-p ${TRAEFIK_PORT}:${TRAEFIK_PORT}`,
 ) => `--name dokploy-traefik \
 	--restart ${restart} \
 	-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
 	-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
 	-v /var/run/docker.sock:/var/run/docker.sock:ro \
 	-p ${TRAEFIK_SSL_PORT}:${TRAEFIK_SSL_PORT} \
-	${httpPublish} \
 	-p ${TRAEFIK_HTTP3_PORT}:${TRAEFIK_HTTP3_PORT}/udp \
 	${image}`;
 
@@ -45,11 +43,8 @@ export const buildTraefikRunCommand = (version: string) => `
 
 // Created with no restart policy and not started: networks are attached before the
 // ports are taken, and the policy is raised only after the new container runs.
-export const buildTraefikCreateWithImage = (
-	image: string,
-	httpPublish?: string,
-) => `
-		$SUDO_CMD docker create ${traefikContainerOptions(image, "no", httpPublish)}
+export const buildTraefikCreateWithImage = (image: string) => `
+		$SUDO_CMD docker create ${traefikContainerOptions(image, "no")}
 `;
 
 export const buildTraefikCreateCommand = (version: string) =>
@@ -65,6 +60,10 @@ export interface TraefikOptions {
 	}[];
 }
 
+// Host port 80 is never published, even when a stored port list still contains it.
+const withoutHostPort80 = (ports: TraefikOptions["additionalPorts"] = []) =>
+	ports.filter((port) => port.publishedPort !== 80);
+
 export const initializeStandaloneTraefik = async ({
 	env,
 	serverId,
@@ -74,30 +73,28 @@ export const initializeStandaloneTraefik = async ({
 	const imageName = `traefik:v${TRAEFIK_VERSION}`;
 	const containerName = "dokploy-traefik";
 
+	const publishable = withoutHostPort80(additionalPorts);
+
 	const exposedPorts: Record<string, {}> = {
-		[`${TRAEFIK_PORT}/tcp`]: {},
 		[`${TRAEFIK_SSL_PORT}/tcp`]: {},
 		[`${TRAEFIK_HTTP3_PORT}/udp`]: {},
 	};
 
 	const portBindings: Record<string, Array<{ HostPort: string }>> = {
-		[`${TRAEFIK_PORT}/tcp`]: [{ HostPort: TRAEFIK_PORT.toString() }],
 		[`${TRAEFIK_SSL_PORT}/tcp`]: [{ HostPort: TRAEFIK_SSL_PORT.toString() }],
 		[`${TRAEFIK_HTTP3_PORT}/udp`]: [
 			{ HostPort: TRAEFIK_HTTP3_PORT.toString() },
 		],
 	};
 
-	const enableDashboard = additionalPorts.some(
-		(port) => port.targetPort === 8080,
-	);
+	const enableDashboard = publishable.some((port) => port.targetPort === 8080);
 
 	if (enableDashboard) {
 		exposedPorts["8080/tcp"] = {};
 		portBindings["8080/tcp"] = [{ HostPort: "8080" }];
 	}
 
-	for (const port of additionalPorts) {
+	for (const port of publishable) {
 		const portKey = `${port.targetPort}/${port.protocol ?? "tcp"}`;
 		exposedPorts[portKey] = {};
 		portBindings[portKey] = [{ HostPort: port.publishedPort.toString() }];
@@ -207,14 +204,8 @@ export const initializeTraefikService = async ({
 					PublishMode: "host",
 					Protocol: "udp",
 				},
-				{
-					TargetPort: 80,
-					PublishedPort: TRAEFIK_PORT,
-					PublishMode: "host",
-					Protocol: "tcp",
-				},
 
-				...additionalPorts.map((port) => ({
+				...withoutHostPort80(additionalPorts).map((port) => ({
 					TargetPort: port.targetPort,
 					PublishedPort: port.publishedPort,
 					Protocol: port.protocol as "tcp" | "udp" | "sctp" | undefined,
@@ -339,9 +330,7 @@ export const getDefaultTraefikConfig = () => {
 					acme: {
 						email: "test@localhost.com",
 						storage: "/etc/dokploy/traefik/dynamic/acme.json",
-						httpChallenge: {
-							entryPoint: "web",
-						},
+						tlsChallenge: {},
 					},
 				},
 			},
@@ -394,9 +383,7 @@ export const getDefaultServerTraefikConfig = () => {
 				acme: {
 					email: "test@localhost.com",
 					storage: "/etc/dokploy/traefik/dynamic/acme.json",
-					httpChallenge: {
-						entryPoint: "web",
-					},
+					tlsChallenge: {},
 				},
 			},
 		},

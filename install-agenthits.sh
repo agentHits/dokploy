@@ -61,7 +61,6 @@ DOCKER_ENGINE_PREVIOUS_VERSION=""
 DOCKER_ROLLBACK_DIR=""
 DOCKER_ROLLBACK_DIR_CREATED=0
 TRAEFIK_EXTRA_NETWORKS=""
-TRAEFIK_HTTP_PUBLISH=1
 TRAEFIK_OLD_IMAGE=""
 TRAEFIK_OLD_STOPPED=0
 POSTGRES_KEPT=0
@@ -173,8 +172,7 @@ certificatesResolvers:
     acme:
       email: test@localhost.com
       storage: /etc/dokploy/traefik/dynamic/acme.json
-      httpChallenge:
-        entryPoint: web
+      tlsChallenge: {}
 EOF
 	fi
 
@@ -804,12 +802,11 @@ harden_ufw() {
 	sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
 	# SSH must be allowed before enabling, or the next login fails.
 	ufw allow "${ssh_port}/tcp" comment 'SSH' >/dev/null
-	ufw allow 80/tcp comment 'HTTP' >/dev/null
 	ufw allow 443/tcp comment 'HTTPS' >/dev/null
 	ufw allow 443/udp comment 'HTTP/3' >/dev/null
 	ufw allow 3000/tcp comment 'Dokploy panel' >/dev/null
 	ufw --force enable >/dev/null
-	echo "UFW: enabled. Incoming is denied except SSH (${ssh_port}), 80, 443 and 3000."
+	echo "UFW: enabled. Incoming is denied except SSH (${ssh_port}), 443 and 3000."
 }
 
 harden_fail2ban() {
@@ -888,7 +885,6 @@ install_agenthits_dokploy() {
 	if [ "$HARDEN_SSH" = "1" ] && command_exists sshd; then
 		require_root_public_key
 	fi
-	require_free_port 80
 	require_free_port 443
 	require_free_port 3000
 	install_docker_if_missing
@@ -1341,17 +1337,12 @@ traefik_extra_networks() {
 create_dokploy_traefik() {
 	local image="$1"
 	local restart="$2"
-	local http_publish=()
-	if [ "${TRAEFIK_HTTP_PUBLISH:-1}" = "1" ]; then
-		http_publish=(-p 80:80/tcp)
-	fi
 	docker create \
 		--name dokploy-traefik \
 		--restart "$restart" \
 		-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
 		-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
 		-v /var/run/docker.sock:/var/run/docker.sock:ro \
-		${http_publish[@]+"${http_publish[@]}"} \
 		-p 443:443/tcp \
 		-p 443:443/udp \
 		"$image" >/dev/null || return 1
@@ -1418,10 +1409,6 @@ swap_dokploy_traefik() {
 	fi
 	TRAEFIK_OLD_IMAGE="$current"
 	TRAEFIK_EXTRA_NETWORKS="$(traefik_extra_networks)"
-	TRAEFIK_HTTP_PUBLISH=1
-	if [ "$existed" = "1" ] && ! docker inspect -f '{{json .HostConfig.PortBindings}}' dokploy-traefik | grep -q '"80/tcp"'; then
-		TRAEFIK_HTTP_PUBLISH=0
-	fi
 	TRAEFIK_OLD_STOPPED=0
 	trap 'traefik_restore "being interrupted"' HUP INT TERM
 	docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true

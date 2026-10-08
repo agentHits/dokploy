@@ -38,7 +38,7 @@ Installer сам определяет систему:
 
 Общие требования:
 
-- Свободные порты `80`, `443` и `3000`.
+- Свободные порты `443` и `3000`.
 - Доступ к GitHub, GHCR и Docker Hub.
 - На Linux-хосте не должно быть важного Docker Swarm: installer выполняет
   `docker swarm leave --force` и создает новый single-node Swarm. На macOS и
@@ -96,7 +96,7 @@ irm https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev/install-ag
 
 - На Apple Silicon панель (`amd64`) работает через Rosetta, а Postgres, Redis
   и Traefik — нативно. Холодный старт панели медленнее, чем на VPS.
-- Порты `80`, `443` и `3000` OrbStack пробрасывает на Mac и в локальную сеть
+- Порты `443` и `3000` OrbStack пробрасывает на Mac и в локальную сеть
   (`machines.expose_ports_to_lan`, включено по умолчанию). Если из сети
   панель не открывается, а на самом Mac открывается, выполните
   `orb restart dokploy`. Если включен файрвол macOS, OrbStack должен быть в
@@ -119,7 +119,7 @@ irm https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev/install-ag
    `networkingMode=mirrored` (WSL получает IP Windows, панель видна в
    локальной сети; нужен Windows 11 22H2+) и `vmIdleTimeout=-1`. Уже заданные
    вами значения не меняются, installer только предупредит.
-3. Открывает в Hyper-V firewall для WSL входящие TCP `80`, `443`, `3000` и
+3. Открывает в Hyper-V firewall для WSL входящие TCP `443`, `3000` и
    UDP `443`.
 4. Проверяет, что эти порты не заняты программами Windows.
 5. Создает задачу планировщика «AgentHits Dokploy WSL», которая держит WSL

@@ -14,7 +14,6 @@ import {
 	getDefaultMiddlewares,
 	getDefaultServerTraefikConfig,
 	TRAEFIK_HTTP3_PORT,
-	TRAEFIK_PORT,
 	TRAEFIK_SSL_PORT,
 	TRAEFIK_VERSION,
 } from "@dokploy/server/setup/traefik-setup";
@@ -188,7 +187,6 @@ const hardenUfwCommand = () => `
 		$SUDO_CMD ufw default allow outgoing >/dev/null
 		$SUDO_CMD sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
 		$SUDO_CMD ufw allow "$SSH_PORT/tcp" comment 'SSH' >/dev/null
-		$SUDO_CMD ufw allow ${TRAEFIK_PORT}/tcp comment 'HTTP' >/dev/null
 		$SUDO_CMD ufw allow ${TRAEFIK_SSL_PORT}/tcp comment 'HTTPS' >/dev/null
 		$SUDO_CMD ufw allow ${TRAEFIK_HTTP3_PORT}/udp comment 'HTTP/3' >/dev/null
 		$SUDO_CMD ufw --force enable >/dev/null
@@ -578,11 +576,6 @@ const setupNetwork = () => `
 `;
 
 const validatePorts = () => `
-	# check if something is running on port 80
-	if ss -tulnp | grep ':80 ' >/dev/null; then
-		echo "Something is already running on port 80" >&2
-	fi
-
 	# check if something is running on port 443
 	if ss -tulnp | grep ':443 ' >/dev/null; then
 		echo "Something is already running on port 443" >&2

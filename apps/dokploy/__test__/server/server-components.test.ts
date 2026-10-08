@@ -36,6 +36,9 @@ import {
 } from "@dokploy/server/setup/traefik-setup";
 import { describe, expect, it } from "vitest";
 
+const PORT_80_PUBLICATION =
+	/(?:-p|--publish)[=\s]+\S*\b80\b|published=80\b|\b80\/tcp\b/;
+
 describe("parseComponentVersions", () => {
 	it("extracts the semantic version from each tool's output", () => {
 		const output = [
@@ -125,14 +128,18 @@ describe("buildComponentUpdateScript", () => {
 
 		expect(script).toContain(`docker pull traefik:v${TRAEFIK_VERSION}`);
 		expect(script).toContain(`traefik_create "traefik:v${TRAEFIK_VERSION}"`);
-		expect(script).toContain(
-			buildTraefikCreateWithImage('"$1"', "$traefik_http_publish").trim(),
-		);
-		expect(script).toContain('traefik_http_publish="-p 80:80"');
+		expect(script).toContain(buildTraefikCreateWithImage('"$1"').trim());
 		expect(script).toContain(
 			"docker network disconnect bridge dokploy-traefik",
 		);
 		expect(script).not.toContain("docker rename");
+	});
+	it("never publishes host port 80 when it replaces the Traefik container", () => {
+		const script = buildComponentUpdateScript(["traefik"]);
+
+		expect(script).not.toMatch(PORT_80_PUBLICATION);
+		expect(script).toMatch(/-p 443:443\s/);
+		expect(script).toContain("-p 443:443/udp");
 	});
 	it("stops and removes the old Traefik, creates the new one, attaches its networks, and starts it last", () => {
 		const script = buildComponentUpdateScript(["traefik"]);
@@ -1470,14 +1477,18 @@ describe("buildTraefikCreateCommand", () => {
 		expect(command).toContain("-p 443:443/udp");
 		expect(command).toContain("traefik:v3.7.5");
 	});
+
+	it("never publishes host port 80", () => {
+		expect(buildTraefikCreateCommand("3.7.5")).not.toMatch(PORT_80_PUBLICATION);
+	});
 });
 
 describe("buildTraefikRunCommand", () => {
-	it("publishes the HTTP, HTTPS and HTTP/3 ports with the requested image", () => {
+	it("publishes HTTPS and HTTP/3 with the requested image and never port 80", () => {
 		const command = buildTraefikRunCommand("3.7.5");
 
 		expect(command).toMatch(/-p 443:443\s/);
-		expect(command).toMatch(/-p 80:80\s/);
+		expect(command).not.toMatch(PORT_80_PUBLICATION);
 		expect(command).toContain("-p 443:443/udp");
 		expect(command).toContain("traefik:v3.7.5");
 	});

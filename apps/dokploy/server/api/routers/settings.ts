@@ -1263,6 +1263,13 @@ export const settingsRouter = createTRPCRouter({
 				});
 			}
 			await assertSettingsServerAccess(ctx, input.serverId);
+			if (input.additionalPorts.some((port) => port.publishedPort === 80)) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message:
+						"Port 80 cannot be published. Certificates renew only over port 443.",
+				});
+			}
 
 			try {
 				const env = await readEnvironmentVariables(
