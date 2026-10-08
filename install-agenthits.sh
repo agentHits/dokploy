@@ -51,6 +51,12 @@ DOKPLOY_HEALTH_TIMEOUT="${DOKPLOY_HEALTH_TIMEOUT:-240}"
 DOKPLOY_HEALTH_INTERVAL="${DOKPLOY_HEALTH_INTERVAL:-3}"
 DOKPLOY_TRAEFIK_SETTLE="${DOKPLOY_TRAEFIK_SETTLE:-10}"
 AGENTHITS_PULL_RETRY_DELAY="${AGENTHITS_PULL_RETRY_DELAY:-10}"
+DOKPLOY_APT_SOURCES_DIR="${DOKPLOY_APT_SOURCES_DIR:-/etc/apt/sources.list.d}"
+DOKPLOY_OS_RELEASE="${DOKPLOY_OS_RELEASE:-/etc/os-release}"
+DOCKER_PACKAGE_VERSION=""
+DOCKER_ENGINE_UPGRADE_NEEDED=0
+DOCKER_ENGINE_PREVIOUS_VERSION=""
+DOCKER_ROLLBACK_DIR=""
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -265,11 +271,7 @@ os_release_value() {
 	)
 }
 
-ensure_docker_running() {
-	if docker info >/dev/null 2>&1; then
-		return 0
-	fi
-
+start_docker_service() {
 	if command_exists systemctl && [ -d /run/systemd/system ]; then
 		systemctl enable --now docker
 	elif command_exists rc-service; then
@@ -278,6 +280,14 @@ ensure_docker_running() {
 	elif command_exists service; then
 		service docker start
 	fi
+}
+
+ensure_docker_running() {
+	if docker info >/dev/null 2>&1; then
+		return 0
+	fi
+
+	start_docker_service
 
 	local i=0
 	while [ "$i" -lt 30 ]; do
@@ -886,7 +896,7 @@ install_agenthits_dokploy() {
 	docker network create --driver overlay --attachable dokploy-network
 
 	mkdir -p /etc/dokploy
-	chmod 777 /etc/dokploy
+	chmod 755 /etc/dokploy
 	create_default_traefik_files
 
 	create_secret_if_missing dokploy_postgres_password "$(generate_random_secret)"
@@ -993,11 +1003,94 @@ docker_engine_version() {
 	docker version --format '{{.Server.Version}}' 2>/dev/null || true
 }
 
+docker_package_installed_version() {
+	if [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = "installed" ]; then
+		dpkg-query -W -f='${Version}' "$1"
+	fi
+}
+
+docker_package_candidate_version() {
+	apt-cache policy "$1" 2>/dev/null | awk '/^  Candidate:/ { print $2; exit }'
+}
+
+# Packages from another release would replace the Engine with ones built for it.
+docker_source_codenames() {
+	local file=""
+	for file in "$DOKPLOY_APT_SOURCES_DIR"/*.list; do
+		[ -f "$file" ] || continue
+		awk '/download\.docker\.com/ && !/^[[:space:]]*#/ { for (i = 2; i < NF; i++) if ($i ~ /download\.docker\.com/) { print $(i + 1); break } }' "$file"
+	done
+	for file in "$DOKPLOY_APT_SOURCES_DIR"/*.sources; do
+		[ -f "$file" ] || continue
+		awk 'BEGIN { RS = ""; FS = "\n" } /download\.docker\.com/ { for (i = 1; i <= NF; i++) if ($i ~ /^Suites:/) { split($i, suite, /[ \t]+/); print suite[2] } }' "$file"
+	done
+}
+
+check_docker_repo_codename() {
+	local repo_codenames=""
+	local repo_codename=""
+	local host_codename=""
+	repo_codenames="$(docker_source_codenames)"
+	if [ -z "$repo_codenames" ]; then
+		return 0
+	fi
+	# shellcheck disable=SC1090
+	host_codename="$( (. "$DOKPLOY_OS_RELEASE" && printf '%s' "${VERSION_CODENAME:-}") 2>/dev/null || true)"
+	if [ -z "$host_codename" ]; then
+		echo "Pre-download failed: VERSION_CODENAME is not set in $DOKPLOY_OS_RELEASE, so the Docker apt repository cannot be checked. Nothing was changed." >&2
+		exit 1
+	fi
+	for repo_codename in $repo_codenames; do
+		if [ "$repo_codename" != "$host_codename" ]; then
+			echo "Pre-download failed: the Docker apt repository in $DOKPLOY_APT_SOURCES_DIR is for $repo_codename, but this host runs $host_codename. Point it at $host_codename yourself and run the update again. Nothing was changed." >&2
+			exit 1
+		fi
+	done
+}
+
+# Saved before the Engine is touched, so a failed upgrade can install them back.
+save_docker_rollback_packages() {
+	local package=""
+	local installed=""
+	local candidate=""
+	if [ -z "$(docker_package_installed_version docker-ce)" ]; then
+		echo "Pre-download failed: current Docker packages for rollback (docker-ce is not installed). Nothing was changed." >&2
+		exit 1
+	fi
+	DOCKER_ROLLBACK_DIR="$DOKPLOY_BACKUP_DIR/docker-rollback-$(date -u +%Y%m%dT%H%M%SZ)"
+	mkdir -p "$DOKPLOY_BACKUP_DIR"
+	chmod 700 "$DOKPLOY_BACKUP_DIR"
+	if ! (umask 077 && mkdir -p "$DOCKER_ROLLBACK_DIR"); then
+		echo "Pre-download failed: current Docker packages for rollback. Nothing was changed." >&2
+		exit 1
+	fi
+	for package in docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras; do
+		installed="$(docker_package_installed_version "$package")"
+		if [ -z "$installed" ]; then
+			continue
+		fi
+		case "$package" in
+			docker-ce | docker-ce-cli) ;;
+			*)
+				candidate="$(docker_package_candidate_version "$package")"
+				if [ "$candidate" = "$installed" ]; then
+					continue
+				fi
+				;;
+		esac
+		if ! (umask 077 && cd "$DOCKER_ROLLBACK_DIR" && apt-get download "$package=$installed"); then
+			echo "Pre-download failed: current Docker packages for rollback. Nothing was changed." >&2
+			exit 1
+		fi
+	done
+}
+
 predownload_docker_packages() {
 	if ! command_exists apt-get; then
 		echo "Pre-download failed: DOCKER_ENGINE_UPGRADE=1 needs apt-get on this host. Nothing was changed." >&2
 		exit 1
 	fi
+	check_docker_repo_codename
 	if ! download_with_retry apt-get update -qq; then
 		echo "Pre-download failed: the apt package lists could not be refreshed. Nothing was changed." >&2
 		exit 1
@@ -1007,6 +1100,7 @@ predownload_docker_packages() {
 		echo "Pre-download failed: Docker $DOCKER_VERSION is not in the apt sources. Nothing was changed." >&2
 		exit 1
 	fi
+	save_docker_rollback_packages
 	if ! download_with_retry apt-get install -y -qq --download-only "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin; then
 		echo "Pre-download failed: the Docker packages. Nothing was changed." >&2
 		exit 1
@@ -1044,7 +1138,8 @@ predownload_update_artifacts() {
 		fi
 	done
 	DOCKER_ENGINE_UPGRADE_NEEDED=0
-	if [ "$DOCKER_ENGINE_UPGRADE" = "1" ] && [ "$(docker_engine_version)" != "$DOCKER_VERSION" ]; then
+	DOCKER_ENGINE_PREVIOUS_VERSION="$(docker_engine_version)"
+	if [ "$DOCKER_ENGINE_UPGRADE" = "1" ] && [ "$DOCKER_ENGINE_PREVIOUS_VERSION" != "$DOCKER_VERSION" ]; then
 		DOCKER_ENGINE_UPGRADE_NEEDED=1
 		predownload_docker_packages
 	fi
@@ -1087,10 +1182,27 @@ panel_ready() {
 	[ -n "$container" ] && [ "$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null)" = "healthy" ]
 }
 
+docker_daemon_running() {
+	docker info >/dev/null 2>&1
+}
+
+swarm_node_active() {
+	[ "$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null)" = "active" ]
+}
+
+traefik_running() {
+	[ "$(docker inspect --format '{{.State.Running}}' dokploy-traefik 2>/dev/null)" = "true" ]
+}
+
+docker_stack_ready() {
+	[ "$(docker_engine_version)" = "$1" ] && swarm_node_active && panel_ready && postgres_ready && redis_ready && traefik_running
+}
+
 wait_until_ready() {
 	local check="$1"
+	shift
 	local deadline=$(($(date +%s) + DOKPLOY_HEALTH_TIMEOUT))
-	until "$check"; do
+	until "$check" "$@"; do
 		if [ "$(date +%s)" -ge "$deadline" ]; then
 			return 1
 		fi
@@ -1165,8 +1277,24 @@ backup_postgres() {
 	echo "Postgres backup written to $file"
 }
 
-run_dokploy_traefik() {
-	docker run -d \
+# The networks the running Traefik is attached to, minus the two that are handled
+# separately: bridge is the default and dokploy-network is always connected.
+traefik_extra_networks() {
+	local networks=""
+	local network=""
+	networks="$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' dokploy-traefik 2>/dev/null || true)"
+	for network in $networks; do
+		case "$network" in
+			bridge | dokploy-network) ;;
+			*) echo "$network" ;;
+		esac
+	done
+}
+
+# The container is created and connected to all its networks before it starts,
+# so the time without a running Traefik stays short.
+create_dokploy_traefik() {
+	docker create \
 		--name dokploy-traefik \
 		--restart always \
 		-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
@@ -1175,12 +1303,24 @@ run_dokploy_traefik() {
 		-p 80:80/tcp \
 		-p 443:443/tcp \
 		-p 443:443/udp \
-		"$1"
+		"$1" >/dev/null
 
 	docker network connect dokploy-network dokploy-traefik
+	local network=""
+	for network in $TRAEFIK_EXTRA_NETWORKS; do
+		if docker network inspect "$network" >/dev/null 2>&1; then
+			docker network connect "$network" dokploy-traefik
+		fi
+	done
+}
+
+run_dokploy_traefik() {
+	create_dokploy_traefik "$1"
+	docker start dokploy-traefik >/dev/null
 }
 
 TRAEFIK_TARGET_IMAGE=""
+TRAEFIK_EXTRA_NETWORKS=""
 TRAEFIK_PREVIOUS_KEPT=0
 TRAEFIK_SWAPPED=0
 
@@ -1189,7 +1329,7 @@ TRAEFIK_SWAPPED=0
 restore_dokploy_traefik() {
 	trap - ERR HUP INT TERM
 	if [ "$TRAEFIK_SWAPPED" = "0" ]; then
-		echo "Error: Traefik did not start on $TRAEFIK_TARGET_IMAGE; restoring the previous container." >&2
+		echo "Error: Traefik on $TRAEFIK_TARGET_IMAGE did not come up with all its networks; restoring the previous container." >&2
 		if [ "$TRAEFIK_PREVIOUS_KEPT" = "1" ]; then
 			docker rm -f dokploy-traefik >/dev/null 2>&1 || true
 			docker rename dokploy-traefik-previous dokploy-traefik || true
@@ -1211,12 +1351,12 @@ swap_dokploy_traefik() {
 	TRAEFIK_TARGET_IMAGE="$TRAEFIK_IMAGE"
 	TRAEFIK_PREVIOUS_KEPT=0
 	TRAEFIK_SWAPPED=0
-	# errtrace makes the ERR trap fire for a failed docker run inside run_dokploy_traefik.
+	# errtrace makes the ERR trap fire for a failed docker command inside create_dokploy_traefik.
 	set -o errtrace
 	trap restore_dokploy_traefik ERR HUP INT TERM
+	TRAEFIK_EXTRA_NETWORKS="$(traefik_extra_networks)"
 
 	if docker inspect dokploy-traefik >/dev/null 2>&1; then
-		docker stop dokploy-traefik >/dev/null
 		docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
 		docker rename dokploy-traefik dokploy-traefik-previous
 		TRAEFIK_PREVIOUS_KEPT=1
@@ -1224,7 +1364,11 @@ swap_dokploy_traefik() {
 		docker update --restart no dokploy-traefik-previous >/dev/null
 	fi
 
-	run_dokploy_traefik "$TRAEFIK_IMAGE"
+	create_dokploy_traefik "$TRAEFIK_IMAGE"
+	if [ "$TRAEFIK_PREVIOUS_KEPT" = "1" ]; then
+		docker stop dokploy-traefik-previous >/dev/null
+	fi
+	docker start dokploy-traefik >/dev/null
 	sleep "$DOKPLOY_TRAEFIK_SETTLE"
 	if [ "$(docker inspect --format '{{.State.Running}}' dokploy-traefik 2>/dev/null)" != "true" ]; then
 		restore_dokploy_traefik
@@ -1258,21 +1402,59 @@ run_panel_update() {
 	return "$status"
 }
 
+print_docker_manual_rollback() {
+	cat >&2 <<EOF
+Roll Docker Engine back by hand (the Engine should report $DOCKER_ENGINE_PREVIOUS_VERSION):
+  apt-get install -y --allow-downgrades --no-download $DOCKER_ROLLBACK_DIR/*.deb
+  systemctl start docker
+  docker start dokploy-traefik
+  docker version --format '{{.Server.Version}}'
+EOF
+}
+
+rollback_docker_engine() {
+	echo "Rolling Docker Engine back to $DOCKER_ENGINE_PREVIOUS_VERSION from $DOCKER_ROLLBACK_DIR" >&2
+	if ! apt-get install -y --allow-downgrades --no-download "$DOCKER_ROLLBACK_DIR"/*.deb; then
+		return 1
+	fi
+	if ! docker_daemon_running; then
+		start_docker_service || true
+	fi
+	if ! wait_until_ready docker_daemon_running; then
+		return 1
+	fi
+	if docker inspect dokploy-traefik >/dev/null 2>&1 && ! traefik_running; then
+		docker start dokploy-traefik >/dev/null || true
+	fi
+	wait_until_ready docker_stack_ready "$DOCKER_ENGINE_PREVIOUS_VERSION"
+}
+
+fail_docker_engine_upgrade() {
+	echo "$1" >&2
+	if rollback_docker_engine; then
+		echo "Error: Docker Engine was rolled back to $DOCKER_ENGINE_PREVIOUS_VERSION. The packages it used are in $DOCKER_ROLLBACK_DIR." >&2
+		exit 1
+	fi
+	echo "Error: the Docker Engine rollback did not finish. The saved packages are in $DOCKER_ROLLBACK_DIR." >&2
+	print_docker_manual_rollback
+	exit 1
+}
+
 # Docker Engine restarts dockerd, and live-restore does not cover swarm services,
 # so every service on the host restarts here. It runs last, on pre-downloaded packages.
 upgrade_docker_engine() {
 	if [ "$DOCKER_ENGINE_UPGRADE_NEEDED" != "1" ]; then
 		return 0
 	fi
-	echo "Upgrading Docker Engine to $DOCKER_VERSION; the daemon restarts and the swarm services on this host restart with it."
+	echo "Upgrading Docker Engine from $DOCKER_ENGINE_PREVIOUS_VERSION to $DOCKER_VERSION; the daemon restarts and the swarm services on this host restart with it."
 	if ! apt-get install -y -qq --no-download "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin; then
-		echo "Error: installing the pre-downloaded Docker packages failed. Check with: apt-get install -f" >&2
-		exit 1
+		fail_docker_engine_upgrade "Error: installing the pre-downloaded Docker packages failed."
 	fi
-	ensure_docker_running
-	if ! wait_until_ready panel_ready; then
-		echo "Error: the panel was not healthy after the Docker restart. See: docker service ps dokploy --no-trunc" >&2
-		exit 1
+	if ! docker_daemon_running; then
+		start_docker_service || true
+	fi
+	if ! wait_until_ready docker_stack_ready "$DOCKER_VERSION"; then
+		fail_docker_engine_upgrade "Error: the host was not healthy on Docker Engine $DOCKER_VERSION within $DOKPLOY_HEALTH_TIMEOUT seconds."
 	fi
 	echo "Docker Engine is $DOCKER_VERSION"
 }
