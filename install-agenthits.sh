@@ -64,6 +64,7 @@ TRAEFIK_EXTRA_NETWORKS=""
 TRAEFIK_HTTP_PUBLISH=1
 TRAEFIK_OLD_IMAGE=""
 TRAEFIK_OLD_STOPPED=0
+POSTGRES_KEPT=0
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -1169,7 +1170,11 @@ resolve_panel_update_script() {
 predownload_update_artifacts() {
 	resolve_panel_update_script
 	local image=""
-	for image in "$POSTGRES_IMAGE" "$REDIS_IMAGE" "$TRAEFIK_IMAGE" "$DOKPLOY_IMAGE"; do
+	local images=("$REDIS_IMAGE" "$TRAEFIK_IMAGE" "$DOKPLOY_IMAGE")
+	if [ "$POSTGRES_KEPT" = "0" ]; then
+		images=("$POSTGRES_IMAGE" "${images[@]}")
+	fi
+	for image in "${images[@]}"; do
 		if ! download_with_retry docker pull "$image"; then
 			echo "Pre-download failed: $image. Nothing was changed." >&2
 			exit 1
@@ -1208,9 +1213,10 @@ redis_ready() {
 	[ -n "$container" ] && [ "$(docker exec "$container" redis-cli ping 2>/dev/null)" = "PONG" ]
 }
 
+# A kept Postgres runs its installed major, so readiness follows the service's image, not the pinned one.
 postgres_ready() {
 	local container=""
-	container="$(task_container dokploy-postgres "$POSTGRES_IMAGE")"
+	container="$(task_container dokploy-postgres "$(service_image dokploy-postgres)")"
 	[ -n "$container" ] && docker exec "$container" pg_isready -U dokploy -d dokploy >/dev/null 2>&1
 }
 
@@ -1536,16 +1542,18 @@ update_agenthits_dokploy() {
 	require_update_services
 
 	local current_postgres=""
+	local current_postgres_major=""
 	current_postgres="$(image_without_digest "$(service_image dokploy-postgres)")"
-	if [ "$(get_postgres_major_version "$current_postgres" || true)" != "$(get_postgres_major_version || true)" ]; then
-		echo "Error: Postgres $current_postgres -> $POSTGRES_IMAGE changes the major version, which this update does not migrate. Nothing was changed." >&2
-		exit 1
+	current_postgres_major="$(get_postgres_major_version "$current_postgres" || true)"
+	if [ "$current_postgres_major" != "$(get_postgres_major_version || true)" ]; then
+		POSTGRES_KEPT=1
+		echo "Postgres ${current_postgres_major:-$current_postgres} stays. A major upgrade is a separate migration; this update does not change it."
 	fi
 
 	predownload_update_artifacts
 
 	local postgres_swap=0
-	if [ "$(image_without_digest "$(service_image dokploy-postgres)")" != "$(image_without_digest "$POSTGRES_IMAGE")" ]; then
+	if [ "$POSTGRES_KEPT" = "0" ] && [ "$(image_without_digest "$(service_image dokploy-postgres)")" != "$(image_without_digest "$POSTGRES_IMAGE")" ]; then
 		postgres_swap=1
 		backup_postgres
 	fi
