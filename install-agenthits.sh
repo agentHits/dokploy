@@ -61,6 +61,7 @@ DOCKER_ENGINE_PREVIOUS_VERSION=""
 DOCKER_ROLLBACK_DIR=""
 DOCKER_ROLLBACK_DIR_CREATED=0
 TRAEFIK_EXTRA_NETWORKS=""
+TRAEFIK_HTTP_PUBLISH=1
 TRAEFIK_OLD_IMAGE=""
 TRAEFIK_OLD_STOPPED=0
 
@@ -1334,13 +1335,17 @@ traefik_extra_networks() {
 create_dokploy_traefik() {
 	local image="$1"
 	local restart="$2"
+	local http_publish=()
+	if [ "${TRAEFIK_HTTP_PUBLISH:-1}" = "1" ]; then
+		http_publish=(-p 80:80/tcp)
+	fi
 	docker create \
 		--name dokploy-traefik \
 		--restart "$restart" \
 		-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
 		-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
 		-v /var/run/docker.sock:/var/run/docker.sock:ro \
-		-p 80:80/tcp \
+		"${http_publish[@]}" \
 		-p 443:443/tcp \
 		-p 443:443/udp \
 		"$image" >/dev/null || return 1
@@ -1407,6 +1412,10 @@ swap_dokploy_traefik() {
 	fi
 	TRAEFIK_OLD_IMAGE="$current"
 	TRAEFIK_EXTRA_NETWORKS="$(traefik_extra_networks)"
+	TRAEFIK_HTTP_PUBLISH=1
+	if [ "$existed" = "1" ] && ! docker inspect -f '{{json .HostConfig.PortBindings}}' dokploy-traefik | grep -q '"80/tcp"'; then
+		TRAEFIK_HTTP_PUBLISH=0
+	fi
 	TRAEFIK_OLD_STOPPED=0
 	trap 'traefik_restore "being interrupted"' HUP INT TERM
 	docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true

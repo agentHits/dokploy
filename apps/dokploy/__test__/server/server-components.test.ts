@@ -125,7 +125,10 @@ describe("buildComponentUpdateScript", () => {
 
 		expect(script).toContain(`docker pull traefik:v${TRAEFIK_VERSION}`);
 		expect(script).toContain(`traefik_create "traefik:v${TRAEFIK_VERSION}"`);
-		expect(script).toContain(buildTraefikCreateWithImage('"$1"').trim());
+		expect(script).toContain(
+			buildTraefikCreateWithImage('"$1"', "$traefik_http_publish").trim(),
+		);
+		expect(script).toContain('traefik_http_publish="-p 80:80"');
 		expect(script).not.toContain("docker rename");
 	});
 	it("stops and removes the old Traefik, creates the new one, attaches its networks, and starts it last", () => {
