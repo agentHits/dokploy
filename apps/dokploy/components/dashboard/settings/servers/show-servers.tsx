@@ -33,6 +33,7 @@ import { TerminalModal } from "../web-server/terminal-modal";
 import { ShowServerActions } from "./actions/show-server-actions";
 import { DeleteServerModal } from "./delete-server-modal";
 import { HandleServers } from "./handle-servers";
+import { PanelHostStack } from "./panel-host-stack";
 import { ServerComponentsUpdate } from "./server-components-update";
 import { SetupServer } from "./setup-server";
 import { ShowMonitoringModal } from "./show-monitoring-modal";
@@ -124,6 +125,7 @@ export const ShowServers = () => {
 						)}
 					</CardHeader>
 					<CardContent className="space-y-2 py-8 border-t">
+						<PanelHostStack />
 						{isPending ? (
 							<div className="flex flex-row gap-2 items-center justify-center text-sm text-muted-foreground min-h-[25vh]">
 								<span>Loading...</span>
