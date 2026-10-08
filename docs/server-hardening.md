@@ -107,7 +107,7 @@ orb -m dokploy -u root docker service update --env-rm DOKPLOY_SERVER_HARDENING d
 2. С VPS:
    - откат, описанный выше, если сервер нужен дальше;
    - или переустановка ОС в панели хостинга. **Необратимо**: стирает весь диск, включая Docker, ключи и данные. Сначала сохрани бэкап.
-3. Панель на Mac mini целиком:
+3. Панель целиком (машина OrbStack):
 
    ```bash
    orb delete dokploy
