@@ -590,6 +590,7 @@ export const serverRouter = createTRPCRouter({
 			z.object({
 				serverId: z.string(),
 				components: z.array(z.enum(UPDATABLE_COMPONENTS)).min(1),
+				upgradeDocker: z.boolean().default(false),
 			}),
 		)
 		.subscription(async ({ input, ctx }) => {
@@ -602,9 +603,14 @@ export const serverRouter = createTRPCRouter({
 				});
 			}
 			return observable<string>((emit) => {
-				updateServerComponents(input.serverId, input.components, (log) => {
-					emit.next(log);
-				})
+				updateServerComponents(
+					input.serverId,
+					input.components,
+					(log) => {
+						emit.next(log);
+					},
+					input.upgradeDocker,
+				)
 					.catch((error) => {
 						emit.next(
 							`${error instanceof Error ? error.message : error}\n${COMPONENTS_UPDATE_FAILED}\n`,

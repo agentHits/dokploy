@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
@@ -10,6 +11,7 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { api } from "@/utils/api";
 
@@ -39,6 +41,7 @@ export const ServerComponentsUpdate = ({ serverId }: Props) => {
 	const [isUpdating, setIsUpdating] = useState(false);
 	const [selected, setSelected] = useState<UpdatableComponent[]>([]);
 	const [logs, setLogs] = useState("");
+	const [upgradeDocker, setUpgradeDocker] = useState(false);
 
 	const { data, isPending, isError, error, refetch } =
 		api.server.components.useQuery(
@@ -57,7 +60,7 @@ export const ServerComponentsUpdate = ({ serverId }: Props) => {
 	const hasUpdates = outdated.length > 0;
 
 	api.server.updateComponentsWithLogs.useSubscription(
-		{ serverId, components: selected },
+		{ serverId, components: selected, upgradeDocker },
 		{
 			enabled: isUpdating,
 			onData(log) {
@@ -87,7 +90,15 @@ export const ServerComponentsUpdate = ({ serverId }: Props) => {
 	};
 
 	return (
-		<Dialog open={isOpen} onOpenChange={setIsOpen}>
+		<Dialog
+			open={isOpen}
+			onOpenChange={(open) => {
+				setIsOpen(open);
+				if (!open) {
+					setUpgradeDocker(false);
+				}
+			}}
+		>
 			<DialogTrigger asChild>
 				<Button
 					variant={hasUpdates ? "default" : "outline"}
@@ -149,6 +160,19 @@ export const ServerComponentsUpdate = ({ serverId }: Props) => {
 						Docker is upgraded and its daemon restarts. Containers with a
 						restart policy restart, and swarm services are briefly unavailable.
 					</p>
+				)}
+
+				{updatable.includes("docker") && (
+					<div className="flex items-center gap-2 text-sm">
+						<Checkbox
+							id={`upgrade-docker-${serverId}`}
+							checked={upgradeDocker}
+							onCheckedChange={(checked) => setUpgradeDocker(checked === true)}
+						/>
+						<Label htmlFor={`upgrade-docker-${serverId}`}>
+							Upgrade Docker Engine (restarts all containers on this server)
+						</Label>
+					</div>
 				)}
 
 				{updatable.includes("traefik") && (
