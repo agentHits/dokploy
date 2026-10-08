@@ -351,6 +351,16 @@ describe("Dokploy update commands", () => {
 		);
 	});
 
+	it("stops the old task first and rolls back a failed panel update", () => {
+		for (const command of [
+			getAgentHitsUpdateCommand("v0.30.6"),
+			getOfficialUpdateCommand("v0.30.7"),
+		]) {
+			expect(command).toContain("--update-order stop-first");
+			expect(command).toContain("--update-failure-action rollback");
+		}
+	});
+
 	it("includes untagged images that swarm pulled by digest", async () => {
 		execAsync.mockResolvedValue({ stdout: "", stderr: "" });
 
