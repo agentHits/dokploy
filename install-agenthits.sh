@@ -1154,7 +1154,8 @@ backup_postgres() {
 		exit 1
 	fi
 	# The dump holds the data and the role password hashes, so it stays private.
-	mkdir -p -m 700 "$DOKPLOY_BACKUP_DIR"
+	mkdir -p "$DOKPLOY_BACKUP_DIR"
+	chmod 700 "$DOKPLOY_BACKUP_DIR"
 	file="$DOKPLOY_BACKUP_DIR/postgres-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
 	if ! (umask 077 && docker exec "$container" pg_dumpall -U dokploy | gzip >"$file") || [ ! -s "$file" ]; then
 		rm -f "$file"
