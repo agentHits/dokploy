@@ -1465,8 +1465,11 @@ rollback_docker_engine() {
 	if ! wait_until_ready docker_daemon_running; then
 		return 1
 	fi
-	if docker inspect dokploy-traefik >/dev/null 2>&1 && ! traefik_running; then
-		docker start dokploy-traefik >/dev/null || true
+	if docker inspect dokploy-traefik >/dev/null 2>&1; then
+		docker update --restart always dokploy-traefik >/dev/null || true
+		if ! traefik_running; then
+			docker start dokploy-traefik >/dev/null || true
+		fi
 	fi
 	wait_until_ready docker_stack_ready "$DOCKER_ENGINE_PREVIOUS_VERSION"
 }

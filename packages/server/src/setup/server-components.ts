@@ -345,6 +345,9 @@ docker_roll_back() {
 		if ! $SUDO_CMD docker info >/dev/null 2>&1; then
 			$SUDO_CMD systemctl start docker >/dev/null 2>&1 || true
 		fi
+		if [ "$traefik_existed" = 1 ]; then
+			$SUDO_CMD docker update --restart always dokploy-traefik >/dev/null 2>&1 || true
+		fi
 		if [ "$traefik_existed" = 1 ] && [ "$($SUDO_CMD docker inspect -f '{{.State.Running}}' dokploy-traefik 2>/dev/null)" != "true" ]; then
 			$SUDO_CMD docker start dokploy-traefik >/dev/null 2>&1 || true
 		fi

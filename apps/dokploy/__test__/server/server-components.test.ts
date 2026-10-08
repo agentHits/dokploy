@@ -283,6 +283,22 @@ describe("buildComponentUpdateScript", () => {
 		);
 	});
 
+	it("resets the Traefik restart policy before the Docker rollback starts it", () => {
+		const script = buildComponentUpdateScript(["docker"]);
+		const rollback = script.slice(
+			script.indexOf("docker_roll_back() {"),
+			script.indexOf("docker_update_from_apt() {"),
+		);
+
+		const reset = rollback.indexOf(
+			"docker update --restart always dokploy-traefik",
+		);
+		expect(reset).toBeGreaterThanOrEqual(0);
+		expect(reset).toBeLessThan(
+			rollback.indexOf("docker start dokploy-traefik"),
+		);
+	});
+
 	it("ends with the marker the UI waits for", () => {
 		expect(buildComponentUpdateScript(["buildpacks"])).toContain(
 			COMPONENTS_UPDATE_DONE,
@@ -1362,6 +1378,20 @@ describe("buildComponentUpdateScript run order", () => {
 
 			expect(run.status).not.toBe(0);
 			expect(run.stdout).not.toContain("Buildpacks version");
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"resets the Traefik restart policy during the Docker rollback",
+		() => {
+			const run = runComponentScript(["docker"], {
+				env: { FAKE_UPGRADE_KEEPS_OLD: "1" },
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.calls).toContain(
+				"docker update --restart always dokploy-traefik",
+			);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);

@@ -1054,3 +1054,32 @@ printf '%s\\n' 'echo fake nixpacks "$NIXPACKS_VERSION"' > "$out"
 		expect(result.stdout).toContain("fake nixpacks 29.4.0");
 	});
 });
+
+describe("install-agenthits.sh Docker rollback restart policy", () => {
+	it("resets Traefik's restart policy before the Docker rollback starts it", () => {
+		const installer = readFileSync(installerScript, "utf8");
+		const rollback = installer.slice(
+			installer.indexOf("rollback_docker_engine() {"),
+			installer.indexOf("fail_docker_engine_upgrade() {"),
+		);
+
+		const reset = rollback.indexOf(
+			"docker update --restart always dokploy-traefik",
+		);
+		expect(reset).toBeGreaterThanOrEqual(0);
+		expect(reset).toBeLessThan(
+			rollback.indexOf("docker start dokploy-traefik"),
+		);
+	});
+
+	it("resets Traefik's restart policy during the Docker rollback", () => {
+		const { result, calls } = runInstaller({
+			upgradeEngine: true,
+			engineVersion: "28.3.0",
+			upgradeKeepsOld: true,
+		});
+
+		expect(result.status).not.toBe(0);
+		expect(calls).toContain("update --restart always dokploy-traefik");
+	});
+});
