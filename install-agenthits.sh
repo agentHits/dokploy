@@ -1152,9 +1152,10 @@ backup_postgres() {
 		echo "Error: no running dokploy-postgres task to back up. Nothing was changed." >&2
 		exit 1
 	fi
-	mkdir -p "$DOKPLOY_BACKUP_DIR"
+	# The dump holds the data and the role password hashes, so it stays private.
+	mkdir -p -m 700 "$DOKPLOY_BACKUP_DIR"
 	file="$DOKPLOY_BACKUP_DIR/postgres-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
-	if ! docker exec "$container" pg_dumpall -U dokploy | gzip >"$file" || [ ! -s "$file" ]; then
+	if ! (umask 077 && docker exec "$container" pg_dumpall -U dokploy | gzip >"$file") || [ ! -s "$file" ]; then
 		rm -f "$file"
 		echo "Error: the Postgres backup failed. Nothing was changed." >&2
 		exit 1

@@ -5,6 +5,7 @@ import {
 	readdirSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -193,7 +194,10 @@ const runInstaller = (scenario: OperatorScenario = {}) => {
 				return [];
 			}
 		})();
-		return { result, calls, backups };
+		const backupModes = backups.map(
+			(name) => statSync(path.join(backupDir, name)).mode & 0o777,
+		);
+		return { result, calls, backups, backupModes };
 	} finally {
 		rmSync(dir, { force: true, recursive: true });
 	}
@@ -245,7 +249,7 @@ describe("install-agenthits.sh update", () => {
 	it(
 		"backs up Postgres and swaps Redis, Traefik, Postgres, then the panel, in that order",
 		() => {
-			const { result, calls, backups } = runInstaller({
+			const { result, calls, backups, backupModes } = runInstaller({
 				redisImage: "redis:8.10.1",
 				postgresImage: "postgres:18.5",
 				traefikImage: "traefik:v3.6.25",
@@ -253,6 +257,7 @@ describe("install-agenthits.sh update", () => {
 
 			expect(result.status).toBe(0);
 			expect(backups).toHaveLength(1);
+			expect(backupModes).toEqual([0o600]);
 			expect(backups[0]).toMatch(/^postgres-.*\.sql\.gz$/);
 
 			const backup = firstIndex(calls, "ps -q");
