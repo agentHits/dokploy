@@ -258,6 +258,7 @@ type OperatorScenario = {
 	predownloadFails?: boolean;
 	hostCodename?: string;
 	repoCodename?: string;
+	settleSeconds?: string;
 };
 
 const runInstaller = (
@@ -322,7 +323,7 @@ const runInstaller = (
 				DOKPLOY_HEALTH_INTERVAL: "0",
 				DOKPLOY_HEALTH_TIMEOUT: "2",
 				DOKPLOY_DOCKER_VERIFY_TIMEOUT: "2",
-				DOKPLOY_TRAEFIK_SETTLE: "0",
+				DOKPLOY_TRAEFIK_SETTLE: scenario.settleSeconds ?? "0",
 				REDIS_IMAGE: "redis:8.10.2",
 				POSTGRES_IMAGE: "postgres:18.6",
 				TRAEFIK_IMAGE: "traefik:v3.7.14",
@@ -1121,4 +1122,56 @@ describe("install-agenthits.sh Docker verification window", () => {
 		expect(macos).toContain("DOKPLOY_DOCKER_VERIFY_TIMEOUT");
 		expect(wsl).toContain("'DOKPLOY_DOCKER_VERIFY_TIMEOUT'");
 	});
+});
+
+describe("install-agenthits.sh Traefik settle check", () => {
+	it("polls the new Traefik once a second over the settle time, then checks it once more", () => {
+		const installer = readFileSync(installerScript, "utf8");
+
+		expect(installer).toContain("traefik_wait_settled() {");
+		expect(installer).toContain("if ! traefik_wait_settled; then");
+		expect(installer).not.toContain('sleep "$DOKPLOY_TRAEFIK_SETTLE"');
+	});
+
+	it(
+		"checks the new Traefik once a second over the settle time, then once more",
+		() => {
+			const { result, calls } = runInstaller({
+				traefikImage: "traefik:v3.6.25",
+				settleSeconds: "2",
+			});
+
+			expect(result.status).toBe(0);
+			const checks = calls.filter((call) =>
+				call.startsWith(
+					"inspect --format {{.State.Running}} {{.RestartCount}}",
+				),
+			);
+			expect(checks).toHaveLength(3);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"stops at the first check that finds the new Traefik not running",
+		() => {
+			const { result, calls } = runInstaller({
+				traefikImage: "traefik:v3.6.25",
+				traefikRunning: "false",
+				settleSeconds: "10",
+			});
+
+			expect(result.status).not.toBe(0);
+			expect(result.stderr).toContain(
+				"while checking the new Traefik container",
+			);
+			const checks = calls.filter((call) =>
+				call.startsWith(
+					"inspect --format {{.State.Running}} {{.RestartCount}}",
+				),
+			);
+			expect(checks).toHaveLength(2);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
 });

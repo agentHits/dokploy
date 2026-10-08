@@ -311,6 +311,14 @@ describe("buildComponentUpdateScript", () => {
 		expect(wait).not.toContain("sleep 2");
 	});
 
+	it("polls the new Traefik once a second over the settle time, then checks it once more", () => {
+		const script = buildComponentUpdateScript(["traefik"]);
+
+		expect(script).toContain("traefik_wait_settled() {");
+		expect(script).toContain("if ! traefik_wait_settled; then");
+		expect(script).not.toContain('sleep "${TRAEFIK_SETTLE_SECONDS');
+	});
+
 	it("ends with the marker the UI waits for", () => {
 		expect(buildComponentUpdateScript(["buildpacks"])).toContain(
 			COMPONENTS_UPDATE_DONE,
@@ -1404,6 +1412,42 @@ describe("buildComponentUpdateScript run order", () => {
 			expect(run.calls).toContain(
 				"docker update --restart always dokploy-traefik",
 			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"checks the new Traefik once a second over the settle time, then once more",
+		() => {
+			const run = runComponentScript(["traefik"], {
+				env: { TRAEFIK_SETTLE_SECONDS: "3" },
+			});
+
+			expect(run.status).toBe(0);
+			const checks = run.calls.filter((call) =>
+				call.startsWith(
+					"docker inspect -f {{.State.Running}} {{.RestartCount}}",
+				),
+			);
+			expect(checks).toHaveLength(4);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"stops at the first check that finds the new Traefik not running",
+		() => {
+			const run = runComponentScript(["traefik"], {
+				env: { FAKE_NOT_RUNNING: "1", TRAEFIK_SETTLE_SECONDS: "10" },
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.stderr).toContain("while checking the new Traefik container");
+			const checks = run.calls.filter((call) =>
+				call.startsWith(
+					"docker inspect -f {{.State.Running}} {{.RestartCount}}",
+				),
+			);
+			expect(checks).toHaveLength(2);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);

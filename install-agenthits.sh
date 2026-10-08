@@ -1365,6 +1365,18 @@ traefik_check_running() {
 
 # Names the step that failed. Once the old container is stopped, it is created again
 # from its image with the same networks and started, before the script exits.
+traefik_wait_settled() {
+	local second=0
+	while [ "$second" -lt "$DOKPLOY_TRAEFIK_SETTLE" ]; do
+		sleep 1
+		if ! traefik_check_running; then
+			return 1
+		fi
+		second=$((second + 1))
+	done
+	traefik_check_running
+}
+
 traefik_restore() {
 	local failed_step="$1"
 	trap - HUP INT TERM
@@ -1413,8 +1425,7 @@ swap_dokploy_traefik() {
 	if ! docker start dokploy-traefik >/dev/null; then
 		traefik_restore "starting the new Traefik container"
 	fi
-	sleep "$DOKPLOY_TRAEFIK_SETTLE"
-	if ! traefik_check_running; then
+	if ! traefik_wait_settled; then
 		traefik_restore "checking the new Traefik container (running, with no restarts)"
 	fi
 	if ! docker update --restart always dokploy-traefik >/dev/null; then
