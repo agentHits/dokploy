@@ -885,3 +885,27 @@ describe("install-agenthits.sh Traefik restart policy", () => {
 		expect(restore).toBeLessThan(calls.lastIndexOf("start dokploy-traefik"));
 	});
 });
+
+describe("install-agenthits launchers", () => {
+	it("passes the same settings through the macOS and WSL launchers", () => {
+		const installer = readFileSync(installerScript, "utf8");
+		const powershell = readFileSync(powershellScript, "utf8");
+		const macos = installer.slice(
+			installer.indexOf("PASSTHROUGH_VARS=("),
+			installer.indexOf("\n)", installer.indexOf("PASSTHROUGH_VARS=(")),
+		);
+		const wsl = powershell.slice(
+			powershell.indexOf("$PassthroughVars = @("),
+			powershell.indexOf("\n)", powershell.indexOf("$PassthroughVars = @(")),
+		);
+		const macosSettings = [...macos.matchAll(/^\s*([A-Z][A-Z0-9_]*)$/gm)]
+			.map((match) => match[1])
+			.sort();
+		const wslSettings = [...wsl.matchAll(/'([A-Z][A-Z0-9_]*)'/g)]
+			.map((match) => match[1])
+			.sort();
+
+		expect(macosSettings).toContain("DOCKER_ENGINE_UPGRADE");
+		expect(wslSettings).toEqual(macosSettings);
+	});
+});
