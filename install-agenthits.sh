@@ -378,6 +378,27 @@ tool_version_matches() {
 	command_exists "$1" && "$@" 2>/dev/null | grep -q -- "$expected"
 }
 
+# A failed download must stop the install: piping the script into bash, or running it
+# inside $(...), runs nothing when the download fails and still reports success.
+run_install_script() {
+	local url="$1"
+	local label="$2"
+	local assignment="$3"
+	local script=""
+	script="$(mktemp)"
+	if ! curl -fsSL "$url" -o "$script" || [ ! -s "$script" ] || ! bash -n "$script"; then
+		rm -f "$script"
+		echo "Error: the $label install script could not be downloaded or checked; $label was not installed." >&2
+		exit 1
+	fi
+	if ! env "$assignment" bash "$script"; then
+		rm -f "$script"
+		echo "Error: the $label install script failed." >&2
+		exit 1
+	fi
+	rm -f "$script"
+}
+
 install_toolchain() {
 	local arch="" pack_suffix=""
 	case "$(uname -m)" in
@@ -395,10 +416,10 @@ install_toolchain() {
 	esac
 
 	if ! tool_version_matches "$NIXPACKS_VERSION" nixpacks --version; then
-		NIXPACKS_VERSION="$NIXPACKS_VERSION" bash -c "$(curl -fsSL https://nixpacks.com/install.sh)"
+		run_install_script https://nixpacks.com/install.sh Nixpacks "NIXPACKS_VERSION=$NIXPACKS_VERSION"
 	fi
 	if ! tool_version_matches "$RAILPACK_VERSION" railpack --version; then
-		RAILPACK_VERSION="$RAILPACK_VERSION" bash -c "$(curl -fsSL https://railpack.com/install.sh)"
+		run_install_script https://railpack.com/install.sh Railpack "RAILPACK_VERSION=$RAILPACK_VERSION"
 	fi
 	if ! tool_version_matches "$BUILDPACKS_VERSION" pack --version; then
 		curl -sSL "https://github.com/buildpacks/pack/releases/download/v${BUILDPACKS_VERSION}/pack-v${BUILDPACKS_VERSION}-linux${pack_suffix}.tgz" | tar -C /usr/local/bin/ --no-same-owner -xz pack

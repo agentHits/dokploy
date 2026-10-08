@@ -7,6 +7,7 @@ import {
 	readFileSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -964,5 +965,92 @@ describe("install-agenthits launchers", () => {
 
 		expect(macosSettings).toContain("DOCKER_ENGINE_UPGRADE");
 		expect(wslSettings).toEqual(macosSettings);
+	});
+});
+
+describe("install-agenthits.sh toolchain downloads", () => {
+	const installer = readFileSync(installerScript, "utf8");
+	const helperText = () => {
+		const start = installer.indexOf("run_install_script() {");
+		return installer.slice(start, installer.indexOf("\n}\n", start) + 3);
+	};
+	const FAKE_INSTALL_CURL = `#!/bin/sh
+if [ "$FAKE_CURL_MODE" = fail ]; then exit 22; fi
+out=""
+while [ "$#" -gt 0 ]; do
+	if [ "$1" = "-o" ]; then out="$2"; fi
+	shift
+done
+printf '%s\\n' 'echo fake nixpacks "$NIXPACKS_VERSION"' > "$out"
+`;
+
+	const runHelper = (args: string[], curlMode: "ok" | "fail") => {
+		const dir = mkdtempSync(path.join(tmpdir(), "dokploy-install-script-"));
+		try {
+			const binDir = path.join(dir, "bin");
+			mkdirSync(binDir);
+			for (const tool of ["bash", "env", "mktemp", "rm"]) {
+				symlinkSync(realPath(tool), path.join(binDir, tool));
+			}
+			const curl = path.join(dir, "curl");
+			writeFileSync(curl, FAKE_INSTALL_CURL);
+			chmodSync(curl, 0o755);
+			const script = [
+				"set -euo pipefail",
+				helperText(),
+				`run_install_script ${args.join(" ")}`,
+			].join("\n");
+			return spawnSync(realPath("bash"), [], {
+				input: script,
+				encoding: "utf8",
+				env: {
+					...process.env,
+					PATH: `${dir}:${binDir}`,
+					FAKE_CURL_MODE: curlMode,
+				},
+			});
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	};
+
+	it("does not pipe the Nixpacks and Railpack install scripts into bash", () => {
+		expect(installer).toContain(
+			'run_install_script https://nixpacks.com/install.sh Nixpacks "NIXPACKS_VERSION=$NIXPACKS_VERSION"',
+		);
+		expect(installer).toContain(
+			'run_install_script https://railpack.com/install.sh Railpack "RAILPACK_VERSION=$RAILPACK_VERSION"',
+		);
+		expect(installer).not.toContain('bash -c "$(curl');
+	});
+
+	it("stops the install when the install script cannot be downloaded", () => {
+		const result = runHelper(
+			[
+				"https://nixpacks.com/install.sh",
+				"Nixpacks",
+				"NIXPACKS_VERSION=29.4.0",
+			],
+			"fail",
+		);
+
+		expect(result.status).not.toBe(0);
+		expect(result.stderr).toContain(
+			"the Nixpacks install script could not be downloaded or checked",
+		);
+	});
+
+	it("runs the downloaded install script with the pinned version", () => {
+		const result = runHelper(
+			[
+				"https://nixpacks.com/install.sh",
+				"Nixpacks",
+				"NIXPACKS_VERSION=29.4.0",
+			],
+			"ok",
+		);
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain("fake nixpacks 29.4.0");
 	});
 });
