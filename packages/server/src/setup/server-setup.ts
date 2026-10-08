@@ -832,12 +832,47 @@ export const createTraefikInstance = () => {
 	return command;
 };
 
+// A failed download must fail the setup. Piping curl into bash, or running it inside
+// $(...), runs nothing when the download fails and still reports success.
+const installScriptRun = ({
+	label,
+	url,
+	name,
+	variable,
+	version,
+}: {
+	label: string;
+	url: string;
+	name: string;
+	variable: string;
+	version: string;
+}) => `
+		${name}_installer="$(mktemp)"
+		if ! curl -fsSL ${url} -o "$${name}_installer" || [ ! -s "$${name}_installer" ] || ! bash -n "$${name}_installer"; then
+			rm -f "$${name}_installer"
+			echo "Error: the ${label} install script could not be downloaded or checked; ${label} was not installed." >&2
+			exit 1
+		fi
+		if ! $SUDO_CMD env ${variable}=${version} bash "$${name}_installer"; then
+			rm -f "$${name}_installer"
+			echo "Error: the ${label} install script failed." >&2
+			exit 1
+		fi
+		rm -f "$${name}_installer"
+`;
+
 const installNixpacks = () => `
 	if command_exists nixpacks; then
 		echo "Nixpacks already installed ✅"
 	else
 	    export NIXPACKS_VERSION=${NIXPACKS_VERSION}
-        $SUDO_CMD env NIXPACKS_VERSION=${NIXPACKS_VERSION} bash -c "$(curl -fsSL https://nixpacks.com/install.sh)"
+${installScriptRun({
+	label: "Nixpacks",
+	url: "https://nixpacks.com/install.sh",
+	name: "nixpacks",
+	variable: "NIXPACKS_VERSION",
+	version: NIXPACKS_VERSION,
+})}
 		echo "Nixpacks version $NIXPACKS_VERSION installed ✅"
 	fi
 `;
@@ -847,7 +882,13 @@ const installRailpack = () => `
 		echo "Railpack already installed ✅"
 	else
 	    export RAILPACK_VERSION=${RAILPACK_VERSION}
-		$SUDO_CMD env RAILPACK_VERSION=${RAILPACK_VERSION} bash -c "$(curl -fsSL https://railpack.com/install.sh)"
+${installScriptRun({
+	label: "Railpack",
+	url: "https://railpack.com/install.sh",
+	name: "railpack",
+	variable: "RAILPACK_VERSION",
+	version: RAILPACK_VERSION,
+})}
 		echo "Railpack version $RAILPACK_VERSION installed ✅"
 	fi
 `;
