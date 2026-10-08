@@ -19,6 +19,7 @@ import {
 	findServerById,
 	getAccessibleServerIds,
 	getAgentHitsUpdateCommand,
+	getAgentHitsUpdateImage,
 	getDockerDiskUsage,
 	getDokployImageKeepCount,
 	getDokployImages,
@@ -26,6 +27,7 @@ import {
 	getDokployVersionData,
 	getLogCleanupStatus,
 	getOfficialUpdateCommand,
+	getOfficialUpdateImage,
 	getServerUpdateStatus,
 	getUpdateData,
 	getUpdateDiskSpace,
@@ -669,6 +671,9 @@ export const settingsRouter = createTRPCRouter({
 								keepImages,
 							)
 						: getOfficialUpdateCommand(data.latestVersion ?? "", keepImages),
+					data.updateSource === "agenthits"
+						? getAgentHitsUpdateImage()
+						: getOfficialUpdateImage(data.latestVersion ?? ""),
 				);
 				await audit(ctx, {
 					action: "update",
