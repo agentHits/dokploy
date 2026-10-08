@@ -137,7 +137,7 @@ type OperatorScenario = {
 };
 
 const runInstaller = (scenario: OperatorScenario = {}) => {
-	const dir = mkdtempSync(path.join(tmpdir(), "agenthits-operator-update-"));
+	const dir = mkdtempSync(path.join(tmpdir(), "dokploy-operator-update-"));
 	try {
 		const callLog = path.join(dir, "docker-calls.log");
 		const indexFile = path.join(dir, "service-index");
@@ -164,11 +164,11 @@ const runInstaller = (scenario: OperatorScenario = {}) => {
 				DOCKER_CALL_LOG: callLog,
 				DOCKER_INDEX_FILE: indexFile,
 				AGENTHITS_SKIP_HOST_CHECK: "1",
-				AGENTHITS_BACKUP_DIR: backupDir,
+				DOKPLOY_BACKUP_DIR: backupDir,
 				AGENTHITS_PULL_RETRY_DELAY: "0",
-				AGENTHITS_HEALTH_INTERVAL: "0",
-				AGENTHITS_HEALTH_TIMEOUT: "2",
-				AGENTHITS_TRAEFIK_SETTLE: "0",
+				DOKPLOY_HEALTH_INTERVAL: "0",
+				DOKPLOY_HEALTH_TIMEOUT: "2",
+				DOKPLOY_TRAEFIK_SETTLE: "0",
 				REDIS_IMAGE: "redis:8.10.2",
 				POSTGRES_IMAGE: "postgres:18.6",
 				TRAEFIK_IMAGE: "traefik:v3.7.14",

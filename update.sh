@@ -7,8 +7,8 @@ DOKPLOY_OFFICIAL_VERSION_OVERRIDE="${DOKPLOY_OFFICIAL_VERSION:-}"
 DOKPLOY_FORK_VERSION_OVERRIDE="${DOKPLOY_FORK_VERSION:-}"
 DOKPLOY_OFFICIAL_VERSION="${DOKPLOY_OFFICIAL_VERSION_OVERRIDE:-v0.29.8}"
 DOKPLOY_FORK_VERSION="${DOKPLOY_FORK_VERSION_OVERRIDE:-}"
-AGENTHITS_HEALTH_TIMEOUT="${AGENTHITS_HEALTH_TIMEOUT:-240}"
-AGENTHITS_HEALTH_INTERVAL="${AGENTHITS_HEALTH_INTERVAL:-3}"
+DOKPLOY_HEALTH_TIMEOUT="${DOKPLOY_HEALTH_TIMEOUT:-240}"
+DOKPLOY_HEALTH_INTERVAL="${DOKPLOY_HEALTH_INTERVAL:-3}"
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -221,7 +221,7 @@ panel_container_healthy() {
 # so the outcome is read from the service instead.
 wait_for_panel_update() {
 	local previous_index="$1"
-	local deadline=$(($(date +%s) + AGENTHITS_HEALTH_TIMEOUT))
+	local deadline=$(($(date +%s) + DOKPLOY_HEALTH_TIMEOUT))
 	local index=""
 	local state=""
 	while :; do
@@ -230,7 +230,7 @@ wait_for_panel_update() {
 		if [ "${index:-0}" -gt "$previous_index" ]; then
 			case "$state" in
 				paused | rollback_*)
-					echo "Error: the AgentHits Dokploy update did not succeed (swarm state: $state). See: docker service ps dokploy --no-trunc" >&2
+					echo "Error: the Dokploy panel update did not succeed (swarm state: $state). See: docker service ps dokploy --no-trunc" >&2
 					exit 1
 					;;
 			esac
@@ -239,10 +239,10 @@ wait_for_panel_update() {
 			fi
 		fi
 		if [ "$(date +%s)" -ge "$deadline" ]; then
-			echo "Error: AgentHits Dokploy was not healthy after ${AGENTHITS_HEALTH_TIMEOUT} seconds (swarm state: ${state:-unknown})." >&2
+			echo "Error: the Dokploy panel was not healthy after ${DOKPLOY_HEALTH_TIMEOUT} seconds (swarm state: ${state:-unknown})." >&2
 			exit 1
 		fi
-		sleep "$AGENTHITS_HEALTH_INTERVAL"
+		sleep "$DOKPLOY_HEALTH_INTERVAL"
 	done
 }
 

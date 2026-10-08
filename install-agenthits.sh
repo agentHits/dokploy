@@ -35,10 +35,10 @@ PASSTHROUGH_VARS=(
 	HARDEN_UFW
 	HARDEN_FAIL2BAN
 	DOCKER_ENGINE_UPGRADE
-	AGENTHITS_BACKUP_DIR
-	AGENTHITS_HEALTH_TIMEOUT
-	AGENTHITS_HEALTH_INTERVAL
-	AGENTHITS_TRAEFIK_SETTLE
+	DOKPLOY_BACKUP_DIR
+	DOKPLOY_HEALTH_TIMEOUT
+	DOKPLOY_HEALTH_INTERVAL
+	DOKPLOY_TRAEFIK_SETTLE
 	AGENTHITS_PULL_RETRY_DELAY
 )
 ORB=""
@@ -46,10 +46,10 @@ HARDEN_UFW="${HARDEN_UFW:-0}"
 HARDEN_SSH="${HARDEN_SSH:-0}"
 HARDEN_FAIL2BAN="${HARDEN_FAIL2BAN:-0}"
 DOCKER_ENGINE_UPGRADE="${DOCKER_ENGINE_UPGRADE:-0}"
-AGENTHITS_BACKUP_DIR="${AGENTHITS_BACKUP_DIR:-/var/backups/agenthits}"
-AGENTHITS_HEALTH_TIMEOUT="${AGENTHITS_HEALTH_TIMEOUT:-240}"
-AGENTHITS_HEALTH_INTERVAL="${AGENTHITS_HEALTH_INTERVAL:-3}"
-AGENTHITS_TRAEFIK_SETTLE="${AGENTHITS_TRAEFIK_SETTLE:-10}"
+DOKPLOY_BACKUP_DIR="${DOKPLOY_BACKUP_DIR:-/var/backups/dokploy}"
+DOKPLOY_HEALTH_TIMEOUT="${DOKPLOY_HEALTH_TIMEOUT:-240}"
+DOKPLOY_HEALTH_INTERVAL="${DOKPLOY_HEALTH_INTERVAL:-3}"
+DOKPLOY_TRAEFIK_SETTLE="${DOKPLOY_TRAEFIK_SETTLE:-10}"
 AGENTHITS_PULL_RETRY_DELAY="${AGENTHITS_PULL_RETRY_DELAY:-10}"
 
 command_exists() {
@@ -1088,12 +1088,12 @@ panel_ready() {
 
 wait_until_ready() {
 	local check="$1"
-	local deadline=$(($(date +%s) + AGENTHITS_HEALTH_TIMEOUT))
+	local deadline=$(($(date +%s) + DOKPLOY_HEALTH_TIMEOUT))
 	until "$check"; do
 		if [ "$(date +%s)" -ge "$deadline" ]; then
 			return 1
 		fi
-		sleep "$AGENTHITS_HEALTH_INTERVAL"
+		sleep "$DOKPLOY_HEALTH_INTERVAL"
 	done
 }
 
@@ -1116,7 +1116,7 @@ swap_swarm_service() {
 		exit 1
 	fi
 
-	local deadline=$(($(date +%s) + AGENTHITS_HEALTH_TIMEOUT))
+	local deadline=$(($(date +%s) + DOKPLOY_HEALTH_TIMEOUT))
 	while :; do
 		index="$(docker service inspect "$service" --format '{{.Version.Index}}' 2>/dev/null || true)"
 		state="$(docker service inspect "$service" --format '{{.UpdateStatus.State}}' 2>/dev/null || true)"
@@ -1137,10 +1137,10 @@ swap_swarm_service() {
 			fi
 		fi
 		if [ "$(date +%s)" -ge "$deadline" ]; then
-			echo "Error: $service was not ready on $image within $AGENTHITS_HEALTH_TIMEOUT seconds. Roll back with: docker service update --image $previous_image $service" >&2
+			echo "Error: $service was not ready on $image within $DOKPLOY_HEALTH_TIMEOUT seconds. Roll back with: docker service update --image $previous_image $service" >&2
 			exit 1
 		fi
-		sleep "$AGENTHITS_HEALTH_INTERVAL"
+		sleep "$DOKPLOY_HEALTH_INTERVAL"
 	done
 }
 
@@ -1152,8 +1152,8 @@ backup_postgres() {
 		echo "Error: no running dokploy-postgres task to back up. Nothing was changed." >&2
 		exit 1
 	fi
-	mkdir -p "$AGENTHITS_BACKUP_DIR"
-	file="$AGENTHITS_BACKUP_DIR/postgres-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+	mkdir -p "$DOKPLOY_BACKUP_DIR"
+	file="$DOKPLOY_BACKUP_DIR/postgres-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
 	if ! docker exec "$container" pg_dumpall -U dokploy | gzip >"$file" || [ ! -s "$file" ]; then
 		rm -f "$file"
 		echo "Error: the Postgres backup failed. Nothing was changed." >&2
@@ -1222,7 +1222,7 @@ swap_dokploy_traefik() {
 	fi
 
 	run_dokploy_traefik "$TRAEFIK_IMAGE"
-	sleep "$AGENTHITS_TRAEFIK_SETTLE"
+	sleep "$DOKPLOY_TRAEFIK_SETTLE"
 	if [ "$(docker inspect --format '{{.State.Running}}' dokploy-traefik 2>/dev/null)" != "true" ]; then
 		restore_dokploy_traefik
 	fi
@@ -1297,7 +1297,7 @@ update_agenthits_dokploy() {
 	fi
 	run_panel_update
 	upgrade_docker_engine
-	echo "AgentHits operator update finished."
+	echo "Panel host update finished."
 }
 
 parse_hardening_flags() {
