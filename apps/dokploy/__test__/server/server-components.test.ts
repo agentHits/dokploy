@@ -605,6 +605,7 @@ const runComponentScript = (
 				FAKE_PREVIOUS_ENGINE: "28.3.0",
 				FAKE_TARGET_ENGINE: "29.8.2",
 				FAKE_OLD_IMAGE: "traefik:v3.6.25",
+				TMPDIR: dir,
 				TRAEFIK_SETTLE_SECONDS: "0",
 				DOKPLOY_BACKUP_DIR: backups,
 				DOKPLOY_OS_RELEASE: osRelease,
@@ -1336,6 +1337,31 @@ describe("buildComponentUpdateScript run order", () => {
 			expect(run.stdout).toContain(
 				`Railpack version ${RAILPACK_VERSION} installed`,
 			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"fails the update when the RClone download fails",
+		() => {
+			const run = runComponentScript(["rclone"], {
+				env: { FAKE_CURL_FAILS_FOR: "downloads.rclone.org" },
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.stdout).not.toContain("RClone version");
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"fails the update when the Buildpacks download fails",
+		() => {
+			const run = runComponentScript(["buildpacks"], {
+				env: { FAKE_CURL_FAILS_FOR: "github.com" },
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.stdout).not.toContain("Buildpacks version");
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);
