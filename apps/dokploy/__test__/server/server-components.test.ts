@@ -259,10 +259,22 @@ describe("buildComponentUpdateScript", () => {
 		expect(script).toContain('rm -f "$DOKPLOY_APT_SOURCES_DIR/docker.list"');
 		expect(script).toContain('rm -f "$DOKPLOY_DOCKER_KEYRING"');
 		expect(script).toMatch(
-			/--download-only[^\n]*; then\s+docker_undo_repo\s+abort_before_change/,
+			/--download-only[^\n]*; then\s+docker_undo_repo\s+docker_remove_rollback_dir\s+abort_before_change/,
 		);
 		expect(script).toMatch(
 			/docker_save_rollback_packages; then\s+docker_undo_repo\s+return 1/,
+		);
+	});
+
+	it("removes the saved-packages directory this run created when Docker is skipped or the update aborts", () => {
+		const script = buildComponentUpdateScript(["docker"]);
+
+		expect(script).toContain('rm -rf "$DOCKER_ROLLBACK_DIR"');
+		expect(script).toMatch(
+			/"\$DOCKER_SKIPPED" = 1 \]; then\s+docker_remove_rollback_dir\s+fi/,
+		);
+		expect(script).toMatch(
+			/docker_undo_repo\s+docker_remove_rollback_dir\s+abort_before_change "Pre-download failed: the Docker packages\./,
 		);
 	});
 
@@ -1246,6 +1258,37 @@ describe("buildComponentUpdateScript run order", () => {
 			expect(run.keyring).toBe("existing key\n");
 			expect(run.sources).toEqual({});
 			expect(run.calls.some((call) => call.startsWith("curl"))).toBe(false);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"removes the saved packages when they cannot be saved, so Docker is skipped with nothing left behind",
+		() => {
+			const run = runComponentScript(["docker", "traefik"], {
+				env: { FAKE_DOWNLOAD_FAILS: "1" },
+			});
+
+			expect(run.status).toBe(0);
+			expect(run.stdout).toContain(
+				"Docker not updated: the current Docker packages could not be saved for rollback.",
+			);
+			expect(run.backups).toEqual([]);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"removes the saved packages when the new packages cannot be downloaded, then aborts",
+		() => {
+			const run = runComponentScript(["docker", "traefik"], {
+				env: { FAKE_PREDOWNLOAD_FAILS: "1" },
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.stderr).toContain(
+				"Pre-download failed: the Docker packages. Nothing was changed.",
+			);
+			expect(run.backups).toEqual([]);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);

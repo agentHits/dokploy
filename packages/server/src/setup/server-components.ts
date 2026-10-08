@@ -124,6 +124,7 @@ DOCKER_ROLLBACK_DIR=""
 DOCKER_KEY_WRITTEN=0
 DOCKER_SOURCE_WRITTEN=0
 DOCKER_KEYDIR_CREATED=0
+DOCKER_ROLLBACK_DIR_CREATED=0
 
 docker_skip() {
 	DOCKER_SKIPPED=1
@@ -184,6 +185,13 @@ docker_undo_repo() {
 	if [ "$DOCKER_KEYDIR_CREATED" = 1 ]; then
 		$SUDO_CMD rmdir "$(dirname "$DOKPLOY_DOCKER_KEYRING")" 2>/dev/null || true
 		DOCKER_KEYDIR_CREATED=0
+	fi
+}
+
+docker_remove_rollback_dir() {
+	if [ "$DOCKER_ROLLBACK_DIR_CREATED" = 1 ]; then
+		$SUDO_CMD rm -rf "$DOCKER_ROLLBACK_DIR" || true
+		DOCKER_ROLLBACK_DIR_CREATED=0
 	fi
 }
 
@@ -251,10 +259,11 @@ docker_save_rollback_packages() {
 		return 1
 	fi
 	DOCKER_ROLLBACK_DIR="$DOKPLOY_BACKUP_DIR/docker-rollback-$(date -u +%Y%m%dT%H%M%SZ)"
-	if ! $SUDO_CMD mkdir -p "$DOKPLOY_BACKUP_DIR" || ! $SUDO_CMD chmod 700 "$DOKPLOY_BACKUP_DIR" || ! $SUDO_CMD sh -c 'umask 077 && mkdir -p "$1"' sh "$DOCKER_ROLLBACK_DIR"; then
+	if ! $SUDO_CMD mkdir -p "$DOKPLOY_BACKUP_DIR" || ! $SUDO_CMD chmod 700 "$DOKPLOY_BACKUP_DIR" || ! $SUDO_CMD sh -c 'umask 077 && mkdir "$1"' sh "$DOCKER_ROLLBACK_DIR"; then
 		docker_skip "the current Docker packages could not be saved for rollback"
 		return 1
 	fi
+	DOCKER_ROLLBACK_DIR_CREATED=1
 	for package in docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras; do
 		installed="$(docker_installed_version "$package")"
 		if [ -z "$installed" ]; then
@@ -304,6 +313,7 @@ docker_prepare_apt() {
 	fi
 	if ! download_with_retry $SUDO_CMD apt-get install -y -qq --download-only "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin; then
 		docker_undo_repo
+		docker_remove_rollback_dir
 		abort_before_change "Pre-download failed: the Docker packages."
 	fi
 	return 0
@@ -373,6 +383,9 @@ if ! command -v apt-get >/dev/null 2>&1; then
 	docker_skip "this host has no apt-get, so the Docker packages cannot be pre-downloaded or rolled back"
 elif docker_check_repo_codename; then
 	docker_prepare_apt || true
+fi
+if [ "$DOCKER_SKIPPED" = 1 ]; then
+	docker_remove_rollback_dir
 fi
 `;
 

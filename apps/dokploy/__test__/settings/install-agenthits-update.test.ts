@@ -135,6 +135,9 @@ case "$1" in
 		;;
 	install)
 		case "$*" in
+			*--download-only*)
+				[ "$FAKE_PREDOWNLOAD_FAILS" = 1 ] && exit 1
+				;;
 			*--allow-downgrades*)
 				[ "$FAKE_ROLLBACK_FAILS" = 1 ] && exit 1
 				printf '%s\\n' "$FAKE_PREVIOUS_ENGINE" > "$DOCKER_ENGINE_FILE"
@@ -239,6 +242,7 @@ type OperatorScenario = {
 	upgradeFails?: boolean;
 	rollbackFails?: boolean;
 	downloadFails?: boolean;
+	predownloadFails?: boolean;
 	hostCodename?: string;
 	repoCodename?: string;
 };
@@ -328,6 +332,7 @@ const runInstaller = (
 				FAKE_UPGRADE_FAILS: scenario.upgradeFails ? "1" : "0",
 				FAKE_ROLLBACK_FAILS: scenario.rollbackFails ? "1" : "0",
 				FAKE_DOWNLOAD_FAILS: scenario.downloadFails ? "1" : "0",
+				FAKE_PREDOWNLOAD_FAILS: scenario.predownloadFails ? "1" : "0",
 			},
 		});
 
@@ -685,13 +690,18 @@ describe("install-agenthits.sh Docker Engine upgrade", () => {
 	it(
 		"stops before any change when a current Docker package cannot be saved",
 		() => {
-			const { result, calls } = runInstaller({
+			const { result, calls, backupEntries } = runInstaller({
 				upgradeEngine: true,
 				engineVersion: "28.3.0",
 				downloadFails: true,
 			});
 
 			expect(result.status).not.toBe(0);
+			expect(
+				backupEntries.some((entry) =>
+					entry.name.startsWith("docker-rollback-"),
+				),
+			).toBe(false);
 			expect(result.stderr).toContain(
 				"Pre-download failed: current Docker packages for rollback. Nothing was changed.",
 			);
@@ -794,6 +804,30 @@ describe("install-agenthits.sh Docker Engine upgrade", () => {
 				"apt-get install -y --allow-downgrades --no-download",
 			);
 			expect(result.stderr).toContain("docker-rollback-");
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"removes the saved packages when the new packages cannot be downloaded, then aborts",
+		() => {
+			const { result, calls, backupEntries } = runInstaller({
+				upgradeEngine: true,
+				engineVersion: "28.3.0",
+				predownloadFails: true,
+			});
+
+			expect(result.status).not.toBe(0);
+			expect(result.stderr).toContain(
+				"Pre-download failed: the Docker packages. Nothing was changed.",
+			);
+			expect(
+				backupEntries.some((entry) =>
+					entry.name.startsWith("docker-rollback-"),
+				),
+			).toBe(false);
+			expect(calls.some((call) => call.startsWith("service update"))).toBe(
+				false,
+			);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);

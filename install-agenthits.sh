@@ -57,6 +57,7 @@ DOCKER_PACKAGE_VERSION=""
 DOCKER_ENGINE_UPGRADE_NEEDED=0
 DOCKER_ENGINE_PREVIOUS_VERSION=""
 DOCKER_ROLLBACK_DIR=""
+DOCKER_ROLLBACK_DIR_CREATED=0
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -1049,6 +1050,13 @@ check_docker_repo_codename() {
 }
 
 # Saved before the Engine is touched, so a failed upgrade can install them back.
+remove_docker_rollback_dir() {
+	if [ "$DOCKER_ROLLBACK_DIR_CREATED" = "1" ]; then
+		rm -rf "$DOCKER_ROLLBACK_DIR"
+		DOCKER_ROLLBACK_DIR_CREATED=0
+	fi
+}
+
 save_docker_rollback_packages() {
 	local package=""
 	local installed=""
@@ -1060,10 +1068,11 @@ save_docker_rollback_packages() {
 	DOCKER_ROLLBACK_DIR="$DOKPLOY_BACKUP_DIR/docker-rollback-$(date -u +%Y%m%dT%H%M%SZ)"
 	mkdir -p "$DOKPLOY_BACKUP_DIR"
 	chmod 700 "$DOKPLOY_BACKUP_DIR"
-	if ! (umask 077 && mkdir -p "$DOCKER_ROLLBACK_DIR"); then
+	if ! (umask 077 && mkdir "$DOCKER_ROLLBACK_DIR"); then
 		echo "Pre-download failed: current Docker packages for rollback. Nothing was changed." >&2
 		exit 1
 	fi
+	DOCKER_ROLLBACK_DIR_CREATED=1
 	for package in docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras; do
 		installed="$(docker_package_installed_version "$package")"
 		if [ -z "$installed" ]; then
@@ -1079,6 +1088,7 @@ save_docker_rollback_packages() {
 				;;
 		esac
 		if ! (umask 077 && cd "$DOCKER_ROLLBACK_DIR" && apt-get download "$package=$installed"); then
+			remove_docker_rollback_dir
 			echo "Pre-download failed: current Docker packages for rollback. Nothing was changed." >&2
 			exit 1
 		fi
@@ -1102,6 +1112,7 @@ predownload_docker_packages() {
 	fi
 	save_docker_rollback_packages
 	if ! download_with_retry apt-get install -y -qq --download-only "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin; then
+		remove_docker_rollback_dir
 		echo "Pre-download failed: the Docker packages. Nothing was changed." >&2
 		exit 1
 	fi
