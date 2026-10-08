@@ -32,6 +32,7 @@ import { TerminalModal } from "../web-server/terminal-modal";
 import { ShowServerActions } from "./actions/show-server-actions";
 import { DeleteServerModal } from "./delete-server-modal";
 import { HandleServers } from "./handle-servers";
+import { ServerComponentsUpdate } from "./server-components-update";
 import { SetupServer } from "./setup-server";
 import { ShowMonitoringModal } from "./show-monitoring-modal";
 import { WelcomeSubscription } from "./welcome-stripe/welcome-subscription";
@@ -245,6 +246,12 @@ export const ShowServers = () => {
 																						</div>
 																					</TooltipContent>
 																				</Tooltip>
+																			</div>
+
+																			<div className="flex items-center gap-2 w-full">
+																				<ServerComponentsUpdate
+																					serverId={server.serverId}
+																				/>
 																			</div>
 
 																			<TooltipProvider>

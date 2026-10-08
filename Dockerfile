@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:24.4.0-slim AS base
+FROM node:24.21.0-slim AS base
 ENV BUN_INSTALL="/root/.bun"
 ENV PATH="$BUN_INSTALL/bin:$PATH"
 RUN apt-get update \
@@ -79,7 +79,17 @@ COPY --from=build /usr/src/app/packages/server/dist ./packages/server/dist
 
 
 # Install docker
-RUN curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh --version 28.5.2 && rm get-docker.sh && curl https://rclone.org/install.sh | bash
+ARG DOCKER_VERSION=29.8.2
+RUN curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh --version "$DOCKER_VERSION" && rm get-docker.sh
+
+# Install rclone
+ARG RCLONE_VERSION=1.75.1
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends unzip \
+    && curl -fsSL "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-amd64.zip" -o /tmp/rclone.zip \
+    && unzip -q /tmp/rclone.zip -d /tmp \
+    && install -m 0755 "/tmp/rclone-v${RCLONE_VERSION}-linux-amd64/rclone" /usr/bin/rclone \
+    && rm -rf /tmp/rclone.zip "/tmp/rclone-v${RCLONE_VERSION}-linux-amd64" /var/lib/apt/lists/*
 
 # Install Nixpacks and tsx
 # | VERBOSE=1 VERSION=1.21.0 bash
@@ -92,12 +102,12 @@ RUN curl -sSL https://nixpacks.com/install.sh -o install.sh \
     && bun install -g tsx
 
 # Install Railpack
-ARG RAILPACK_VERSION=0.15.4
+ARG RAILPACK_VERSION=0.40.1
 RUN curl -sSL https://railpack.com/install.sh \
     | RAILPACK_VERSION="$RAILPACK_VERSION" bash -s -- --yes --bin-dir /usr/local/bin
 
 # Install buildpacks
-COPY --from=buildpacksio/pack:0.39.1 /usr/local/bin/pack /usr/local/bin/pack
+COPY --from=buildpacksio/pack:0.40.9 /usr/local/bin/pack /usr/local/bin/pack
 
 EXPOSE 3000
 

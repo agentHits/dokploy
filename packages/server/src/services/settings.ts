@@ -632,8 +632,9 @@ export const getAgentHitsUpdateCommand = (
 	const keepImagesArg =
 		keepImages === undefined ? "" : getDokployKeepImagesEnvArg(keepImages);
 
-	// Pull while the old container still serves the panel: the service is
-	// stop-first, so a pull inside the update would happen with Dokploy down.
+	// Pull while the old container still serves the panel: the update is
+	// stop-first, so a pull inside it would happen with Dokploy down. Stop-first
+	// also keeps two panel versions from running migrations at the same time.
 	return `
 docker pull ${quoteShellArg(getAgentHitsUpdateImage())} || exit 1
 echo ${quoteShellArg(UPDATE_IMAGE_PULLED_MARKER)}
@@ -649,6 +650,8 @@ docker service update --force \\
 	${forkVersionArg} \\
 	${keepImagesArg} \\
 	${PREVIOUS_IMAGE_ENV_ARG} \\
+	--update-order stop-first \\
+	--update-failure-action rollback \\
 	dokploy
 `;
 };
@@ -665,7 +668,7 @@ export const getOfficialUpdateCommand = (
 docker pull ${image} || exit 1
 echo ${quoteShellArg(UPDATE_IMAGE_PULLED_MARKER)}
 ${RECORD_PREVIOUS_IMAGE}
-docker service update --force --image ${image} ${keepImagesArg} ${PREVIOUS_IMAGE_ENV_ARG} dokploy
+docker service update --force --image ${image} ${keepImagesArg} ${PREVIOUS_IMAGE_ENV_ARG} --update-order stop-first --update-failure-action rollback dokploy
 `;
 };
 

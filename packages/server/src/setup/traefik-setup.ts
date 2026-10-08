@@ -13,6 +13,7 @@ import { paths } from "../constants";
 import { getRemoteDocker } from "../utils/servers/remote-docker";
 import type { FileConfig } from "../utils/traefik/file-types";
 import type { MainTraefikConfig } from "../utils/traefik/types";
+import { PINNED_VERSIONS } from "./component-versions";
 
 export const TRAEFIK_SSL_PORT =
 	Number.parseInt(process.env.TRAEFIK_SSL_PORT!, 10) || 443;
@@ -20,7 +21,35 @@ export const TRAEFIK_PORT =
 	Number.parseInt(process.env.TRAEFIK_PORT!, 10) || 80;
 export const TRAEFIK_HTTP3_PORT =
 	Number.parseInt(process.env.TRAEFIK_HTTP3_PORT!, 10) || 443;
-export const TRAEFIK_VERSION = process.env.TRAEFIK_VERSION || "3.6.25";
+export const TRAEFIK_VERSION =
+	process.env.TRAEFIK_VERSION || PINNED_VERSIONS.traefik;
+
+const traefikContainerOptions = (
+	image: string,
+	restart: string,
+) => `--name dokploy-traefik \
+	--restart ${restart} \
+	-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
+	-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
+	-v /var/run/docker.sock:/var/run/docker.sock \
+	-p ${TRAEFIK_SSL_PORT}:${TRAEFIK_SSL_PORT} \
+	-p ${TRAEFIK_PORT}:${TRAEFIK_PORT} \
+	-p ${TRAEFIK_HTTP3_PORT}:${TRAEFIK_HTTP3_PORT}/udp \
+	${image}`;
+
+export const buildTraefikRunCommand = (version: string) => `
+		$SUDO_CMD docker run -d ${traefikContainerOptions(`traefik:v${version}`, "always")}
+		$SUDO_CMD docker network connect dokploy-network dokploy-traefik
+`;
+
+// Created with no restart policy and not started: networks are attached before the
+// ports are taken, and the policy is raised only after the new container runs.
+export const buildTraefikCreateWithImage = (image: string) => `
+		$SUDO_CMD docker create ${traefikContainerOptions(image, "no")}
+`;
+
+export const buildTraefikCreateCommand = (version: string) =>
+	buildTraefikCreateWithImage(`traefik:v${version}`);
 
 export interface TraefikOptions {
 	env?: string[];

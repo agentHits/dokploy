@@ -1,8 +1,19 @@
-import { execFileSync, execSync } from "node:child_process";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync, execSync, spawnSync } from "node:child_process";
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { defaultCommand, reportDockerVersion } from "@dokploy/server";
+import {
+	NIXPACKS_VERSION,
+	RAILPACK_VERSION,
+} from "@dokploy/server/setup/component-versions";
 import { describe, expect, it } from "vitest";
 
 const resolveBin = (name: string) =>
@@ -95,4 +106,141 @@ describe("defaultCommand", () => {
 			);
 		},
 	);
+});
+
+const BASH = resolveBin("bash");
+const SETUP_STEP_TOOLS = ["bash", "env", "mktemp", "rm", "tar", "uname"];
+
+// The lines of one step of the setup script: from the echo that names it to the next step.
+const setupStep = (script: string, marker: string) => {
+	const start = script.lastIndexOf("\n", script.indexOf(marker)) + 1;
+	const next = script.indexOf('\necho -e "', start);
+	return script.slice(start, next === -1 ? script.length : next + 1);
+};
+
+// Runs one step as the setup script runs it: under set -e, with a PATH that holds only
+// the fake curl and the tools the step needs, so nixpacks, railpack and pack are absent.
+const runSetupStep = (step: string, curlMode: "ok" | "fail") => {
+	const dir = mkdtempSync(path.join(tmpdir(), "dokploy-setup-step-"));
+	try {
+		const binDir = path.join(dir, "bin");
+		mkdirSync(binDir);
+		for (const tool of SETUP_STEP_TOOLS) {
+			symlinkSync(resolveBin(tool), path.join(binDir, tool));
+		}
+		const curl = path.join(dir, "curl");
+		writeFileSync(
+			curl,
+			`#!/bin/sh
+if [ "$FAKE_CURL_MODE" = fail ]; then exit 22; fi
+out=""
+while [ "$#" -gt 0 ]; do
+	if [ "$1" = "-o" ]; then out="$2"; fi
+	shift
+done
+printf '%s\\n' 'echo fake installer "$NIXPACKS_VERSION$RAILPACK_VERSION"' > "$out"
+`,
+		);
+		chmodSync(curl, 0o755);
+		const script = [
+			"set -e",
+			'command_exists() { command -v "$@" >/dev/null 2>&1; }',
+			'SUDO_CMD=""',
+			"SYS_ARCH=x86_64",
+			step,
+		].join("\n");
+		return spawnSync(BASH, [], {
+			input: script,
+			encoding: "utf8",
+			env: {
+				...process.env,
+				PATH: `${dir}:${binDir}`,
+				FAKE_CURL_MODE: curlMode,
+			},
+		});
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+};
+
+describe("install scripts in the server setup", () => {
+	it.each([false, true])(
+		"downloads the Nixpacks and Railpack install scripts to files and checks them before running them (isBuildServer=%s)",
+		(isBuildServer) => {
+			const script = defaultCommand(isBuildServer);
+
+			expect(script).toContain(
+				'curl -fsSL https://nixpacks.com/install.sh -o "$nixpacks_installer"',
+			);
+			expect(script).toContain('bash -n "$nixpacks_installer"');
+			expect(script).toContain(
+				`env NIXPACKS_VERSION=${NIXPACKS_VERSION} bash "$nixpacks_installer"`,
+			);
+			expect(script).toContain(
+				'curl -fsSL https://railpack.com/install.sh -o "$railpack_installer"',
+			);
+			expect(script).toContain('bash -n "$railpack_installer"');
+			expect(script).toContain(
+				`env RAILPACK_VERSION=${RAILPACK_VERSION} bash "$railpack_installer"`,
+			);
+			expect(script).not.toContain('bash -c "$(curl');
+		},
+	);
+
+	it("stops the setup when the Nixpacks install script cannot be downloaded", () => {
+		const result = runSetupStep(
+			setupStep(defaultCommand(true), 'Installing Nixpacks"'),
+			"fail",
+		);
+
+		expect(result.status).not.toBe(0);
+		expect(result.stderr).toContain(
+			"the Nixpacks install script could not be downloaded or checked",
+		);
+		expect(result.stdout).not.toContain("Nixpacks version");
+	});
+
+	it("stops the setup when the Railpack install script cannot be downloaded", () => {
+		const result = runSetupStep(
+			setupStep(defaultCommand(true), 'Installing Railpack"'),
+			"fail",
+		);
+
+		expect(result.status).not.toBe(0);
+		expect(result.stderr).toContain(
+			"the Railpack install script could not be downloaded or checked",
+		);
+		expect(result.stdout).not.toContain("Railpack version");
+	});
+
+	it("runs the downloaded Railpack install script with the pinned version", () => {
+		const result = runSetupStep(
+			setupStep(defaultCommand(true), 'Installing Railpack"'),
+			"ok",
+		);
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain(`fake installer ${RAILPACK_VERSION}`);
+		expect(result.stdout).toContain(
+			`Railpack version ${RAILPACK_VERSION} installed`,
+		);
+	});
+
+	it("stops the setup when the RClone download fails", () => {
+		const result = runSetupStep(
+			setupStep(defaultCommand(true), 'Installing RClone. "'),
+			"fail",
+		);
+
+		expect(result.status).not.toBe(0);
+	});
+
+	it("stops the setup when the Buildpacks download fails", () => {
+		const result = runSetupStep(
+			setupStep(defaultCommand(true), 'Installing Buildpacks"'),
+			"fail",
+		);
+
+		expect(result.status).not.toBe(0);
+	});
 });

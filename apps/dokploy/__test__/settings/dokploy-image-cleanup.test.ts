@@ -35,6 +35,8 @@ const { UPDATE_IMAGE_PULLED_MARKER } = await import(
 );
 
 const PREVIOUS = `sha256:${"a".repeat(64)}`;
+// Each case spawns sh; the 5s default times out on a CI runner under load.
+const SPAWN_TEST_TIMEOUT_MS = 30_000;
 
 describe("Dokploy image cleanup", () => {
 	beforeEach(() => {
@@ -148,6 +150,7 @@ esac
 				rmSync(dir, { recursive: true, force: true });
 			}
 		},
+		SPAWN_TEST_TIMEOUT_MS,
 	);
 
 	it("does nothing at startup when the cleanup is off", async () => {
@@ -346,6 +349,16 @@ describe("Dokploy update commands", () => {
 		expect(getOfficialUpdateCommand("v0.30.7")).not.toContain(
 			"DOKPLOY_KEEP_OLD_IMAGES",
 		);
+	});
+
+	it("stops the old task first and rolls back a failed panel update", () => {
+		for (const command of [
+			getAgentHitsUpdateCommand("v0.30.6"),
+			getOfficialUpdateCommand("v0.30.7"),
+		]) {
+			expect(command).toContain("--update-order stop-first");
+			expect(command).toContain("--update-failure-action rollback");
+		}
 	});
 
 	it("includes untagged images that swarm pulled by digest", async () => {

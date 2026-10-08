@@ -19,6 +19,9 @@ const repoRoot = path.resolve(
 const updateScript = path.join(repoRoot, "update.sh");
 const installerScript = path.join(repoRoot, "install-agenthits.sh");
 
+// Each test spawns bash; the 5s default times out on a CI runner under load.
+const SPAWN_TEST_TIMEOUT_MS = 30_000;
+
 const writeFakeDocker = (
 	dir: string,
 	options: {
@@ -30,6 +33,7 @@ const writeFakeDocker = (
 		latestForkVersion?: string;
 		serviceEnv: string[];
 		failPull?: boolean;
+		updateState?: string;
 	},
 ) => {
 	const dockerPath = path.join(dir, "docker");
@@ -49,6 +53,16 @@ if [ "$1" = "service" ] && [ "$2" = "inspect" ]; then
 ${options.serviceEnv.map((entry) => `			printf '%s\\n' "${entry}"`).join("\n")}
 			exit 0
 			;;
+			*Version.Index*)
+				cat "$DOCKER_INDEX_FILE"
+				exit 0
+				;;
+			*UpdateStatus.State*)
+				if [ "$(cat "$DOCKER_INDEX_FILE")" -gt 1 ]; then
+					printf '%s\\n' "${options.updateState ?? "completed"}"
+				fi
+				exit 0
+				;;
 	esac
 fi
 
@@ -71,6 +85,17 @@ if [ "$1" = "pull" ]; then
 fi
 
 if [ "$1" = "service" ] && [ "$2" = "update" ]; then
+	echo $(( $(cat "$DOCKER_INDEX_FILE") + 1 )) > "$DOCKER_INDEX_FILE"
+	exit 0
+fi
+
+if [ "$1" = "ps" ]; then
+	echo fake-panel-container
+	exit 0
+fi
+
+if [ "$1" = "inspect" ]; then
+	echo healthy
 	exit 0
 fi
 
@@ -132,6 +157,8 @@ const runUpdateScript = (
 	try {
 		const callLog = path.join(tempDir, "docker-calls.log");
 		writeFileSync(callLog, "");
+		const indexFile = path.join(tempDir, "service-index");
+		writeFileSync(indexFile, "1");
 		writeFakeDocker(tempDir, fakeDockerOptions);
 		writeFakeCurl(tempDir, fakeDockerOptions);
 
@@ -140,7 +167,10 @@ const runUpdateScript = (
 				...process.env,
 				AGENTHITS_SKIP_HOST_CHECK: "1",
 				AGENTHITS_PULL_RETRY_DELAY: "0",
+				DOKPLOY_HEALTH_INTERVAL: "0",
+				DOKPLOY_HEALTH_TIMEOUT: "2",
 				DOCKER_CALL_LOG: callLog,
+				DOCKER_INDEX_FILE: indexFile,
 				PATH: `${tempDir}:${process.env.PATH}`,
 			},
 			encoding: "utf8",
@@ -156,131 +186,176 @@ const runUpdateScript = (
 };
 
 describe("AgentHits update script", () => {
-	it("skips pull and service update when the installed digest and metadata already match", () => {
-		const { result, calls } = runUpdateScript({
-			currentDigest: "sha256:index",
-			latestIndexDigest: "sha256:index",
-			latestPlatformDigest: "sha256:platform",
-			serviceEnv: [
-				"RELEASE_TAG=agenthits-dev",
-				"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
-				"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_160+latest",
-			],
-		});
+	it(
+		"skips pull and service update when the installed digest and metadata already match",
+		() => {
+			const { result, calls } = runUpdateScript({
+				currentDigest: "sha256:index",
+				latestIndexDigest: "sha256:index",
+				latestPlatformDigest: "sha256:platform",
+				serviceEnv: [
+					"RELEASE_TAG=agenthits-dev",
+					"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+					"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_160+latest",
+				],
+			});
 
-		expect(result.status).toBe(0);
-		expect(result.stdout).toContain("already up to date");
-		expect(calls).toContain("service inspect dokploy");
-		expect(calls).toContain("buildx imagetools inspect");
-		expect(calls).not.toContain("pull ");
-		expect(calls).not.toContain("service update");
-	});
+			expect(result.status).toBe(0);
+			expect(result.stdout).toContain("already up to date");
+			expect(calls).toContain("service inspect dokploy");
+			expect(calls).toContain("buildx imagetools inspect");
+			expect(calls).not.toContain("pull ");
+			expect(calls).not.toContain("service update");
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
 
-	it("skips service update when the installed service uses the current tag without a pinned digest", () => {
-		const { result, calls } = runUpdateScript({
-			currentImage: "ghcr.io/agenthits/dokploy:agenthits-dev",
-			latestIndexDigest: "sha256:index",
-			latestPlatformDigest: "sha256:platform",
-			serviceEnv: [
-				"RELEASE_TAG=agenthits-dev",
-				"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
-				"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_160+latest",
-			],
-		});
+	it(
+		"skips service update when the installed service uses the current tag without a pinned digest",
+		() => {
+			const { result, calls } = runUpdateScript({
+				currentImage: "ghcr.io/agenthits/dokploy:agenthits-dev",
+				latestIndexDigest: "sha256:index",
+				latestPlatformDigest: "sha256:platform",
+				serviceEnv: [
+					"RELEASE_TAG=agenthits-dev",
+					"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+					"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_160+latest",
+				],
+			});
 
-		expect(result.status).toBe(0);
-		expect(result.stdout).toContain("metadata matches latest image");
-		expect(calls).toContain("service inspect dokploy");
-		expect(calls).toContain("buildx imagetools inspect");
-		expect(calls).not.toContain("pull ");
-		expect(calls).not.toContain("service update");
-	});
+			expect(result.status).toBe(0);
+			expect(result.stdout).toContain("metadata matches latest image");
+			expect(calls).toContain("service inspect dokploy");
+			expect(calls).toContain("buildx imagetools inspect");
+			expect(calls).not.toContain("pull ");
+			expect(calls).not.toContain("service update");
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
 
-	it("does not trust a mutable image tag as up to date when remote metadata cannot be loaded", () => {
-		const { result, calls } = runUpdateScript({
-			currentImage: "ghcr.io/agenthits/dokploy:agenthits-dev",
-			latestIndexDigest: "sha256:index",
-			latestPlatformDigest: "sha256:platform",
-			failMetadataFetch: true,
-			serviceEnv: [
-				"RELEASE_TAG=agenthits-dev",
-				"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
-				"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_160+latest",
-			],
-		});
+	it(
+		"does not trust a mutable image tag as up to date when remote metadata cannot be loaded",
+		() => {
+			const { result, calls } = runUpdateScript({
+				currentImage: "ghcr.io/agenthits/dokploy:agenthits-dev",
+				latestIndexDigest: "sha256:index",
+				latestPlatformDigest: "sha256:platform",
+				failMetadataFetch: true,
+				serviceEnv: [
+					"RELEASE_TAG=agenthits-dev",
+					"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+					"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_160+latest",
+				],
+			});
 
-		expect(result.status).toBe(0);
-		expect(result.stdout).toContain("Updating AgentHits Dokploy");
-		expect(calls).toContain("service update");
-		expect(calls).toContain("--update-failure-action rollback");
-		expect(calls.indexOf("pull ")).toBeGreaterThanOrEqual(0);
-		expect(calls.indexOf("pull ")).toBeLessThan(
-			calls.indexOf("service update"),
-		);
-	});
+			expect(result.status).toBe(0);
+			expect(result.stdout).toContain("Updating AgentHits Dokploy");
+			expect(calls).toContain("service update");
+			expect(calls).toContain("--update-failure-action rollback");
+			expect(calls.indexOf("pull ")).toBeGreaterThanOrEqual(0);
+			expect(calls.indexOf("pull ")).toBeLessThan(
+				calls.indexOf("service update"),
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
 
-	it("pulls the new image before updating the service when the digest changed", () => {
-		const { result, calls } = runUpdateScript({
-			currentDigest: "sha256:old",
-			latestIndexDigest: "sha256:index",
-			latestPlatformDigest: "sha256:platform",
-			serviceEnv: [
-				"RELEASE_TAG=agenthits-dev",
-				"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
-			],
-		});
+	it(
+		"pulls the new image before updating the service when the digest changed",
+		() => {
+			const { result, calls } = runUpdateScript({
+				currentDigest: "sha256:old",
+				latestIndexDigest: "sha256:index",
+				latestPlatformDigest: "sha256:platform",
+				serviceEnv: [
+					"RELEASE_TAG=agenthits-dev",
+					"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+				],
+			});
 
-		expect(result.status).toBe(0);
-		expect(result.stdout).toContain("Updating AgentHits Dokploy");
-		expect(calls).toContain("service update");
-		expect(calls).toContain("--update-failure-action rollback");
-		expect(calls.indexOf("pull ")).toBeGreaterThanOrEqual(0);
-		expect(calls.indexOf("pull ")).toBeLessThan(
-			calls.indexOf("service update"),
-		);
-	});
+			expect(result.status).toBe(0);
+			expect(result.stdout).toContain("Updating AgentHits Dokploy");
+			expect(calls).toContain("service update");
+			expect(calls).toContain("--update-failure-action rollback");
+			expect(calls.indexOf("pull ")).toBeGreaterThanOrEqual(0);
+			expect(calls.indexOf("pull ")).toBeLessThan(
+				calls.indexOf("service update"),
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
 
-	it("pulls before refreshing metadata when only service env is stale", () => {
-		const { result, calls } = runUpdateScript({
-			currentDigest: "sha256:index",
-			latestIndexDigest: "sha256:index",
-			latestPlatformDigest: "sha256:platform",
-			serviceEnv: [
-				"RELEASE_TAG=agenthits-dev",
-				"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
-				"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_159+old",
-			],
-		});
+	it(
+		"pulls before refreshing metadata when only service env is stale",
+		() => {
+			const { result, calls } = runUpdateScript({
+				currentDigest: "sha256:index",
+				latestIndexDigest: "sha256:index",
+				latestPlatformDigest: "sha256:platform",
+				serviceEnv: [
+					"RELEASE_TAG=agenthits-dev",
+					"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+					"DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_159+old",
+				],
+			});
 
-		expect(result.status).toBe(0);
-		expect(result.stdout).toContain("Updating AgentHits Dokploy");
-		expect(calls).toContain("service update");
-		expect(calls).toContain(
-			"--env-add DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_160+latest",
-		);
-		expect(calls.indexOf("pull ")).toBeGreaterThanOrEqual(0);
-		expect(calls.indexOf("pull ")).toBeLessThan(
-			calls.indexOf("service update"),
-		);
-	});
+			expect(result.status).toBe(0);
+			expect(result.stdout).toContain("Updating AgentHits Dokploy");
+			expect(calls).toContain("service update");
+			expect(calls).toContain(
+				"--env-add DOKPLOY_FORK_VERSION=off_v0.29.8/Fork_160+latest",
+			);
+			expect(calls.indexOf("pull ")).toBeGreaterThanOrEqual(0);
+			expect(calls.indexOf("pull ")).toBeLessThan(
+				calls.indexOf("service update"),
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
 
-	it("leaves the running service untouched when the image cannot be pulled", () => {
-		const { result, calls } = runUpdateScript({
-			currentDigest: "sha256:old",
-			latestIndexDigest: "sha256:index",
-			latestPlatformDigest: "sha256:platform",
-			failPull: true,
-			serviceEnv: [
-				"RELEASE_TAG=agenthits-dev",
-				"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
-			],
-		});
+	it(
+		"leaves the running service untouched when the image cannot be pulled",
+		() => {
+			const { result, calls } = runUpdateScript({
+				currentDigest: "sha256:old",
+				latestIndexDigest: "sha256:index",
+				latestPlatformDigest: "sha256:platform",
+				failPull: true,
+				serviceEnv: [
+					"RELEASE_TAG=agenthits-dev",
+					"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+				],
+			});
 
-		expect(result.status).not.toBe(0);
-		expect(result.stderr).toContain("left unchanged");
-		expect(calls.match(/^pull /gm)).toHaveLength(3);
-		expect(calls).not.toContain("service update");
-	});
+			expect(result.status).not.toBe(0);
+			expect(result.stderr).toContain("left unchanged");
+			expect(calls.match(/^pull /gm)).toHaveLength(3);
+			expect(calls).not.toContain("service update");
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"fails and reports the swarm state when the panel update is rolled back",
+		() => {
+			const { result, calls } = runUpdateScript({
+				currentDigest: "sha256:old",
+				latestIndexDigest: "sha256:index",
+				latestPlatformDigest: "sha256:platform",
+				updateState: "rollback_completed",
+				serviceEnv: [
+					"RELEASE_TAG=agenthits-dev",
+					"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+				],
+			});
+
+			expect(result.status).not.toBe(0);
+			expect(result.stderr).toContain("rollback_completed");
+			expect(calls).toContain("service update --detach");
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
 
 	it("keeps install-agenthits.sh update as a compatibility entrypoint", () => {
 		const installer = readFileSync(installerScript, "utf8");

@@ -4,12 +4,16 @@ set -euo pipefail
 DOKPLOY_IMAGE="${DOKPLOY_IMAGE:-ghcr.io/agenthits/dokploy:agenthits-dev}"
 DOKPLOY_RELEASE_TAG="${DOKPLOY_RELEASE_TAG:-agenthits-dev}"
 DOKPLOY_OFFICIAL_VERSION="${DOKPLOY_OFFICIAL_VERSION:-v0.29.8}"
-TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.7.5}"
-POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18.4}"
-REDIS_IMAGE="${REDIS_IMAGE:-redis:8.8.0}"
+TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.7.14}"
+POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18.6}"
+REDIS_IMAGE="${REDIS_IMAGE:-redis:8.10.2}"
 POSTGRES_DATA_TARGET="${POSTGRES_DATA_TARGET:-}"
 AGENTHITS_SCRIPT_BASE_URL="${AGENTHITS_SCRIPT_BASE_URL:-https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev}"
-DOCKER_VERSION="${DOCKER_VERSION:-28.5.0}"
+DOCKER_VERSION="${DOCKER_VERSION:-29.8.2}"
+NIXPACKS_VERSION="${NIXPACKS_VERSION:-1.41.0}"
+RAILPACK_VERSION="${RAILPACK_VERSION:-0.40.1}"
+BUILDPACKS_VERSION="${BUILDPACKS_VERSION:-0.40.9}"
+RCLONE_VERSION="${RCLONE_VERSION:-1.75.1}"
 DOKPLOY_MACHINE="${DOKPLOY_MACHINE:-dokploy}"
 DOKPLOY_MACHINE_DISTRO="${DOKPLOY_MACHINE_DISTRO:-ubuntu:noble}"
 PASSTHROUGH_VARS=(
@@ -26,8 +30,39 @@ PASSTHROUGH_VARS=(
 	DOCKER_SWARM_INIT_ARGS
 	ADVERTISE_ADDR
 	PUBLIC_IP
+	DOKPLOY_SERVER_HARDENING
+	HARDEN_SSH
+	HARDEN_UFW
+	HARDEN_FAIL2BAN
+	DOCKER_ENGINE_UPGRADE
+	DOKPLOY_BACKUP_DIR
+	DOKPLOY_HEALTH_TIMEOUT
+	DOKPLOY_DOCKER_VERIFY_TIMEOUT
+	DOKPLOY_HEALTH_INTERVAL
+	DOKPLOY_TRAEFIK_SETTLE
+	AGENTHITS_PULL_RETRY_DELAY
 )
 ORB=""
+HARDEN_UFW="${HARDEN_UFW:-0}"
+HARDEN_SSH="${HARDEN_SSH:-0}"
+HARDEN_FAIL2BAN="${HARDEN_FAIL2BAN:-0}"
+DOCKER_ENGINE_UPGRADE="${DOCKER_ENGINE_UPGRADE:-0}"
+DOKPLOY_BACKUP_DIR="${DOKPLOY_BACKUP_DIR:-/var/backups/dokploy}"
+DOKPLOY_HEALTH_TIMEOUT="${DOKPLOY_HEALTH_TIMEOUT:-240}"
+DOKPLOY_DOCKER_VERIFY_TIMEOUT="${DOKPLOY_DOCKER_VERIFY_TIMEOUT:-120}"
+DOKPLOY_HEALTH_INTERVAL="${DOKPLOY_HEALTH_INTERVAL:-3}"
+DOKPLOY_TRAEFIK_SETTLE="${DOKPLOY_TRAEFIK_SETTLE:-10}"
+AGENTHITS_PULL_RETRY_DELAY="${AGENTHITS_PULL_RETRY_DELAY:-10}"
+DOKPLOY_APT_SOURCES_DIR="${DOKPLOY_APT_SOURCES_DIR:-/etc/apt/sources.list.d}"
+DOKPLOY_OS_RELEASE="${DOKPLOY_OS_RELEASE:-/etc/os-release}"
+DOCKER_PACKAGE_VERSION=""
+DOCKER_ENGINE_UPGRADE_NEEDED=0
+DOCKER_ENGINE_PREVIOUS_VERSION=""
+DOCKER_ROLLBACK_DIR=""
+DOCKER_ROLLBACK_DIR_CREATED=0
+TRAEFIK_EXTRA_NETWORKS=""
+TRAEFIK_OLD_IMAGE=""
+TRAEFIK_OLD_STOPPED=0
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -68,7 +103,8 @@ create_secret_if_missing() {
 }
 
 get_postgres_major_version() {
-	local tag="${POSTGRES_IMAGE##*:}"
+	local image="${1:-$POSTGRES_IMAGE}"
+	local tag="${image##*:}"
 	tag="${tag%%-*}"
 	tag="${tag%%.*}"
 
@@ -241,11 +277,7 @@ os_release_value() {
 	)
 }
 
-ensure_docker_running() {
-	if docker info >/dev/null 2>&1; then
-		return 0
-	fi
-
+start_docker_service() {
 	if command_exists systemctl && [ -d /run/systemd/system ]; then
 		systemctl enable --now docker
 	elif command_exists rc-service; then
@@ -254,6 +286,14 @@ ensure_docker_running() {
 	elif command_exists service; then
 		service docker start
 	fi
+}
+
+ensure_docker_running() {
+	if docker info >/dev/null 2>&1; then
+		return 0
+	fi
+
+	start_docker_service
 
 	local i=0
 	while [ "$i" -lt 30 ]; do
@@ -332,6 +372,72 @@ install_docker_if_missing() {
 	esac
 
 	ensure_docker_running
+}
+
+tool_version_matches() {
+	local expected="$1"
+	shift
+	command_exists "$1" && "$@" 2>/dev/null | grep -q -- "$expected"
+}
+
+# A failed download must stop the install: piping the script into bash, or running it
+# inside $(...), runs nothing when the download fails and still reports success.
+run_install_script() {
+	local url="$1"
+	local label="$2"
+	local assignment="$3"
+	local script=""
+	script="$(mktemp)"
+	if ! curl -fsSL "$url" -o "$script" || [ ! -s "$script" ] || ! bash -n "$script"; then
+		rm -f "$script"
+		echo "Error: the $label install script could not be downloaded or checked; $label was not installed." >&2
+		exit 1
+	fi
+	if ! env "$assignment" bash "$script"; then
+		rm -f "$script"
+		echo "Error: the $label install script failed." >&2
+		exit 1
+	fi
+	rm -f "$script"
+}
+
+install_toolchain() {
+	local arch="" pack_suffix=""
+	case "$(uname -m)" in
+		x86_64 | amd64)
+			arch=amd64
+			;;
+		aarch64 | arm64)
+			arch=arm64
+			pack_suffix="-arm64"
+			;;
+		*)
+			echo "Unsupported architecture for the toolchain: $(uname -m)" >&2
+			exit 1
+			;;
+	esac
+
+	if ! tool_version_matches "$NIXPACKS_VERSION" nixpacks --version; then
+		run_install_script https://nixpacks.com/install.sh Nixpacks "NIXPACKS_VERSION=$NIXPACKS_VERSION"
+	fi
+	if ! tool_version_matches "$RAILPACK_VERSION" railpack --version; then
+		run_install_script https://railpack.com/install.sh Railpack "RAILPACK_VERSION=$RAILPACK_VERSION"
+	fi
+	if ! tool_version_matches "$BUILDPACKS_VERSION" pack --version; then
+		curl -sSL "https://github.com/buildpacks/pack/releases/download/v${BUILDPACKS_VERSION}/pack-v${BUILDPACKS_VERSION}-linux${pack_suffix}.tgz" | tar -C /usr/local/bin/ --no-same-owner -xz pack
+	fi
+	if ! tool_version_matches "$RCLONE_VERSION" rclone --version; then
+		if ! command_exists unzip; then
+			apt-get update -qq
+			DEBIAN_FRONTEND=noninteractive apt-get install -y -qq unzip >/dev/null
+		fi
+		local rclone_dir=""
+		rclone_dir="$(mktemp -d)"
+		curl -fsSL "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-${arch}.zip" -o "$rclone_dir/rclone.zip"
+		unzip -q "$rclone_dir/rclone.zip" -d "$rclone_dir"
+		install -m 0755 "$rclone_dir/rclone-v${RCLONE_VERSION}-linux-${arch}/rclone" /usr/bin/rclone
+		rm -rf "$rclone_dir"
+	fi
 }
 
 has_amd64_binfmt() {
@@ -619,6 +725,15 @@ install_on_macos() {
 	echo "Shell in the machine: $ORB -m $DOKPLOY_MACHINE -u root"
 }
 
+harden_on_macos() {
+	if ! find_orb || ! orb_machine_exists; then
+		echo "OrbStack machine '$DOKPLOY_MACHINE' does not exist. Run this script with 'install' first." >&2
+		exit 1
+	fi
+	"$ORB" start "$DOKPLOY_MACHINE" >/dev/null 2>&1 || true
+	run_in_orb_machine harden
+}
+
 update_on_macos() {
 	if ! find_orb || ! orb_machine_exists; then
 		echo "OrbStack machine '$DOKPLOY_MACHINE' does not exist. Run this script with 'install' first." >&2
@@ -628,12 +743,154 @@ update_on_macos() {
 	run_in_orb_machine update
 }
 
+# Hardening flags (opt-in). They close the findings from Dokploy's
+# Setup Server > Security tab: UFW, SSH password login and Fail2Ban.
+ssh_listen_port() {
+	local port=""
+	port="$(sshd -T 2>/dev/null | awk '$1 == "port" { print $2; exit }')"
+	echo "${port:-22}"
+}
+
+require_root_public_key() {
+	local keys_file=/root/.ssh/authorized_keys
+	if [ ! -s "$keys_file" ] || ! ssh-keygen -l -f "$keys_file" >/dev/null 2>&1; then
+		echo "Refusing to turn off password login: $keys_file has no valid public key." >&2
+		echo "Add your public key to that file first, then run again." >&2
+		exit 1
+	fi
+}
+
+harden_ssh_keys_only() {
+	require_root_public_key
+
+	# The Security tab reads the main sshd_config, not drop-ins, and sshd keeps
+	# the first value it sees, so the options go on the first line of that file.
+	local config=/etc/ssh/sshd_config
+	local backup=/etc/ssh/sshd_config.agenthits-backup
+	if [ ! -f "$backup" ]; then
+		cp -p "$config" "$backup"
+	fi
+	local option=""
+	local key=""
+	for option in "PubkeyAuthentication yes" "PasswordAuthentication no" "KbdInteractiveAuthentication no" "PermitRootLogin prohibit-password" "UsePAM no"; do
+		key="${option%% *}"
+		sed -i -E "/^[#[:space:]]*${key}[[:space:]]/Id" "$config"
+		sed -i "1i ${option}" "$config"
+	done
+	if ! sshd -t; then
+		cp -p "$backup" "$config"
+		echo "sshd rejected the hardened config, the original was restored." >&2
+		exit 1
+	fi
+	systemctl reload ssh 2>/dev/null || systemctl reload sshd
+	echo "SSH: password login is off, keys only."
+}
+
+harden_ufw() {
+	if ! command_exists apt-get; then
+		echo "UFW: the --ufw flag supports Debian and Ubuntu only; skipped." >&2
+		return 0
+	fi
+
+	DEBIAN_FRONTEND=noninteractive apt-get install -y ufw >/dev/null
+	local ssh_port=""
+	ssh_port="$(ssh_listen_port)"
+
+	ufw default deny incoming >/dev/null
+	ufw default allow outgoing >/dev/null
+	# ufw drops forwarded traffic by default, which cuts container networking.
+	sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
+	# SSH must be allowed before enabling, or the next login fails.
+	ufw allow "${ssh_port}/tcp" comment 'SSH' >/dev/null
+	ufw allow 80/tcp comment 'HTTP' >/dev/null
+	ufw allow 443/tcp comment 'HTTPS' >/dev/null
+	ufw allow 443/udp comment 'HTTP/3' >/dev/null
+	ufw allow 3000/tcp comment 'Dokploy panel' >/dev/null
+	ufw --force enable >/dev/null
+	echo "UFW: enabled. Incoming is denied except SSH (${ssh_port}), 80, 443 and 3000."
+}
+
+harden_fail2ban() {
+	if ! command_exists apt-get; then
+		echo "Fail2Ban: the --fail2ban flag supports Debian and Ubuntu only; skipped." >&2
+		return 0
+	fi
+
+	DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban >/dev/null
+	if [ ! -f /etc/fail2ban/jail.local ]; then
+		cat >/etc/fail2ban/jail.local <<'EOF'
+[sshd]
+enabled = true
+backend = auto
+mode = aggressive
+maxretry = 5
+findtime = 10m
+bantime = 1h
+EOF
+	fi
+	systemctl enable --now fail2ban >/dev/null 2>&1
+	systemctl restart fail2ban
+	echo "Fail2Ban: sshd jail is active in aggressive mode."
+}
+
+hardening_requested() {
+	[ "$HARDEN_SSH" = "1" ] || [ "$HARDEN_UFW" = "1" ] || [ "$HARDEN_FAIL2BAN" = "1" ]
+}
+
+traefik_version_from_image() {
+	case "$1" in
+		traefik:v*) echo "${1#traefik:v}" ;;
+	esac
+}
+
+# The panel hardens every server it sets up. An explicit DOKPLOY_SERVER_HARDENING
+# wins; otherwise it follows the host flags so one install flag covers both.
+panel_server_hardening() {
+	if [ -n "${DOKPLOY_SERVER_HARDENING:-}" ]; then
+		echo "$DOKPLOY_SERVER_HARDENING"
+		return 0
+	fi
+	local items=""
+	if [ "$HARDEN_SSH" = "1" ]; then
+		items="ssh"
+	fi
+	if [ "$HARDEN_UFW" = "1" ]; then
+		items="${items:+$items,}ufw"
+	fi
+	if [ "$HARDEN_FAIL2BAN" = "1" ]; then
+		items="${items:+$items,}fail2ban"
+	fi
+	echo "$items"
+}
+
+apply_hardening() {
+	if [ "$HARDEN_SSH" = "1" ]; then
+		if command_exists sshd; then
+			harden_ssh_keys_only
+		else
+			echo "SSH: no sshd on this host, skipped."
+		fi
+	fi
+	if [ "$HARDEN_UFW" = "1" ]; then
+		harden_ufw
+	fi
+	if [ "$HARDEN_FAIL2BAN" = "1" ]; then
+		harden_fail2ban
+	fi
+}
+
 install_agenthits_dokploy() {
 	require_root_linux_host
+	# Check the key before anything is changed, so a missing key cannot
+	# leave a half-installed server behind.
+	if [ "$HARDEN_SSH" = "1" ] && command_exists sshd; then
+		require_root_public_key
+	fi
 	require_free_port 80
 	require_free_port 443
 	require_free_port 3000
 	install_docker_if_missing
+	install_toolchain
 	ensure_amd64_support
 
 	local endpoint_mode=""
@@ -666,7 +923,7 @@ install_agenthits_dokploy() {
 	docker network create --driver overlay --attachable dokploy-network
 
 	mkdir -p /etc/dokploy
-	chmod 777 /etc/dokploy
+	chmod 755 /etc/dokploy
 	create_default_traefik_files
 
 	create_secret_if_missing dokploy_postgres_password "$(generate_random_secret)"
@@ -680,6 +937,10 @@ install_agenthits_dokploy() {
 	if [ -n "${DOKPLOY_FORK_VERSION:-}" ]; then
 		fork_version_env_args=(-e "DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION")
 	fi
+	local panel_hardening=""
+	panel_hardening="$(panel_server_hardening)"
+	local traefik_version=""
+	traefik_version="$(traefik_version_from_image "$TRAEFIK_IMAGE")"
 
 	docker service create \
 		--name dokploy-postgres \
@@ -718,6 +979,8 @@ install_agenthits_dokploy() {
 		--constraint 'node.role == manager' \
 		$endpoint_mode \
 		-e RELEASE_TAG="$DOKPLOY_RELEASE_TAG" \
+		-e DOKPLOY_SERVER_HARDENING="$panel_hardening" \
+		-e TRAEFIK_VERSION="$traefik_version" \
 		-e DOKPLOY_OFFICIAL_VERSION="$DOKPLOY_OFFICIAL_VERSION" \
 		"${fork_version_env_args[@]}" \
 		-e ADVERTISE_ADDR="$advertise_addr" \
@@ -728,18 +991,9 @@ install_agenthits_dokploy() {
 		-e DEPLOYMENTS_SIGNING_KEY_FILE=/run/secrets/dokploy_deployments_signing_key \
 		"$DOKPLOY_IMAGE"
 
-	docker run -d \
-		--name dokploy-traefik \
-		--restart always \
-		-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
-		-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
-		-v /var/run/docker.sock:/var/run/docker.sock:ro \
-		-p 80:80/tcp \
-		-p 443:443/tcp \
-		-p 443:443/udp \
-		"$TRAEFIK_IMAGE"
+	run_dokploy_traefik "$TRAEFIK_IMAGE"
 
-	docker network connect dokploy-network dokploy-traefik
+	apply_hardening
 
 	local public_ip="${PUBLIC_IP:-${ADVERTISE_ADDR:-$(get_public_ip)}}"
 	local formatted_addr
@@ -752,35 +1006,602 @@ install_agenthits_dokploy() {
 	echo "http://${formatted_addr}:3000"
 }
 
-update_agenthits_dokploy() {
+download_with_retry() {
+	local attempt=1
+	while [ "$attempt" -le 3 ]; do
+		if "$@"; then
+			return 0
+		fi
+		if [ "$attempt" -lt 3 ]; then
+			sleep "$AGENTHITS_PULL_RETRY_DELAY"
+		fi
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+
+# Docker's packages are pinned by version string; the epoch and the
+# distribution suffix come from the repository.
+docker_package_version() {
+	apt-cache madison docker-ce | awk -F'|' '{ gsub(/ /, "", $2); print $2 }' | grep -m1 -E "^([0-9]+:)?${DOCKER_VERSION//./\\.}-" || true
+}
+
+docker_engine_version() {
+	docker version --format '{{.Server.Version}}' 2>/dev/null || true
+}
+
+docker_package_installed_version() {
+	if [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = "installed" ]; then
+		dpkg-query -W -f='${Version}' "$1"
+	fi
+}
+
+docker_package_candidate_version() {
+	apt-cache policy "$1" 2>/dev/null | awk '/^  Candidate:/ { print $2; exit }'
+}
+
+# Packages from another release would replace the Engine with ones built for it.
+docker_source_codenames() {
+	local file=""
+	for file in "$DOKPLOY_APT_SOURCES_DIR"/*.list; do
+		[ -f "$file" ] || continue
+		awk '/download\.docker\.com/ && !/^[[:space:]]*#/ { for (i = 2; i < NF; i++) if ($i ~ /download\.docker\.com/) { print $(i + 1); break } }' "$file"
+	done
+	for file in "$DOKPLOY_APT_SOURCES_DIR"/*.sources; do
+		[ -f "$file" ] || continue
+		awk 'BEGIN { RS = ""; FS = "\n" } /download\.docker\.com/ { for (i = 1; i <= NF; i++) if ($i ~ /^Suites:/) { split($i, suite, /[ \t]+/); print suite[2] } }' "$file"
+	done
+}
+
+check_docker_repo_codename() {
+	local repo_codenames=""
+	local repo_codename=""
+	local host_codename=""
+	repo_codenames="$(docker_source_codenames)"
+	if [ -z "$repo_codenames" ]; then
+		return 0
+	fi
+	# shellcheck disable=SC1090
+	host_codename="$( (. "$DOKPLOY_OS_RELEASE" && printf '%s' "${VERSION_CODENAME:-}") 2>/dev/null || true)"
+	if [ -z "$host_codename" ]; then
+		echo "Pre-download failed: VERSION_CODENAME is not set in $DOKPLOY_OS_RELEASE, so the Docker apt repository cannot be checked. Nothing was changed." >&2
+		exit 1
+	fi
+	for repo_codename in $repo_codenames; do
+		if [ "$repo_codename" != "$host_codename" ]; then
+			echo "Pre-download failed: the Docker apt repository in $DOKPLOY_APT_SOURCES_DIR is for $repo_codename, but this host runs $host_codename. Point it at $host_codename yourself and run the update again. Nothing was changed." >&2
+			exit 1
+		fi
+	done
+}
+
+# Saved before the Engine is touched, so a failed upgrade can install them back.
+remove_docker_rollback_dir() {
+	if [ "$DOCKER_ROLLBACK_DIR_CREATED" = "1" ]; then
+		rm -rf "$DOCKER_ROLLBACK_DIR"
+		DOCKER_ROLLBACK_DIR_CREATED=0
+	fi
+}
+
+save_docker_rollback_packages() {
+	local package=""
+	local installed=""
+	local candidate=""
+	if [ -z "$(docker_package_installed_version docker-ce)" ]; then
+		echo "Pre-download failed: current Docker packages for rollback (docker-ce is not installed). Nothing was changed." >&2
+		exit 1
+	fi
+	DOCKER_ROLLBACK_DIR="$DOKPLOY_BACKUP_DIR/docker-rollback-$(date -u +%Y%m%dT%H%M%SZ)"
+	mkdir -p "$DOKPLOY_BACKUP_DIR"
+	chmod 700 "$DOKPLOY_BACKUP_DIR"
+	if ! (umask 077 && mkdir "$DOCKER_ROLLBACK_DIR"); then
+		echo "Pre-download failed: current Docker packages for rollback. Nothing was changed." >&2
+		exit 1
+	fi
+	DOCKER_ROLLBACK_DIR_CREATED=1
+	for package in docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras; do
+		installed="$(docker_package_installed_version "$package")"
+		if [ -z "$installed" ]; then
+			continue
+		fi
+		case "$package" in
+			docker-ce | docker-ce-cli) ;;
+			*)
+				candidate="$(docker_package_candidate_version "$package")"
+				if [ "$candidate" = "$installed" ]; then
+					continue
+				fi
+				;;
+		esac
+		if ! (umask 077 && cd "$DOCKER_ROLLBACK_DIR" && apt-get download "$package=$installed"); then
+			remove_docker_rollback_dir
+			echo "Pre-download failed: current Docker packages for rollback. Nothing was changed." >&2
+			exit 1
+		fi
+	done
+}
+
+predownload_docker_packages() {
+	if ! command_exists apt-get; then
+		echo "Pre-download failed: DOCKER_ENGINE_UPGRADE=1 needs apt-get on this host. Nothing was changed." >&2
+		exit 1
+	fi
+	check_docker_repo_codename
+	if ! download_with_retry apt-get update -qq; then
+		echo "Pre-download failed: the apt package lists could not be refreshed. Nothing was changed." >&2
+		exit 1
+	fi
+	DOCKER_PACKAGE_VERSION="$(docker_package_version)"
+	if [ -z "$DOCKER_PACKAGE_VERSION" ]; then
+		echo "Pre-download failed: Docker $DOCKER_VERSION is not in the apt sources. Nothing was changed." >&2
+		exit 1
+	fi
+	save_docker_rollback_packages
+	if ! download_with_retry apt-get install -y -qq --download-only "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin; then
+		remove_docker_rollback_dir
+		echo "Pre-download failed: the Docker packages. Nothing was changed." >&2
+		exit 1
+	fi
+}
+
+# update.sh runs from this checkout when it is present; otherwise it is
+# downloaded here, so the panel step cannot fail on a download mid-update.
+resolve_panel_update_script() {
 	local script_dir=""
 	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-
 	if [ -f "$script_dir/update.sh" ]; then
-		bash "$script_dir/update.sh"
-		return
+		PANEL_UPDATE_SCRIPT="$script_dir/update.sh"
+		PANEL_UPDATE_IS_TEMP=0
+		return 0
+	fi
+	PANEL_UPDATE_SCRIPT="$(mktemp)"
+	PANEL_UPDATE_IS_TEMP=1
+	if ! download_with_retry curl -fsSL "$AGENTHITS_SCRIPT_BASE_URL/update.sh" -o "$PANEL_UPDATE_SCRIPT"; then
+		rm -f "$PANEL_UPDATE_SCRIPT"
+		echo "Pre-download failed: update.sh. Nothing was changed." >&2
+		exit 1
+	fi
+}
+
+# The one pre-download gate of the operator update. Every image and package
+# the update needs is local before any service, container or daemon is touched.
+predownload_update_artifacts() {
+	resolve_panel_update_script
+	local image=""
+	for image in "$POSTGRES_IMAGE" "$REDIS_IMAGE" "$TRAEFIK_IMAGE" "$DOKPLOY_IMAGE"; do
+		if ! download_with_retry docker pull "$image"; then
+			echo "Pre-download failed: $image. Nothing was changed." >&2
+			exit 1
+		fi
+	done
+	DOCKER_ENGINE_UPGRADE_NEEDED=0
+	DOCKER_ENGINE_PREVIOUS_VERSION="$(docker_engine_version)"
+	if [ "$DOCKER_ENGINE_UPGRADE" = "1" ] && [ "$DOCKER_ENGINE_PREVIOUS_VERSION" != "$DOCKER_VERSION" ]; then
+		DOCKER_ENGINE_UPGRADE_NEEDED=1
+		predownload_docker_packages
+	fi
+}
+
+image_without_digest() {
+	echo "${1%%@*}"
+}
+
+service_image() {
+	docker service inspect "$1" --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null || true
+}
+
+# The running task container of a swarm service; with an image, only one that runs it.
+task_container() {
+	local service="$1"
+	local image="${2:-}"
+	if [ -n "$image" ]; then
+		docker ps -q --no-trunc --filter "label=com.docker.swarm.service.name=$service" --filter status=running --filter "ancestor=$(image_without_digest "$image")" | head -n1 || true
+	else
+		docker ps -q --no-trunc --filter "label=com.docker.swarm.service.name=$service" --filter status=running | head -n1 || true
+	fi
+}
+
+redis_ready() {
+	local container=""
+	container="$(task_container dokploy-redis "$REDIS_IMAGE")"
+	[ -n "$container" ] && [ "$(docker exec "$container" redis-cli ping 2>/dev/null)" = "PONG" ]
+}
+
+postgres_ready() {
+	local container=""
+	container="$(task_container dokploy-postgres "$POSTGRES_IMAGE")"
+	[ -n "$container" ] && docker exec "$container" pg_isready -U dokploy -d dokploy >/dev/null 2>&1
+}
+
+panel_ready() {
+	local container=""
+	container="$(task_container dokploy)"
+	[ -n "$container" ] && [ "$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null)" = "healthy" ]
+}
+
+docker_daemon_running() {
+	docker info >/dev/null 2>&1
+}
+
+swarm_node_active() {
+	[ "$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null)" = "active" ]
+}
+
+traefik_running() {
+	[ "$(docker inspect --format '{{.State.Running}}' dokploy-traefik 2>/dev/null)" = "true" ]
+}
+
+docker_stack_ready() {
+	[ "$(docker_engine_version)" = "$1" ] && swarm_node_active && panel_ready && postgres_ready && redis_ready && traefik_running
+}
+
+wait_within() {
+	local seconds="$1"
+	local check="$2"
+	shift 2
+	local deadline=$(($(date +%s) + seconds))
+	until "$check" "$@"; do
+		if [ "$(date +%s)" -ge "$deadline" ]; then
+			return 1
+		fi
+		sleep "$DOKPLOY_HEALTH_INTERVAL"
+	done
+}
+
+# Swarm reports a failed update as paused or rolled back. Those states are read
+# only once the update is registered (Version.Index has moved), so a state left
+# over from an earlier update is not taken for this one.
+swap_swarm_service() {
+	local service="$1"
+	local image="$2"
+	local ready="$3"
+	local previous_image=""
+	local previous_index=""
+	local index=""
+	local state=""
+	previous_image="$(service_image "$service")"
+	previous_index="$(docker service inspect "$service" --format '{{.Version.Index}}' 2>/dev/null || true)"
+
+	if ! docker service update --detach --update-order stop-first --update-failure-action rollback --image "$image" "$service" >/dev/null; then
+		echo "Error: docker service update was refused for $service; it was not changed." >&2
+		exit 1
 	fi
 
-	# Not a RETURN trap: it stays set after this function and fires again
-	# when main returns, where update_script is unbound under set -u.
-	local update_script=""
-	update_script="$(mktemp)"
-	curl -fsSL "$AGENTHITS_SCRIPT_BASE_URL/update.sh" -o "$update_script"
+	local deadline=$(($(date +%s) + DOKPLOY_HEALTH_TIMEOUT))
+	while :; do
+		index="$(docker service inspect "$service" --format '{{.Version.Index}}' 2>/dev/null || true)"
+		state="$(docker service inspect "$service" --format '{{.UpdateStatus.State}}' 2>/dev/null || true)"
+		if [ "${index:-0}" -gt "${previous_index:-0}" ]; then
+			case "$state" in
+				rollback_*)
+					echo "Error: $service did not start on $image (swarm state: $state). Previous image: $previous_image. Check with: docker service ps $service --no-trunc" >&2
+					exit 1
+					;;
+				paused)
+					echo "Error: $service is paused after its update to $image (swarm state: paused). Previous image: $previous_image. Roll back with: docker service update --image $previous_image $service" >&2
+					exit 1
+					;;
+			esac
+			if [ "$state" = "completed" ] && "$ready"; then
+				echo "$service runs $image (previous image kept: $previous_image)"
+				return 0
+			fi
+		fi
+		if [ "$(date +%s)" -ge "$deadline" ]; then
+			echo "Error: $service was not ready on $image within $DOKPLOY_HEALTH_TIMEOUT seconds. Roll back with: docker service update --image $previous_image $service" >&2
+			exit 1
+		fi
+		sleep "$DOKPLOY_HEALTH_INTERVAL"
+	done
+}
+
+backup_postgres() {
+	local container=""
+	local file=""
+	container="$(task_container dokploy-postgres)"
+	if [ -z "$container" ]; then
+		echo "Error: no running dokploy-postgres task to back up. Nothing was changed." >&2
+		exit 1
+	fi
+	# The dump holds the data and the role password hashes, so it stays private.
+	mkdir -p "$DOKPLOY_BACKUP_DIR"
+	chmod 700 "$DOKPLOY_BACKUP_DIR"
+	file="$DOKPLOY_BACKUP_DIR/postgres-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+	if ! (umask 077 && docker exec "$container" pg_dumpall -U dokploy | gzip >"$file") || [ ! -s "$file" ]; then
+		rm -f "$file"
+		echo "Error: the Postgres backup failed. Nothing was changed." >&2
+		exit 1
+	fi
+	echo "Postgres backup written to $file"
+}
+
+# The networks the running Traefik is attached to, minus the two that are handled
+# separately: bridge is the default and dokploy-network is always connected.
+traefik_extra_networks() {
+	local networks=""
+	local network=""
+	networks="$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' dokploy-traefik 2>/dev/null || true)"
+	for network in $networks; do
+		case "$network" in
+			bridge | dokploy-network) ;;
+			*) echo "$network" ;;
+		esac
+	done
+}
+
+# Created but not started, with the given restart policy, and connected to all its
+# networks before it starts, so the time without a running Traefik stays short.
+create_dokploy_traefik() {
+	local image="$1"
+	local restart="$2"
+	docker create \
+		--name dokploy-traefik \
+		--restart "$restart" \
+		-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
+		-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
+		-v /var/run/docker.sock:/var/run/docker.sock:ro \
+		-p 80:80/tcp \
+		-p 443:443/tcp \
+		-p 443:443/udp \
+		"$image" >/dev/null || return 1
+
+	docker network connect dokploy-network dokploy-traefik || return 1
+	local network=""
+	for network in $TRAEFIK_EXTRA_NETWORKS; do
+		if docker network inspect "$network" >/dev/null 2>&1; then
+			docker network connect "$network" dokploy-traefik || return 1
+		fi
+	done
+}
+
+run_dokploy_traefik() {
+	create_dokploy_traefik "$1" always
+	docker start dokploy-traefik >/dev/null
+}
+
+traefik_check_running() {
+	[ "$(docker inspect --format '{{.State.Running}} {{.RestartCount}}' dokploy-traefik 2>/dev/null)" = "true 0" ]
+}
+
+# Names the step that failed. Once the old container is stopped, it is created again
+# from its image with the same networks and started, before the script exits.
+traefik_wait_settled() {
+	local second=0
+	while [ "$second" -lt "$DOKPLOY_TRAEFIK_SETTLE" ]; do
+		sleep 1
+		if ! traefik_check_running; then
+			return 1
+		fi
+		second=$((second + 1))
+	done
+	traefik_check_running
+}
+
+traefik_restore() {
+	local failed_step="$1"
+	trap - HUP INT TERM
+	echo "Error: Traefik update failed while $failed_step." >&2
+	if [ "$TRAEFIK_OLD_STOPPED" = "1" ]; then
+		echo "Restoring the previous Traefik container from $TRAEFIK_OLD_IMAGE." >&2
+		docker rm -f dokploy-traefik >/dev/null 2>&1 || true
+		if create_dokploy_traefik "$TRAEFIK_OLD_IMAGE" no && docker update --restart always dokploy-traefik >/dev/null && docker start dokploy-traefik >/dev/null && traefik_check_running; then
+			echo "The previous Traefik container is running again." >&2
+		else
+			echo "Error: restoring the previous Traefik container failed as well. Check with: docker ps -a --filter name=dokploy-traefik" >&2
+		fi
+	fi
+	exit 1
+}
+
+swap_dokploy_traefik() {
+	local current=""
+	current="$(docker inspect --format '{{.Config.Image}}' dokploy-traefik 2>/dev/null || true)"
+	if [ "$(image_without_digest "$current")" = "$(image_without_digest "$TRAEFIK_IMAGE")" ]; then
+		echo "Traefik already runs $TRAEFIK_IMAGE"
+		return 0
+	fi
+
+	local existed=0
+	if docker inspect dokploy-traefik >/dev/null 2>&1; then
+		existed=1
+	fi
+	TRAEFIK_OLD_IMAGE="$current"
+	TRAEFIK_EXTRA_NETWORKS="$(traefik_extra_networks)"
+	TRAEFIK_OLD_STOPPED=0
+	trap 'traefik_restore "being interrupted"' HUP INT TERM
+	docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
+	if [ "$existed" = "1" ]; then
+		if ! docker stop dokploy-traefik >/dev/null; then
+			traefik_restore "stopping the running Traefik container"
+		fi
+		TRAEFIK_OLD_STOPPED=1
+		if ! docker rm dokploy-traefik >/dev/null; then
+			traefik_restore "removing the stopped Traefik container"
+		fi
+	fi
+	if ! create_dokploy_traefik "$TRAEFIK_IMAGE" no; then
+		traefik_restore "creating the new Traefik container and connecting its networks"
+	fi
+	if ! docker start dokploy-traefik >/dev/null; then
+		traefik_restore "starting the new Traefik container"
+	fi
+	if ! traefik_wait_settled; then
+		traefik_restore "checking the new Traefik container (running, with no restarts)"
+	fi
+	if ! docker update --restart always dokploy-traefik >/dev/null; then
+		traefik_restore "setting the restart policy of the new Traefik container"
+	fi
+	trap - HUP INT TERM
+	echo "Traefik runs $TRAEFIK_IMAGE"
+}
+
+require_update_services() {
+	local service=""
+	for service in dokploy dokploy-postgres dokploy-redis; do
+		if ! docker service inspect "$service" >/dev/null 2>&1; then
+			echo "Error: Docker service '$service' was not found. Run install first." >&2
+			exit 1
+		fi
+	done
+	if ! docker inspect dokploy-traefik >/dev/null 2>&1; then
+		echo "Error: container 'dokploy-traefik' was not found. Run install first." >&2
+		exit 1
+	fi
+}
+
+run_panel_update() {
 	local status=0
-	bash "$update_script" || status=$?
-	rm -f "$update_script"
+	bash "$PANEL_UPDATE_SCRIPT" || status=$?
+	if [ "$PANEL_UPDATE_IS_TEMP" = "1" ]; then
+		rm -f "$PANEL_UPDATE_SCRIPT"
+	fi
 	return "$status"
 }
 
+print_docker_manual_rollback() {
+	cat >&2 <<EOF
+Roll Docker Engine back by hand (the Engine should report $DOCKER_ENGINE_PREVIOUS_VERSION):
+  apt-get install -y --allow-downgrades --no-download $DOCKER_ROLLBACK_DIR/*.deb
+  systemctl start docker
+  docker start dokploy-traefik
+  docker version --format '{{.Server.Version}}'
+EOF
+}
+
+rollback_docker_engine() {
+	echo "Rolling Docker Engine back to $DOCKER_ENGINE_PREVIOUS_VERSION from $DOCKER_ROLLBACK_DIR" >&2
+	if ! apt-get install -y --allow-downgrades --no-download "$DOCKER_ROLLBACK_DIR"/*.deb; then
+		return 1
+	fi
+	if ! docker_daemon_running; then
+		start_docker_service || true
+	fi
+	if ! wait_within "$DOKPLOY_DOCKER_VERIFY_TIMEOUT" docker_daemon_running; then
+		return 1
+	fi
+	if docker inspect dokploy-traefik >/dev/null 2>&1; then
+		docker update --restart always dokploy-traefik >/dev/null || true
+		if ! traefik_running; then
+			docker start dokploy-traefik >/dev/null || true
+		fi
+	fi
+	wait_within "$DOKPLOY_DOCKER_VERIFY_TIMEOUT" docker_stack_ready "$DOCKER_ENGINE_PREVIOUS_VERSION"
+}
+
+fail_docker_engine_upgrade() {
+	echo "$1" >&2
+	if rollback_docker_engine; then
+		echo "Error: Docker Engine was rolled back to $DOCKER_ENGINE_PREVIOUS_VERSION. The packages it used are in $DOCKER_ROLLBACK_DIR." >&2
+		exit 1
+	fi
+	echo "Error: the Docker Engine rollback did not finish. The saved packages are in $DOCKER_ROLLBACK_DIR." >&2
+	print_docker_manual_rollback
+	exit 1
+}
+
+# Docker Engine restarts dockerd, and live-restore does not cover swarm services,
+# so every service on the host restarts here. It runs last, on pre-downloaded packages.
+upgrade_docker_engine() {
+	if [ "$DOCKER_ENGINE_UPGRADE_NEEDED" != "1" ]; then
+		return 0
+	fi
+	echo "Upgrading Docker Engine from $DOCKER_ENGINE_PREVIOUS_VERSION to $DOCKER_VERSION; the daemon restarts and the swarm services on this host restart with it."
+	if ! apt-get install -y -qq --no-download "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin; then
+		fail_docker_engine_upgrade "Error: installing the pre-downloaded Docker packages failed."
+	fi
+	if ! docker_daemon_running; then
+		start_docker_service || true
+	fi
+	if ! wait_within "$DOKPLOY_DOCKER_VERIFY_TIMEOUT" docker_stack_ready "$DOCKER_VERSION"; then
+		fail_docker_engine_upgrade "Error: the host was not healthy on Docker Engine $DOCKER_VERSION within $DOKPLOY_DOCKER_VERIFY_TIMEOUT seconds."
+	fi
+	echo "Docker Engine is $DOCKER_VERSION"
+}
+
+# Order: Redis, Traefik, Postgres, then the panel. A failed Redis or Traefik swap
+# stops before the database changes. Postgres follows its backup and comes
+# before the panel, because the new panel migrates the database when it starts.
+# The panel is last, so its dependencies are already on their pinned versions
+# and healthy when its rollback-protected update runs.
+update_agenthits_dokploy() {
+	require_update_services
+
+	local current_postgres=""
+	current_postgres="$(image_without_digest "$(service_image dokploy-postgres)")"
+	if [ "$(get_postgres_major_version "$current_postgres" || true)" != "$(get_postgres_major_version || true)" ]; then
+		echo "Error: Postgres $current_postgres -> $POSTGRES_IMAGE changes the major version, which this update does not migrate. Nothing was changed." >&2
+		exit 1
+	fi
+
+	predownload_update_artifacts
+
+	local postgres_swap=0
+	if [ "$(image_without_digest "$(service_image dokploy-postgres)")" != "$(image_without_digest "$POSTGRES_IMAGE")" ]; then
+		postgres_swap=1
+		backup_postgres
+	fi
+	if [ "$(image_without_digest "$(service_image dokploy-redis)")" != "$(image_without_digest "$REDIS_IMAGE")" ]; then
+		swap_swarm_service dokploy-redis "$REDIS_IMAGE" redis_ready
+	fi
+	swap_dokploy_traefik
+	if [ "$postgres_swap" = "1" ]; then
+		swap_swarm_service dokploy-postgres "$POSTGRES_IMAGE" postgres_ready
+	fi
+	run_panel_update
+	upgrade_docker_engine
+	echo "Panel host update finished."
+}
+
+parse_hardening_flags() {
+	local arg=""
+	for arg in "$@"; do
+		case "$arg" in
+			install | update | harden) ;;
+			--harden)
+				HARDEN_UFW=1
+				HARDEN_SSH=1
+				HARDEN_FAIL2BAN=1
+				;;
+			--ufw)
+				HARDEN_UFW=1
+				;;
+			--ssh-keys-only)
+				HARDEN_SSH=1
+				;;
+			--fail2ban)
+				HARDEN_FAIL2BAN=1
+				;;
+			*)
+				echo "Unknown argument: $arg" >&2
+				exit 1
+				;;
+		esac
+	done
+}
+
 main() {
-	local mode="${1:-install}"
-	case "$mode" in
-		install | update) ;;
-		*)
-			echo "Usage: $0 [install|update]" >&2
-			exit 1
-			;;
-	esac
+	local mode="install"
+	if [ "$#" -gt 0 ]; then
+		case "$1" in
+			install | update | harden)
+				mode="$1"
+				;;
+			--*) ;;
+			*)
+				echo "Usage: $0 [install|update|harden] [--harden] [--ufw] [--ssh-keys-only] [--fail2ban]" >&2
+				exit 1
+				;;
+		esac
+	fi
+	parse_hardening_flags "$@"
+	if [ "$mode" = "update" ] && hardening_requested; then
+		echo "Hardening flags work with install and harden, not with update." >&2
+		exit 1
+	fi
+	if [ "$mode" = "harden" ] && ! hardening_requested; then
+		echo "harden needs at least one flag: --harden, --ufw, --ssh-keys-only or --fail2ban." >&2
+		exit 1
+	fi
 
 	local platform=""
 	platform="$(detect_platform)"
@@ -790,22 +1611,22 @@ main() {
 				echo "On macOS run this script as your own user, without sudo." >&2
 				exit 1
 			fi
-			if [ "$mode" = "install" ]; then
-				install_on_macos
-			else
-				update_on_macos
-			fi
+			case "$mode" in
+				install) install_on_macos ;;
+				harden) harden_on_macos ;;
+				*) update_on_macos ;;
+			esac
 			;;
 		linux | wsl)
-			reexec_as_root "$mode"
+			reexec_as_root "$@"
 			if [ "$platform" = "wsl" ]; then
 				prepare_wsl
 			fi
-			if [ "$mode" = "install" ]; then
-				install_agenthits_dokploy
-			else
-				update_agenthits_dokploy
-			fi
+			case "$mode" in
+				install) install_agenthits_dokploy ;;
+				harden) apply_hardening ;;
+				*) update_agenthits_dokploy ;;
+			esac
 			;;
 		windows)
 			echo "On Windows run install-agenthits.ps1 in PowerShell (as administrator):" >&2

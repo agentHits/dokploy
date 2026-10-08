@@ -10,6 +10,7 @@ import {
 	updateServerById,
 } from "@dokploy/server/services/server";
 import {
+	buildTraefikRunCommand,
 	getDefaultMiddlewares,
 	getDefaultServerTraefikConfig,
 	TRAEFIK_HTTP3_PORT,
@@ -24,6 +25,12 @@ import {
 	assertServerDestinationAllowed,
 	resolveServerDestinationHost,
 } from "../utils/servers/destination";
+import {
+	BUILDPACKS_VERSION,
+	NIXPACKS_VERSION,
+	PINNED_VERSIONS,
+	RAILPACK_VERSION,
+} from "./component-versions";
 import { setupMonitoring } from "./monitoring-setup";
 
 const generateToken = () => {
@@ -127,10 +134,105 @@ else
 fi
 `;
 
+type ServerHardening = {
+	ssh: boolean;
+	ufw: boolean;
+	fail2ban: boolean;
+};
+
+const getServerHardening = (): ServerHardening => {
+	const requested = (process.env.DOKPLOY_SERVER_HARDENING ?? "")
+		.split(",")
+		.map((item) => item.trim().toLowerCase());
+	const all = requested.includes("all");
+
+	return {
+		ssh: all || requested.includes("ssh"),
+		ufw: all || requested.includes("ufw"),
+		fail2ban: all || requested.includes("fail2ban"),
+	};
+};
+
+// The Security tab reads the main sshd_config, not drop-ins, so the options are
+// written there. They go on the first line because sshd keeps the first value it reads.
+const hardenSshCommand = () => `
+	if [ -f /etc/ssh/sshd_config ]; then
+		if [ ! -f /etc/ssh/sshd_config.dokploy-backup ]; then
+			$SUDO_CMD cp -p /etc/ssh/sshd_config /etc/ssh/sshd_config.dokploy-backup
+		fi
+		for option in "PubkeyAuthentication yes" "PasswordAuthentication no" "KbdInteractiveAuthentication no" "PermitRootLogin prohibit-password" "UsePAM no"; do
+			key=$(echo "$option" | awk '{print $1}')
+			$SUDO_CMD sed -i -E "/^[#[:space:]]*$key[[:space:]]/Id" /etc/ssh/sshd_config
+			$SUDO_CMD sed -i "1i $option" /etc/ssh/sshd_config
+		done
+		if ! $SUDO_CMD sshd -t; then
+			$SUDO_CMD cp -p /etc/ssh/sshd_config.dokploy-backup /etc/ssh/sshd_config
+			echo "sshd rejected the hardened config, the original was restored ❌" >&2
+			exit 1
+		fi
+		$SUDO_CMD systemctl reload ssh 2>/dev/null || $SUDO_CMD systemctl reload sshd
+		echo "SSH allows keys only ✅"
+	fi
+`;
+
+// ufw drops forwarded traffic by default, which breaks container networking,
+// so forwarding is accepted while incoming traffic to the host stays denied.
+const hardenUfwCommand = () => `
+	if [ "$OS_TYPE" = "ubuntu" ] || [ "$OS_TYPE" = "debian" ] || [ "$OS_TYPE" = "raspbian" ]; then
+		$SUDO_CMD apt-get install -y ufw >/dev/null
+		SSH_PORT=$($SUDO_CMD sshd -T 2>/dev/null | awk '$1 == "port" { print $2; exit }') || true
+		if [ -z "$SSH_PORT" ]; then
+			SSH_PORT=22
+		fi
+		$SUDO_CMD ufw default deny incoming >/dev/null
+		$SUDO_CMD ufw default allow outgoing >/dev/null
+		$SUDO_CMD sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
+		$SUDO_CMD ufw allow "$SSH_PORT/tcp" comment 'SSH' >/dev/null
+		$SUDO_CMD ufw allow ${TRAEFIK_PORT}/tcp comment 'HTTP' >/dev/null
+		$SUDO_CMD ufw allow ${TRAEFIK_SSL_PORT}/tcp comment 'HTTPS' >/dev/null
+		$SUDO_CMD ufw allow ${TRAEFIK_HTTP3_PORT}/udp comment 'HTTP/3' >/dev/null
+		$SUDO_CMD ufw --force enable >/dev/null
+		echo "UFW is active ✅"
+	else
+		echo "UFW hardening supports Debian and Ubuntu only, skipped."
+	fi
+`;
+
+// The Security tab only reads /etc/fail2ban/jail.local, so the sshd jail goes there.
+const hardenFail2banCommand = () => `
+	if [ "$OS_TYPE" = "ubuntu" ] || [ "$OS_TYPE" = "debian" ] || [ "$OS_TYPE" = "raspbian" ]; then
+		$SUDO_CMD apt-get install -y fail2ban >/dev/null
+		if [ -f /etc/fail2ban/jail.local ]; then
+			echo "Fail2Ban: /etc/fail2ban/jail.local already exists, left unchanged."
+		else
+			printf '[sshd]\\nenabled = true\\nmode = aggressive\\n' | $SUDO_CMD tee /etc/fail2ban/jail.local >/dev/null
+		fi
+		$SUDO_CMD systemctl enable --now fail2ban >/dev/null 2>&1
+		$SUDO_CMD systemctl restart fail2ban
+		echo "Fail2Ban is active ✅"
+	else
+		echo "Fail2Ban hardening supports Debian and Ubuntu only, skipped."
+	fi
+`;
+
+const serverHardeningStep = (hardening: ServerHardening, step: number) => {
+	if (!hardening.ssh && !hardening.ufw && !hardening.fail2ban) {
+		return "";
+	}
+
+	return `
+echo -e "${step}. Applying security hardening"
+${hardening.ssh ? hardenSshCommand() : ""}
+${hardening.ufw ? hardenUfwCommand() : ""}
+${hardening.fail2ban ? hardenFail2banCommand() : ""}
+`;
+};
+
 export const defaultCommand = (isBuildServer = false) => {
+	const hardening = getServerHardening();
 	const bashCommand = `
 set -e;
-DOCKER_VERSION=28.5.0
+DOCKER_VERSION=${PINNED_VERSIONS.docker}
 OS_TYPE=$(grep -w "ID" /etc/os-release | cut -d "=" -f 2 | tr -d '"')
 SYS_ARCH=$(uname -m)
 CURRENT_USER=$USER
@@ -181,17 +283,6 @@ if [ "$OS_TYPE" = "arch" ] || [ "$OS_TYPE" = "archarm" ]; then
 	OS_VERSION="rolling"
 else
 	OS_VERSION=$(grep -w "VERSION_ID" /etc/os-release | cut -d "=" -f 2 | tr -d '"')
-fi
-
-# Ubuntu 26.04 (resolute) ships a docker-ce repo that has no 28.5.0, so the
-# default pin is absent from apt-cache madison and get.docker.com aborts before
-# installing Docker. Repin to a version present on every architecture Docker
-# ships resolute for: amd64/arm64/armhf start at 29.3.1, but s390x only carries
-# 29.4.0-29.4.2, so 29.4.2 is the newest version common to all of them. This
-# must run after OS_VERSION is resolved and before the banner so the reported
-# Docker version stays accurate.
-if [ "$OS_TYPE" = "ubuntu" ] && [ "$OS_VERSION" = "26.04" ]; then
-	DOCKER_VERSION=29.4.2
 fi
 
 if [ "$OS_TYPE" = 'amzn' ]; then
@@ -265,6 +356,7 @@ ${installRailpack()}
 
 echo -e "14. Configuring permissions"
 ${setupPermissions()}
+${serverHardeningStep(hardening, 15)}
 `
 		: `
 echo -e "2. Installing Docker. "
@@ -285,6 +377,7 @@ ${installRailpack()}
 
 echo -e "7. Configuring permissions"
 ${setupPermissions()}
+${serverHardeningStep(hardening, 8)}
 `
 }
 				`;
@@ -697,13 +790,22 @@ const createDefaultMiddlewares = () => {
 	return command;
 };
 
+export const rcloneInstallCommand = () => `
+	RCLONE_RELEASE_ARCH=amd64
+	case "$(uname -m)" in aarch64 | arm64) RCLONE_RELEASE_ARCH=arm64 ;; esac
+	RCLONE_DIR=$(mktemp -d)
+	curl -fsSL "https://downloads.rclone.org/v${PINNED_VERSIONS.rclone}/rclone-v${PINNED_VERSIONS.rclone}-linux-$RCLONE_RELEASE_ARCH.zip" -o "$RCLONE_DIR/rclone.zip"
+	unzip -q "$RCLONE_DIR/rclone.zip" -d "$RCLONE_DIR"
+	$SUDO_CMD install -m 0755 "$RCLONE_DIR/rclone-v${PINNED_VERSIONS.rclone}-linux-$RCLONE_RELEASE_ARCH/rclone" /usr/bin/rclone
+	rm -rf "$RCLONE_DIR"
+	echo "RClone version ${PINNED_VERSIONS.rclone} installed ✅"
+`;
+
 export const installRClone = () => `
     if command_exists rclone; then
 		echo "RClone already installed ✅"
 	else
-		curl https://rclone.org/install.sh | $SUDO_CMD bash
-		RCLONE_VERSION=$(rclone --version | head -n 1 | awk '{print $2}' | sed 's/^v//')
-		echo "RClone version $RCLONE_VERSION installed ✅"
+		${rcloneInstallCommand()}
 	fi
 `;
 
@@ -722,18 +824,7 @@ export const createTraefikInstance = () => {
 		else
 			# Create the dokploy-traefik container
 			TRAEFIK_VERSION=${TRAEFIK_VERSION}
-			$SUDO_CMD docker run -d \
-				--name dokploy-traefik \
-				--restart always \
-				-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
-				-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
-				-v /var/run/docker.sock:/var/run/docker.sock \
-				-p ${TRAEFIK_SSL_PORT}:${TRAEFIK_SSL_PORT} \
-				-p ${TRAEFIK_PORT}:${TRAEFIK_PORT} \
-				-p ${TRAEFIK_HTTP3_PORT}:${TRAEFIK_HTTP3_PORT}/udp \
-				traefik:v$TRAEFIK_VERSION
-
-			$SUDO_CMD docker network connect dokploy-network dokploy-traefik;
+			${buildTraefikRunCommand(TRAEFIK_VERSION)}
 			echo "Traefik version $TRAEFIK_VERSION installed ✅"
 		fi
 	`;
@@ -741,12 +832,47 @@ export const createTraefikInstance = () => {
 	return command;
 };
 
+// A failed download must fail the setup. Piping curl into bash, or running it inside
+// $(...), runs nothing when the download fails and still reports success.
+const installScriptRun = ({
+	label,
+	url,
+	name,
+	variable,
+	version,
+}: {
+	label: string;
+	url: string;
+	name: string;
+	variable: string;
+	version: string;
+}) => `
+		${name}_installer="$(mktemp)"
+		if ! curl -fsSL ${url} -o "$${name}_installer" || [ ! -s "$${name}_installer" ] || ! bash -n "$${name}_installer"; then
+			rm -f "$${name}_installer"
+			echo "Error: the ${label} install script could not be downloaded or checked; ${label} was not installed." >&2
+			exit 1
+		fi
+		if ! $SUDO_CMD env ${variable}=${version} bash "$${name}_installer"; then
+			rm -f "$${name}_installer"
+			echo "Error: the ${label} install script failed." >&2
+			exit 1
+		fi
+		rm -f "$${name}_installer"
+`;
+
 const installNixpacks = () => `
 	if command_exists nixpacks; then
 		echo "Nixpacks already installed ✅"
 	else
-	    export NIXPACKS_VERSION=1.41.0
-        $SUDO_CMD bash -c "$(curl -fsSL https://nixpacks.com/install.sh)"
+	    export NIXPACKS_VERSION=${NIXPACKS_VERSION}
+${installScriptRun({
+	label: "Nixpacks",
+	url: "https://nixpacks.com/install.sh",
+	name: "nixpacks",
+	variable: "NIXPACKS_VERSION",
+	version: NIXPACKS_VERSION,
+})}
 		echo "Nixpacks version $NIXPACKS_VERSION installed ✅"
 	fi
 `;
@@ -755,8 +881,14 @@ const installRailpack = () => `
 	if command_exists railpack; then
 		echo "Railpack already installed ✅"
 	else
-	    export RAILPACK_VERSION=0.15.4
-		$SUDO_CMD bash -c "$(curl -fsSL https://railpack.com/install.sh)"
+	    export RAILPACK_VERSION=${RAILPACK_VERSION}
+${installScriptRun({
+	label: "Railpack",
+	url: "https://railpack.com/install.sh",
+	name: "railpack",
+	variable: "RAILPACK_VERSION",
+	version: RAILPACK_VERSION,
+})}
 		echo "Railpack version $RAILPACK_VERSION installed ✅"
 	fi
 `;
@@ -786,8 +918,8 @@ const installBuildpacks = () => `
 	if command_exists pack; then
 		echo "Buildpacks already installed ✅"
 	else
-		BUILDPACKS_VERSION=0.39.1
-		curl -sSL "https://github.com/buildpacks/pack/releases/download/v0.39.1/pack-v$BUILDPACKS_VERSION-linux$SUFFIX.tgz" | $SUDO_CMD tar -C /usr/local/bin/ --no-same-owner -xzv pack
+		BUILDPACKS_VERSION=${BUILDPACKS_VERSION}
+		curl -sSL "https://github.com/buildpacks/pack/releases/download/v${BUILDPACKS_VERSION}/pack-v$BUILDPACKS_VERSION-linux$SUFFIX.tgz" | $SUDO_CMD tar -C /usr/local/bin/ --no-same-owner -xzv pack
 		echo "Buildpacks version $BUILDPACKS_VERSION installed ✅"
 	fi
 `;
