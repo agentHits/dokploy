@@ -159,6 +159,24 @@ describe("buildComponentUpdateScript", () => {
 		expect(script).toContain("bridge | dokploy-network) continue ;;");
 	});
 
+	it("sets the restart policy of the replaced Traefik around the swap", () => {
+		const script = buildComponentUpdateScript(["traefik"]);
+		const restore = script.slice(
+			script.indexOf("restore_traefik() {"),
+			script.indexOf("trap restore_traefik ERR"),
+		);
+
+		expect(
+			script.indexOf("docker update --restart no dokploy-traefik-previous"),
+		).toBeLessThan(script.indexOf("docker stop dokploy-traefik-previous"));
+		expect(
+			restore.indexOf("docker update --restart always dokploy-traefik"),
+		).toBeGreaterThanOrEqual(0);
+		expect(
+			restore.indexOf("docker update --restart always dokploy-traefik"),
+		).toBeLessThan(restore.indexOf("docker start dokploy-traefik"));
+	});
+
 	it("passes the pinned versions into the installers through env", () => {
 		const script = buildComponentUpdateScript(["nixpacks", "railpack"]);
 
@@ -905,6 +923,41 @@ describe("buildComponentUpdateScript run order", () => {
 			);
 			expect(run.keyringExists).toBe(false);
 			expect(run.sources).toEqual({});
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"sets --restart no on the replaced Traefik before stopping it",
+		() => {
+			const run = runComponentScript(["traefik"]);
+
+			expect(run.status).toBe(0);
+			const noRestart = run.calls.indexOf(
+				"docker update --restart no dokploy-traefik-previous",
+			);
+			expect(noRestart).toBeGreaterThanOrEqual(0);
+			expect(noRestart).toBeLessThan(
+				run.calls.indexOf("docker stop dokploy-traefik-previous"),
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"restores --restart always on the Traefik it puts back",
+		() => {
+			const run = runComponentScript(["traefik"], {
+				env: { FAKE_NOT_RUNNING: "1" },
+			});
+
+			expect(run.status).not.toBe(0);
+			const restore = run.calls.indexOf(
+				"docker update --restart always dokploy-traefik",
+			);
+			expect(restore).toBeGreaterThanOrEqual(0);
+			expect(restore).toBeLessThan(
+				run.calls.lastIndexOf("docker start dokploy-traefik"),
+			);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);

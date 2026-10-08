@@ -858,3 +858,30 @@ describe("install-agenthits.sh Traefik and host settings", () => {
 		expect(installer).not.toContain("docker run -d");
 	});
 });
+
+describe("install-agenthits.sh Traefik restart policy", () => {
+	it("sets --restart no on the replaced Traefik before stopping it", () => {
+		const { result, calls } = runInstaller({ traefikImage: "traefik:v3.6.25" });
+
+		expect(result.status).toBe(0);
+		const noRestart = calls.indexOf(
+			"update --restart no dokploy-traefik-previous",
+		);
+		expect(noRestart).toBeGreaterThanOrEqual(0);
+		expect(noRestart).toBeLessThan(
+			calls.indexOf("stop dokploy-traefik-previous"),
+		);
+	});
+
+	it("restores --restart always on the Traefik it puts back", () => {
+		const { result, calls } = runInstaller({
+			traefikImage: "traefik:v3.6.25",
+			traefikRunning: "false",
+		});
+
+		expect(result.status).not.toBe(0);
+		const restore = calls.indexOf("update --restart always dokploy-traefik");
+		expect(restore).toBeGreaterThanOrEqual(0);
+		expect(restore).toBeLessThan(calls.lastIndexOf("start dokploy-traefik"));
+	});
+});

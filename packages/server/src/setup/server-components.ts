@@ -375,6 +375,7 @@ restore_traefik() {
 		if [ "$traefik_previous_kept" = 1 ]; then
 			$SUDO_CMD docker rm -f dokploy-traefik >/dev/null 2>&1 || true
 			$SUDO_CMD docker rename dokploy-traefik-previous dokploy-traefik || true
+			$SUDO_CMD docker update --restart always dokploy-traefik >/dev/null 2>&1 || true
 		fi
 		$SUDO_CMD docker start dokploy-traefik >/dev/null 2>&1 || true
 	fi
@@ -398,6 +399,7 @@ for traefik_network in $traefik_networks; do
 	fi
 done
 if [ "$traefik_previous_kept" = 1 ]; then
+	$SUDO_CMD docker update --restart no dokploy-traefik-previous >/dev/null
 	$SUDO_CMD docker stop dokploy-traefik-previous >/dev/null
 fi
 $SUDO_CMD docker start dokploy-traefik >/dev/null

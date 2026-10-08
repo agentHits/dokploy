@@ -1360,12 +1360,12 @@ swap_dokploy_traefik() {
 		docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
 		docker rename dokploy-traefik dokploy-traefik-previous
 		TRAEFIK_PREVIOUS_KEPT=1
-		# A stopped container with restart=always is started again when the daemon restarts.
-		docker update --restart no dokploy-traefik-previous >/dev/null
 	fi
 
 	create_dokploy_traefik "$TRAEFIK_IMAGE"
 	if [ "$TRAEFIK_PREVIOUS_KEPT" = "1" ]; then
+		# A stopped container with restart=always is started again when the daemon restarts.
+		docker update --restart no dokploy-traefik-previous >/dev/null
 		docker stop dokploy-traefik-previous >/dev/null
 	fi
 	docker start dokploy-traefik >/dev/null
