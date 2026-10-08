@@ -5,6 +5,7 @@ import {
 	KeyIcon,
 	Loader2,
 	Network,
+	RefreshCw,
 	ServerIcon,
 	Terminal,
 	Trash2,
@@ -36,6 +37,56 @@ import { ServerComponentsUpdate } from "./server-components-update";
 import { SetupServer } from "./setup-server";
 import { ShowMonitoringModal } from "./show-monitoring-modal";
 import { WelcomeSubscription } from "./welcome-stripe/welcome-subscription";
+
+const ServerConnectionBadge = ({ serverId }: { serverId: string }) => {
+	const { isPending, isError, error, isFetching, refetch } =
+		api.server.validate.useQuery(
+			{ serverId },
+			{ staleTime: 60 * 1000, retry: false },
+		);
+
+	return (
+		<>
+			{isPending ? (
+				<Badge variant="secondary">
+					<Loader2 className="animate-spin" />
+					Checking…
+				</Badge>
+			) : isError ? (
+				<Tooltip delayDuration={0}>
+					<TooltipTrigger asChild>
+						<span className="inline-block">
+							<Badge variant="destructive" className="cursor-help">
+								Offline
+							</Badge>
+						</span>
+					</TooltipTrigger>
+					<TooltipContent className="max-w-xs" side="bottom">
+						<p className="text-sm break-words">{error.message}</p>
+					</TooltipContent>
+				</Tooltip>
+			) : (
+				<Badge variant="green">Online</Badge>
+			)}
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="h-6 w-6"
+						disabled={isFetching}
+						onClick={() => void refetch()}
+					>
+						<RefreshCw className={isFetching ? "animate-spin" : undefined} />
+					</Button>
+				</TooltipTrigger>
+				<TooltipContent>
+					<p>Check connection again</p>
+				</TooltipContent>
+			</Tooltip>
+		</>
+	);
+};
 
 export const ShowServers = () => {
 	const router = useRouter();
@@ -129,6 +180,9 @@ export const ShowServers = () => {
 																	</div>
 																	<TooltipProvider>
 																		<div className="flex gap-2 mt-2 flex-wrap">
+																			<ServerConnectionBadge
+																				serverId={server.serverId}
+																			/>
 																			{isCloud && (
 																				<>
 																					{server.serverStatus === "active" ? (

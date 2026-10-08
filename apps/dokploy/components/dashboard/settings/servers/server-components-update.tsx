@@ -53,7 +53,9 @@ export const ServerComponentsUpdate = ({ serverId }: Props) => {
 			},
 		);
 
-	const outdated = data?.filter((component) => component.outdated) ?? [];
+	const outdated = isError
+		? []
+		: (data?.filter((component) => component.outdated) ?? []);
 	const updatable = outdated
 		.map((component) => component.name)
 		.filter(isUpdatable);
@@ -130,29 +132,33 @@ export const ServerComponentsUpdate = ({ serverId }: Props) => {
 						</div>
 					)}
 					{isError && (
-						<p className="text-sm text-destructive">{error.message}</p>
+						<p className="text-sm text-destructive">
+							The server check failed: {error.message}. Components cannot be
+							checked until it succeeds.
+						</p>
 					)}
-					{data?.map((component) => (
-						<div
-							key={component.name}
-							className="flex items-center justify-between gap-3 text-sm"
-						>
-							<span className="w-24 font-medium capitalize">
-								{component.name}
-							</span>
-							<span className="flex-1 text-muted-foreground">
-								installed: {component.installed ?? "not found"}
-							</span>
-							<span className="flex-1 text-muted-foreground">
-								target: {component.target ?? "not pinned"}
-							</span>
-							{component.outdated ? (
-								<AlertTriangle className="size-4 text-amber-500" />
-							) : (
-								<CheckCircle2 className="size-4 text-green-500" />
-							)}
-						</div>
-					))}
+					{!isError &&
+						data?.map((component) => (
+							<div
+								key={component.name}
+								className="flex items-center justify-between gap-3 text-sm"
+							>
+								<span className="w-24 font-medium capitalize">
+									{component.name}
+								</span>
+								<span className="flex-1 text-muted-foreground">
+									installed: {component.installed ?? "not found"}
+								</span>
+								<span className="flex-1 text-muted-foreground">
+									target: {component.target ?? "not pinned"}
+								</span>
+								{component.outdated ? (
+									<AlertTriangle className="size-4 text-amber-500" />
+								) : (
+									<CheckCircle2 className="size-4 text-green-500" />
+								)}
+							</div>
+						))}
 				</div>
 
 				{updatable.includes("docker") && (
@@ -183,14 +189,16 @@ export const ServerComponentsUpdate = ({ serverId }: Props) => {
 				)}
 
 				<Button
-					disabled={isUpdating || updatable.length === 0}
+					disabled={isError || isUpdating || updatable.length === 0}
 					onClick={startUpdate}
 					className="w-full"
 				>
 					{isUpdating && <Loader2 className="size-4 animate-spin" />}
-					{updatable.length > 0
-						? `Update ${updatable.length} component${updatable.length > 1 ? "s" : ""}`
-						: "Everything is up to date"}
+					{isError
+						? "Update unavailable"
+						: updatable.length > 0
+							? `Update ${updatable.length} component${updatable.length > 1 ? "s" : ""}`
+							: "Everything is up to date"}
 				</Button>
 
 				{logs && (
