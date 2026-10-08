@@ -33,6 +33,7 @@ const writeFakeDocker = (
 		latestForkVersion?: string;
 		serviceEnv: string[];
 		failPull?: boolean;
+		updateState?: string;
 	},
 ) => {
 	const dockerPath = path.join(dir, "docker");
@@ -52,6 +53,16 @@ if [ "$1" = "service" ] && [ "$2" = "inspect" ]; then
 ${options.serviceEnv.map((entry) => `			printf '%s\\n' "${entry}"`).join("\n")}
 			exit 0
 			;;
+			*Version.Index*)
+				cat "$DOCKER_INDEX_FILE"
+				exit 0
+				;;
+			*UpdateStatus.State*)
+				if [ "$(cat "$DOCKER_INDEX_FILE")" -gt 1 ]; then
+					printf '%s\\n' "${options.updateState ?? "completed"}"
+				fi
+				exit 0
+				;;
 	esac
 fi
 
@@ -74,6 +85,17 @@ if [ "$1" = "pull" ]; then
 fi
 
 if [ "$1" = "service" ] && [ "$2" = "update" ]; then
+	echo $(( $(cat "$DOCKER_INDEX_FILE") + 1 )) > "$DOCKER_INDEX_FILE"
+	exit 0
+fi
+
+if [ "$1" = "ps" ]; then
+	echo fake-panel-container
+	exit 0
+fi
+
+if [ "$1" = "inspect" ]; then
+	echo healthy
 	exit 0
 fi
 
@@ -135,6 +157,8 @@ const runUpdateScript = (
 	try {
 		const callLog = path.join(tempDir, "docker-calls.log");
 		writeFileSync(callLog, "");
+		const indexFile = path.join(tempDir, "service-index");
+		writeFileSync(indexFile, "1");
 		writeFakeDocker(tempDir, fakeDockerOptions);
 		writeFakeCurl(tempDir, fakeDockerOptions);
 
@@ -143,7 +167,10 @@ const runUpdateScript = (
 				...process.env,
 				AGENTHITS_SKIP_HOST_CHECK: "1",
 				AGENTHITS_PULL_RETRY_DELAY: "0",
+				AGENTHITS_HEALTH_INTERVAL: "0",
+				AGENTHITS_HEALTH_TIMEOUT: "2",
 				DOCKER_CALL_LOG: callLog,
+				DOCKER_INDEX_FILE: indexFile,
 				PATH: `${tempDir}:${process.env.PATH}`,
 			},
 			encoding: "utf8",
@@ -305,6 +332,27 @@ describe("AgentHits update script", () => {
 			expect(result.stderr).toContain("left unchanged");
 			expect(calls.match(/^pull /gm)).toHaveLength(3);
 			expect(calls).not.toContain("service update");
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"fails and reports the swarm state when the panel update is rolled back",
+		() => {
+			const { result, calls } = runUpdateScript({
+				currentDigest: "sha256:old",
+				latestIndexDigest: "sha256:index",
+				latestPlatformDigest: "sha256:platform",
+				updateState: "rollback_completed",
+				serviceEnv: [
+					"RELEASE_TAG=agenthits-dev",
+					"DOKPLOY_OFFICIAL_VERSION=v0.29.8",
+				],
+			});
+
+			expect(result.status).not.toBe(0);
+			expect(result.stderr).toContain("rollback_completed");
+			expect(calls).toContain("service update --detach");
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);

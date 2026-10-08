@@ -7,6 +7,8 @@ DOKPLOY_OFFICIAL_VERSION_OVERRIDE="${DOKPLOY_OFFICIAL_VERSION:-}"
 DOKPLOY_FORK_VERSION_OVERRIDE="${DOKPLOY_FORK_VERSION:-}"
 DOKPLOY_OFFICIAL_VERSION="${DOKPLOY_OFFICIAL_VERSION_OVERRIDE:-v0.29.8}"
 DOKPLOY_FORK_VERSION="${DOKPLOY_FORK_VERSION_OVERRIDE:-}"
+AGENTHITS_HEALTH_TIMEOUT="${AGENTHITS_HEALTH_TIMEOUT:-240}"
+AGENTHITS_HEALTH_INTERVAL="${AGENTHITS_HEALTH_INTERVAL:-3}"
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -206,6 +208,44 @@ metadata_matches() {
 	return 0
 }
 
+panel_container_healthy() {
+	local container=""
+	container="$(docker ps -q --no-trunc --filter label=com.docker.swarm.service.name=dokploy --filter status=running | head -n1 || true)"
+	if [ -z "$container" ]; then
+		return 1
+	fi
+	[ "$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null)" = "healthy" ]
+}
+
+# Swarm rolls a failed update back, and the attached CLI still exits 0 then,
+# so the outcome is read from the service instead.
+wait_for_panel_update() {
+	local previous_index="$1"
+	local deadline=$(($(date +%s) + AGENTHITS_HEALTH_TIMEOUT))
+	local index=""
+	local state=""
+	while :; do
+		index="$(docker service inspect dokploy --format '{{.Version.Index}}' 2>/dev/null || true)"
+		state="$(docker service inspect dokploy --format '{{.UpdateStatus.State}}' 2>/dev/null || true)"
+		if [ "${index:-0}" -gt "$previous_index" ]; then
+			case "$state" in
+				paused | rollback_*)
+					echo "Error: the AgentHits Dokploy update did not succeed (swarm state: $state). See: docker service ps dokploy --no-trunc" >&2
+					exit 1
+					;;
+			esac
+			if [ "$state" = "completed" ] && panel_container_healthy; then
+				return 0
+			fi
+		fi
+		if [ "$(date +%s)" -ge "$deadline" ]; then
+			echo "Error: AgentHits Dokploy was not healthy after ${AGENTHITS_HEALTH_TIMEOUT} seconds (swarm state: ${state:-unknown})." >&2
+			exit 1
+		fi
+		sleep "$AGENTHITS_HEALTH_INTERVAL"
+	done
+}
+
 update_agenthits_dokploy() {
 	require_root_linux_host
 	install_docker_if_missing
@@ -280,7 +320,10 @@ update_agenthits_dokploy() {
 	elif printf '%s\n' "$service_env" | grep -q '^DOKPLOY_FORK_VERSION='; then
 		update_args+=(--env-rm DOKPLOY_FORK_VERSION)
 	fi
-	docker service update "${update_args[@]}" dokploy
+	local previous_index=""
+	previous_index="$(docker service inspect dokploy --format '{{.Version.Index}}' 2>/dev/null || true)"
+	docker service update --detach "${update_args[@]}" dokploy
+	wait_for_panel_update "${previous_index:-0}"
 
 	echo "AgentHits Dokploy updated to $DOKPLOY_IMAGE"
 }
