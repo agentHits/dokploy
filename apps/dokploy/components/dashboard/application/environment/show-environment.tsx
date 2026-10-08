@@ -184,6 +184,7 @@ export const ShowEnvironment = ({ id, type }: Props) => {
 			setRevealedEnvironment(values.env);
 			form.reset({
 				environment: values.env,
+				createEnvFile: composeData?.createEnvFile ?? true,
 			});
 		} catch (error) {
 			toast.error("Error revealing environment");
