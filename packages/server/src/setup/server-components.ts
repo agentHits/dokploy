@@ -117,10 +117,15 @@ DOKPLOY_BACKUP_DIR="\${DOKPLOY_BACKUP_DIR:-/var/backups/dokploy}"
 DOKPLOY_OS_RELEASE="\${DOKPLOY_OS_RELEASE:-/etc/os-release}"
 DOKPLOY_APT_SOURCES_DIR="\${DOKPLOY_APT_SOURCES_DIR:-/etc/apt/sources.list.d}"
 DOKPLOY_DOCKER_KEYRING="\${DOKPLOY_DOCKER_KEYRING:-/etc/apt/keyrings/docker.asc}"
-DOCKER_FROM_APT=0
 DOCKER_SKIPPED=0
+DOCKER_SKIP_REASON=""
 DOCKER_PACKAGE_VERSION=""
 DOCKER_ROLLBACK_DIR=""
+
+docker_skip() {
+	DOCKER_SKIPPED=1
+	DOCKER_SKIP_REASON="$1"
+}
 
 docker_installed_version() {
 	if [ "$(dpkg-query -W -f='\${db:Status-Status}' "$1" 2>/dev/null)" = "installed" ]; then
@@ -153,7 +158,7 @@ docker_check_repo_codename() {
 	host_codename="$( (. "$DOKPLOY_OS_RELEASE" && printf '%s' "\${VERSION_CODENAME:-}") 2>/dev/null || true)"
 	for repo_codename in $repo_codenames; do
 		if [ -z "$host_codename" ] || [ "$repo_codename" != "$host_codename" ]; then
-			echo "Docker not updated: the Docker apt repository in $DOKPLOY_APT_SOURCES_DIR is for $repo_codename, but this host runs \${host_codename:-an unknown release}. Fix that source file yourself and run the update again. The other components continue."
+			docker_skip "the Docker apt repository in $DOKPLOY_APT_SOURCES_DIR is for $repo_codename, but this host runs \${host_codename:-an unknown release}; fix that source file yourself and run the update again"
 			return 1
 		fi
 	done
@@ -167,37 +172,57 @@ docker_pinned_candidate() {
 docker_add_apt_repository() {
 	local id="" codename="" arch="" key=""
 	if [ -n "$(docker_repo_codenames)" ] || [ -e "$DOKPLOY_APT_SOURCES_DIR/docker.list" ]; then
-		abort_before_change "Pre-download failed: Docker ${PINNED_VERSIONS.docker} is not offered by the Docker apt repository configured on this host."
+		docker_skip "Docker ${PINNED_VERSIONS.docker} is not offered by the Docker apt repository configured on this host"
+		return 1
 	fi
 	id="$( (. "$DOKPLOY_OS_RELEASE" && printf '%s' "\${ID:-}") 2>/dev/null || true)"
 	codename="$( (. "$DOKPLOY_OS_RELEASE" && printf '%s' "\${VERSION_CODENAME:-}") 2>/dev/null || true)"
 	case "$id" in
 		ubuntu | debian) ;;
 		*)
-			abort_before_change "Pre-download failed: Docker ${PINNED_VERSIONS.docker} is not in the apt sources, and Docker's repository is only added automatically on ubuntu and debian (this host is '$id')."
+			docker_skip "Docker ${PINNED_VERSIONS.docker} is not in the apt sources, and Docker's repository is only added automatically on ubuntu and debian (this host is '$id')"
+			return 1
 			;;
 	esac
 	if [ -z "$codename" ]; then
-		abort_before_change "Pre-download failed: VERSION_CODENAME is not set in $DOKPLOY_OS_RELEASE."
+		docker_skip "VERSION_CODENAME is not set in $DOKPLOY_OS_RELEASE, so Docker's repository cannot be added"
+		return 1
 	fi
-	key="$(mktemp)"
-	download_with_retry curl -fsSL "https://download.docker.com/linux/$id/gpg" -o "$key" || abort_before_change "Pre-download failed: Docker's apt key."
-	$SUDO_CMD install -d -m 0755 "$(dirname "$DOKPLOY_DOCKER_KEYRING")"
-	$SUDO_CMD install -m 0644 "$key" "$DOKPLOY_DOCKER_KEYRING"
+	if ! key="$(mktemp)"; then
+		docker_skip "a temporary file for Docker's apt key could not be created"
+		return 1
+	fi
+	if ! download_with_retry curl -fsSL "https://download.docker.com/linux/$id/gpg" -o "$key"; then
+		docker_skip "Docker's apt key could not be downloaded"
+		return 1
+	fi
+	if ! $SUDO_CMD install -d -m 0755 "$(dirname "$DOKPLOY_DOCKER_KEYRING")" || ! $SUDO_CMD install -m 0644 "$key" "$DOKPLOY_DOCKER_KEYRING"; then
+		docker_skip "Docker's apt key could not be installed"
+		return 1
+	fi
 	rm -f "$key"
-	arch="$(dpkg --print-architecture)"
-	printf 'deb [arch=%s signed-by=%s] https://download.docker.com/linux/%s %s stable\\n' "$arch" "$DOKPLOY_DOCKER_KEYRING" "$id" "$codename" | $SUDO_CMD tee "$DOKPLOY_APT_SOURCES_DIR/docker.list" >/dev/null
+	if ! arch="$(dpkg --print-architecture)"; then
+		docker_skip "the architecture could not be read for Docker's apt source"
+		return 1
+	fi
+	if ! printf 'deb [arch=%s signed-by=%s] https://download.docker.com/linux/%s %s stable\\n' "$arch" "$DOKPLOY_DOCKER_KEYRING" "$id" "$codename" | $SUDO_CMD tee "$DOKPLOY_APT_SOURCES_DIR/docker.list" >/dev/null; then
+		docker_skip "Docker's apt source could not be written"
+		return 1
+	fi
+	return 0
 }
 
 docker_save_rollback_packages() {
 	local package="" installed="" candidate=""
 	if [ -z "$(docker_installed_version docker-ce)" ]; then
-		abort_before_change "Pre-download failed: current Docker packages for rollback (docker-ce is not installed)."
+		docker_skip "docker-ce is not installed, so there is no Docker Engine to roll back to"
+		return 1
 	fi
 	DOCKER_ROLLBACK_DIR="$DOKPLOY_BACKUP_DIR/docker-rollback-$(date -u +%Y%m%dT%H%M%SZ)"
-	$SUDO_CMD mkdir -p "$DOKPLOY_BACKUP_DIR" || abort_before_change "Pre-download failed: current Docker packages for rollback."
-	$SUDO_CMD chmod 700 "$DOKPLOY_BACKUP_DIR" || abort_before_change "Pre-download failed: current Docker packages for rollback."
-	$SUDO_CMD sh -c 'umask 077 && mkdir -p "$1"' sh "$DOCKER_ROLLBACK_DIR" || abort_before_change "Pre-download failed: current Docker packages for rollback."
+	if ! $SUDO_CMD mkdir -p "$DOKPLOY_BACKUP_DIR" || ! $SUDO_CMD chmod 700 "$DOKPLOY_BACKUP_DIR" || ! $SUDO_CMD sh -c 'umask 077 && mkdir -p "$1"' sh "$DOCKER_ROLLBACK_DIR"; then
+		docker_skip "the current Docker packages could not be saved for rollback"
+		return 1
+	fi
 	for package in docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras; do
 		installed="$(docker_installed_version "$package")"
 		if [ -z "$installed" ]; then
@@ -212,23 +237,40 @@ docker_save_rollback_packages() {
 				fi
 				;;
 		esac
-		$SUDO_CMD sh -c 'umask 077 && cd "$1" && apt-get download "$2" >/dev/null' sh "$DOCKER_ROLLBACK_DIR" "$package=$installed" || abort_before_change "Pre-download failed: current Docker packages for rollback."
+		if ! $SUDO_CMD sh -c 'umask 077 && cd "$1" && apt-get download "$2" >/dev/null' sh "$DOCKER_ROLLBACK_DIR" "$package=$installed"; then
+			docker_skip "the current Docker packages could not be saved for rollback"
+			return 1
+		fi
 	done
+	return 0
 }
 
 docker_prepare_apt() {
-	$SUDO_CMD apt-get update -qq || abort_before_change "Pre-download failed: the apt package lists could not be refreshed."
+	if ! $SUDO_CMD apt-get update -qq; then
+		abort_before_change "Pre-download failed: the apt package lists could not be refreshed."
+	fi
 	DOCKER_PACKAGE_VERSION="$(docker_pinned_candidate)"
 	if [ -z "$DOCKER_PACKAGE_VERSION" ]; then
-		docker_add_apt_repository
-		$SUDO_CMD apt-get update -qq || abort_before_change "Pre-download failed: the apt package lists could not be refreshed."
+		if ! docker_add_apt_repository; then
+			return 1
+		fi
+		if ! $SUDO_CMD apt-get update -qq; then
+			docker_skip "the apt package lists could not be refreshed after adding Docker's repository"
+			return 1
+		fi
 		DOCKER_PACKAGE_VERSION="$(docker_pinned_candidate)"
 		if [ -z "$DOCKER_PACKAGE_VERSION" ]; then
-			abort_before_change "Pre-download failed: Docker ${PINNED_VERSIONS.docker} is not in the apt sources, even after adding Docker's repository."
+			docker_skip "Docker ${PINNED_VERSIONS.docker} is not in the apt sources, even after adding Docker's repository"
+			return 1
 		fi
 	fi
-	docker_save_rollback_packages
-	download_with_retry $SUDO_CMD apt-get install -y -qq --download-only "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin || abort_before_change "Pre-download failed: the Docker packages."
+	if ! docker_save_rollback_packages; then
+		return 1
+	fi
+	if ! download_with_retry $SUDO_CMD apt-get install -y -qq --download-only "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin; then
+		abort_before_change "Pre-download failed: the Docker packages."
+	fi
+	return 0
 }
 
 docker_ready_on() {
@@ -291,17 +333,10 @@ docker_update_from_apt() {
 `;
 
 const dockerPredownload = () => `
-if command -v apt-get >/dev/null 2>&1; then
-	DOCKER_FROM_APT=1
-	if docker_check_repo_codename; then
-		docker_prepare_apt
-	else
-		DOCKER_SKIPPED=1
-	fi
-else
-	GET_DOCKER_SCRIPT="$(mktemp)"
-	download_with_retry curl -fsSL https://get.docker.com -o "$GET_DOCKER_SCRIPT" || abort_before_change "Pre-download failed: get.docker.com."
-	echo "No apt-get on this host: the Docker packages are not pre-downloaded; the Docker step fetches them."
+if ! command -v apt-get >/dev/null 2>&1; then
+	docker_skip "this host has no apt-get, so the Docker packages cannot be pre-downloaded or rolled back"
+elif docker_check_repo_codename; then
+	docker_prepare_apt || true
 fi
 `;
 
@@ -348,15 +383,10 @@ const updateStepFor = (component: UpdatableComponent) => {
 		case "docker":
 			return `
 if [ "$DOCKER_SKIPPED" = 1 ]; then
-	echo "Docker update skipped: its apt repository does not match this release (see above)."
+	echo "Docker not updated: $DOCKER_SKIP_REASON. The other components continue."
 else
 	echo "Updating Docker to ${PINNED_VERSIONS.docker}"
-	if [ "$DOCKER_FROM_APT" = 1 ]; then
-		docker_update_from_apt
-	else
-		$SUDO_CMD sh "$GET_DOCKER_SCRIPT" --version ${PINNED_VERSIONS.docker}
-		rm -f "$GET_DOCKER_SCRIPT"
-	fi
+	docker_update_from_apt
 	echo "Docker version ${PINNED_VERSIONS.docker} installed ✅"
 fi
 `;

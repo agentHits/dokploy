@@ -8,6 +8,7 @@ import {
 	readFileSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -191,19 +192,17 @@ describe("buildComponentUpdateScript", () => {
 	it("installs the pinned Docker and RClone", () => {
 		const script = buildComponentUpdateScript(["docker", "rclone"]);
 
-		expect(script).toContain(`--version ${PINNED_VERSIONS.docker}`);
+		expect(script).toContain(`Updating Docker to ${PINNED_VERSIONS.docker}`);
 		expect(script).toContain(
 			`rclone-v${PINNED_VERSIONS.rclone}-linux-$RCLONE_RELEASE_ARCH.zip`,
 		);
 	});
 
-	it("installs Docker from the pre-downloaded apt packages, and runs get.docker.com only without apt", () => {
+	it("installs Docker from the pre-downloaded apt packages and never runs get.docker.com", () => {
 		const script = buildComponentUpdateScript(["docker"]);
 
 		expect(script).toContain("apt-get install -y --no-download");
-		expect(script.indexOf("if command -v apt-get")).toBeLessThan(
-			script.indexOf("get.docker.com -o"),
-		);
+		expect(script).not.toContain("get.docker.com");
 	});
 
 	it("keeps a rollback for a failed Docker update in the generated script", () => {
@@ -215,14 +214,43 @@ describe("buildComponentUpdateScript", () => {
 		expect(script).toContain("docker-rollback-");
 	});
 
-	it("skips only the Docker step when the apt repository is for another release", () => {
+	it("skips only the Docker step for each Docker-specific pre-download failure", () => {
 		const script = buildComponentUpdateScript(["docker", "traefik"]);
 
 		expect(script).toContain("DOCKER_SKIPPED=1");
 		expect(script).toContain(
-			"Docker not updated: the Docker apt repository in",
+			"Docker not updated: $DOCKER_SKIP_REASON. The other components continue.",
 		);
-		expect(script).toContain("Docker update skipped");
+		expect(script).toContain(
+			"this host has no apt-get, so the Docker packages cannot be pre-downloaded or rolled back",
+		);
+		expect(script).toContain("is for $repo_codename, but this host runs");
+		expect(script).toContain(
+			"is not offered by the Docker apt repository configured on this host",
+		);
+		expect(script).toContain(
+			"is only added automatically on ubuntu and debian",
+		);
+		expect(script).toContain(
+			"the current Docker packages could not be saved for rollback",
+		);
+		expect(script).toContain(
+			"docker-ce is not installed, so there is no Docker Engine to roll back to",
+		);
+	});
+
+	it("aborts the whole update before any change for other pre-download failures", () => {
+		const script = buildComponentUpdateScript(["docker", "traefik"]);
+
+		expect(script).toContain(
+			`abort_before_change "Pre-download failed: traefik:v${TRAEFIK_VERSION}."`,
+		);
+		expect(script).toContain(
+			'abort_before_change "Pre-download failed: the apt package lists could not be refreshed."',
+		);
+		expect(script).toContain(
+			'abort_before_change "Pre-download failed: the Docker packages."',
+		);
 	});
 
 	it("ends with the marker the UI waits for", () => {
@@ -282,6 +310,10 @@ describe("filterDockerUpgrade", () => {
 	});
 });
 
+const BASH = spawnSync("sh", ["-c", "command -v bash"], {
+	encoding: "utf8",
+}).stdout.trim();
+
 const FAKE_TOOLS: Record<string, string> = {
 	docker: `#!/bin/sh
 printf 'docker %s\\n' "$*" >> "$CALL_LOG"
@@ -309,13 +341,18 @@ exit 0
 	"apt-get": `#!/bin/sh
 printf 'apt-get %s\\n' "$*" >> "$CALL_LOG"
 case "$1" in
-	update) touch "$FAKE_STATE/updated" ;;
+	update)
+		[ "$FAKE_UPDATE_FAILS" = 1 ] && exit 1
+		;;
 	download)
 		[ "$FAKE_DOWNLOAD_FAILS" = 1 ] && exit 1
 		printf 'fake package\\n' > "\${2%%=*}.deb"
 		;;
 	install)
 		case "$*" in
+			*--download-only*)
+				[ "$FAKE_PREDOWNLOAD_FAILS" = 1 ] && exit 1
+				;;
 			*--allow-downgrades*)
 				[ "$FAKE_ROLLBACK_FAILS" = 1 ] && exit 1
 				printf '%s\\n' "$FAKE_PREVIOUS_ENGINE" > "$FAKE_STATE/engine"
@@ -363,7 +400,8 @@ printf 'dpkg-query %s\\n' "$*" >> "$CALL_LOG"
 case "$2" in
 	*Status-Status*)
 		case "$3" in
-			docker-ce | docker-ce-cli | containerd.io | docker-buildx-plugin | docker-compose-plugin) echo installed ;;
+			docker-ce) [ "$FAKE_NO_DOCKER_CE" = 1 ] || echo installed ;;
+			docker-ce-cli | containerd.io | docker-buildx-plugin | docker-compose-plugin) echo installed ;;
 		esac
 		;;
 	*Version*)
@@ -400,6 +438,41 @@ exit 0
 `,
 };
 
+const SYSTEM_TOOLS = [
+	"id",
+	"awk",
+	"grep",
+	"date",
+	"mktemp",
+	"tee",
+	"dirname",
+	"install",
+	"rm",
+	"chmod",
+	"mkdir",
+	"sh",
+	"sed",
+	"cat",
+	"head",
+	"tr",
+	"cut",
+	"wc",
+	"sort",
+];
+
+const linkSystemTools = (binDir: string) => {
+	mkdirSync(binDir);
+	for (const name of SYSTEM_TOOLS) {
+		const found = spawnSync("sh", ["-c", `command -v ${name}`], {
+			encoding: "utf8",
+		}).stdout.trim();
+		if (found) {
+			symlinkSync(found, path.join(binDir, name));
+		}
+	}
+	return binDir;
+};
+
 const DOCKER_LIST_JAMMY =
 	"deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu jammy stable\n";
 const DOCKER_LIST_NOBLE =
@@ -411,6 +484,7 @@ type ScriptOptions = {
 	env?: Record<string, string>;
 	osRelease?: string;
 	sourceFiles?: Record<string, string>;
+	withoutApt?: boolean;
 };
 
 const listBackups = (backups: string) => {
@@ -461,15 +535,21 @@ const runComponentScript = (
 			writeFileSync(path.join(sources, name), body);
 		}
 		for (const [name, body] of Object.entries(FAKE_TOOLS)) {
+			if (options.withoutApt && name.startsWith("apt-")) {
+				continue;
+			}
 			writeFileSync(path.join(dir, name), body);
 			chmodSync(path.join(dir, name), 0o755);
 		}
-		const result = spawnSync("bash", [], {
+		const pathValue = options.withoutApt
+			? `${dir}:${linkSystemTools(path.join(dir, "bin"))}`
+			: `${dir}:${process.env.PATH}`;
+		const result = spawnSync(BASH, [], {
 			input: buildComponentUpdateScript(components),
 			encoding: "utf8",
 			env: {
 				...process.env,
-				PATH: `${dir}:${process.env.PATH}`,
+				PATH: pathValue,
 				CALL_LOG: callLog,
 				FAKE_STATE: dir,
 				FAKE_PREVIOUS_ENGINE: "28.3.0",
@@ -520,6 +600,68 @@ describe("buildComponentUpdateScript run order", () => {
 	);
 
 	it(
+		"aborts the whole update before any change when the Traefik image cannot be pulled, with Docker selected",
+		() => {
+			const run = runComponentScript(["docker", "traefik"], {
+				env: { FAKE_PULL_FAILS: "1" },
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.stderr).toContain("Nothing was changed");
+			expect(run.calls.some((call) => call.startsWith("apt-get"))).toBe(false);
+			expect(run.calls.some((call) => call.startsWith("docker rename"))).toBe(
+				false,
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"aborts the whole update before any change when the apt package lists cannot be refreshed",
+		() => {
+			const run = runComponentScript(["docker", "traefik"], {
+				env: { FAKE_UPDATE_FAILS: "1" },
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.stderr).toContain(
+				"Pre-download failed: the apt package lists could not be refreshed. Nothing was changed.",
+			);
+			expect(run.calls.some((call) => call.startsWith("docker rename"))).toBe(
+				false,
+			);
+			expect(run.calls.some((call) => call.startsWith("docker create"))).toBe(
+				false,
+			);
+			expect(run.calls.some((call) => call.startsWith("apt-get install"))).toBe(
+				false,
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"aborts the whole update before any change when the Docker packages cannot be downloaded",
+		() => {
+			const run = runComponentScript(["docker", "traefik"], {
+				env: { FAKE_PREDOWNLOAD_FAILS: "1" },
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.stderr).toContain(
+				"Pre-download failed: the Docker packages. Nothing was changed.",
+			);
+			expect(run.calls.some((call) => call.startsWith("docker rename"))).toBe(
+				false,
+			);
+			expect(run.calls.some((call) => call.includes("--no-download"))).toBe(
+				false,
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
 		"downloads every artifact before the first step changes anything",
 		() => {
 			const run = runComponentScript(["traefik", "docker"]);
@@ -558,6 +700,7 @@ describe("buildComponentUpdateScript run order", () => {
 				at("docker rename dokploy-traefik dokploy-traefik-previous"),
 				at("docker create --name dokploy-traefik"),
 				at("docker network connect dokploy-network dokploy-traefik"),
+				at("docker update --restart no dokploy-traefik-previous"),
 				at("docker stop dokploy-traefik-previous"),
 				at("docker start dokploy-traefik"),
 				at("docker inspect -f {{.State.Running}} dokploy-traefik"),
@@ -565,6 +708,42 @@ describe("buildComponentUpdateScript run order", () => {
 			expect(order.every((position) => position >= 0)).toBe(true);
 			expect(order).toEqual([...order].sort((a, b) => a - b));
 			expect(run.calls.at(-1)).toBe("docker rm -f dokploy-traefik-previous");
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"sets --restart no on the replaced Traefik before stopping it",
+		() => {
+			const run = runComponentScript(["traefik"]);
+
+			expect(run.status).toBe(0);
+			const noRestart = run.calls.indexOf(
+				"docker update --restart no dokploy-traefik-previous",
+			);
+			expect(noRestart).toBeGreaterThanOrEqual(0);
+			expect(noRestart).toBeLessThan(
+				run.calls.indexOf("docker stop dokploy-traefik-previous"),
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"restores --restart always on the Traefik it puts back",
+		() => {
+			const run = runComponentScript(["traefik"], {
+				env: { FAKE_NOT_RUNNING: "1" },
+			});
+
+			expect(run.status).not.toBe(0);
+			const restore = run.calls.indexOf(
+				"docker update --restart always dokploy-traefik",
+			);
+			expect(restore).toBeGreaterThanOrEqual(0);
+			expect(restore).toBeLessThan(
+				run.calls.lastIndexOf("docker start dokploy-traefik"),
+			);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);
@@ -786,20 +965,62 @@ describe("buildComponentUpdateScript run order", () => {
 	);
 
 	it(
-		"stops before any change when a current Docker package cannot be saved",
+		"skips only Docker when the current Docker packages cannot be saved",
 		() => {
-			const run = runComponentScript(["docker"], {
+			const run = runComponentScript(["docker", "traefik"], {
 				env: { FAKE_DOWNLOAD_FAILS: "1" },
 			});
 
-			expect(run.status).not.toBe(0);
-			expect(run.stderr).toContain(
-				"Pre-download failed: current Docker packages for rollback. Nothing was changed.",
+			expect(run.status).toBe(0);
+			expect(run.stdout).toContain(
+				"Docker not updated: the current Docker packages could not be saved for rollback. The other components continue.",
+			);
+			expect(run.stdout).toContain(
+				`Traefik version ${TRAEFIK_VERSION} installed`,
 			);
 			expect(run.calls.some((call) => call.startsWith("apt-get install"))).toBe(
 				false,
 			);
-			expect(run.stdout).not.toContain("Updating Docker");
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"skips only Docker when docker-ce is not installed, as on hosts running docker.io",
+		() => {
+			const run = runComponentScript(["docker", "traefik"], {
+				env: { FAKE_NO_DOCKER_CE: "1" },
+			});
+
+			expect(run.status).toBe(0);
+			expect(run.stdout).toContain(
+				"Docker not updated: docker-ce is not installed, so there is no Docker Engine to roll back to.",
+			);
+			expect(run.stdout).toContain(
+				`Traefik version ${TRAEFIK_VERSION} installed`,
+			);
+			expect(run.calls.some((call) => call.startsWith("apt-get install"))).toBe(
+				false,
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"skips only Docker when apt-get is missing, and never runs get.docker.com",
+		() => {
+			const run = runComponentScript(["docker", "traefik"], {
+				withoutApt: true,
+			});
+
+			expect(run.status).toBe(0);
+			expect(run.stdout).toContain(
+				"Docker not updated: this host has no apt-get, so the Docker packages cannot be pre-downloaded or rolled back. The other components continue.",
+			);
+			expect(run.stdout).toContain(
+				`Traefik version ${TRAEFIK_VERSION} installed`,
+			);
+			expect(run.calls.some((call) => call.startsWith("curl"))).toBe(false);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);
@@ -812,11 +1033,8 @@ describe("buildComponentUpdateScript run order", () => {
 			});
 
 			expect(run.status).toBe(0);
-			expect(run.stdout).toContain(
-				"Docker not updated: the Docker apt repository in",
-			);
+			expect(run.stdout).toContain("Docker not updated:");
 			expect(run.stdout).toContain("is for jammy, but this host runs noble");
-			expect(run.stdout).toContain("Docker update skipped");
 			expect(run.stdout).toContain(
 				`Traefik version ${TRAEFIK_VERSION} installed`,
 			);
@@ -889,15 +1107,20 @@ describe("buildComponentUpdateScript run order", () => {
 	);
 
 	it(
-		"does not rewrite an existing Docker repository that does not offer the pinned version",
+		"skips only Docker, without rewriting it, when the repository does not offer the pinned version",
 		() => {
-			const run = runComponentScript(["docker"], {
+			const run = runComponentScript(["docker", "traefik"], {
 				env: { FAKE_NO_CANDIDATE: "1" },
 				sourceFiles: { "docker.list": DOCKER_LIST_NOBLE },
 			});
 
-			expect(run.status).not.toBe(0);
-			expect(run.stderr).toContain("Nothing was changed");
+			expect(run.status).toBe(0);
+			expect(run.stdout).toContain(
+				"Docker not updated: Docker 29.8.2 is not offered by the Docker apt repository configured on this host.",
+			);
+			expect(run.stdout).toContain(
+				`Traefik version ${TRAEFIK_VERSION} installed`,
+			);
 			expect(run.sources["docker.list"]).toBe(DOCKER_LIST_NOBLE);
 			expect(run.keyringExists).toBe(false);
 		},
@@ -905,59 +1128,26 @@ describe("buildComponentUpdateScript run order", () => {
 	);
 
 	it(
-		"stops before any change on an unsupported distribution without a Docker repository",
+		"skips only Docker on an unsupported distribution, without any change",
 		() => {
-			const run = runComponentScript(["docker"], {
+			const run = runComponentScript(["docker", "traefik"], {
 				env: { FAKE_CANDIDATE_AFTER_REPO: "1" },
 				osRelease: "ID=fedora\nVERSION_CODENAME=40\n",
 			});
 
-			expect(run.status).not.toBe(0);
-			expect(run.stderr).toContain(
-				"only added automatically on ubuntu and debian",
+			expect(run.status).toBe(0);
+			expect(run.stdout).toContain(
+				"is not in the apt sources, and Docker's repository is only added automatically on ubuntu and debian (this host is 'fedora').",
 			);
-			expect(run.stderr).toContain("Nothing was changed");
+			expect(run.stdout).toContain(
+				`Traefik version ${TRAEFIK_VERSION} installed`,
+			);
 			expect(run.calls.some((call) => call.startsWith("curl"))).toBe(false);
 			expect(run.calls.some((call) => call.startsWith("apt-get install"))).toBe(
 				false,
 			);
 			expect(run.keyringExists).toBe(false);
 			expect(run.sources).toEqual({});
-		},
-		SPAWN_TEST_TIMEOUT_MS,
-	);
-	it(
-		"sets --restart no on the replaced Traefik before stopping it",
-		() => {
-			const run = runComponentScript(["traefik"]);
-
-			expect(run.status).toBe(0);
-			const noRestart = run.calls.indexOf(
-				"docker update --restart no dokploy-traefik-previous",
-			);
-			expect(noRestart).toBeGreaterThanOrEqual(0);
-			expect(noRestart).toBeLessThan(
-				run.calls.indexOf("docker stop dokploy-traefik-previous"),
-			);
-		},
-		SPAWN_TEST_TIMEOUT_MS,
-	);
-
-	it(
-		"restores --restart always on the Traefik it puts back",
-		() => {
-			const run = runComponentScript(["traefik"], {
-				env: { FAKE_NOT_RUNNING: "1" },
-			});
-
-			expect(run.status).not.toBe(0);
-			const restore = run.calls.indexOf(
-				"docker update --restart always dokploy-traefik",
-			);
-			expect(restore).toBeGreaterThanOrEqual(0);
-			expect(restore).toBeLessThan(
-				run.calls.lastIndexOf("docker start dokploy-traefik"),
-			);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);
