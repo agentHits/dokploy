@@ -228,6 +228,41 @@ Windows (PowerShell от администратора):
 `update.sh`. Если установлен тот же image digest, команда завершается без
 повторного `docker pull` и без перезапуска `dokploy`.
 
+`update` обновляет весь стек панели, а не только её образ. Сначала скачивается
+всё, что понадобится: образы Postgres, Redis, Traefik и панели (закреплённые
+теги) и `update.sh`. Если что-то не скачалось, команда завершается строкой
+`Pre-download failed: ... Nothing was changed.`, и ни один сервис не трогается.
+Затем шаги идут в таком порядке:
+
+1. Резервная копия Postgres: `pg_dumpall` в `AGENTHITS_BACKUP_DIR` (по умолчанию
+   `/var/backups/agenthits`). Файл остаётся на хосте и не удаляется
+   автоматически. Делается, только если Postgres будет заменён, до любой замены.
+2. Redis: `docker service update` с остановкой старой задачи до запуска новой и
+   откатом при сбое. Ждёт ответа `PONG`.
+3. Traefik: старый контейнер останавливается и переименовывается в
+   `dokploy-traefik-previous`, новый запускается и подключается к
+   `dokploy-network`. Через `AGENTHITS_TRAEFIK_SETTLE` секунд (10 по умолчанию)
+   проверяется, что он работает; если нет, старый контейнер возвращается.
+   Старый контейнер остаётся остановленным, с `--restart no`, чтобы перезапуск
+   демона не запустил его рядом с новым. При следующем обновлении Traefik он
+   заменяется.
+4. Postgres: `docker service update` с остановкой старой задачи до запуска новой,
+   потому что две задачи не могут работать с одним volume. Ждёт `pg_isready`.
+5. Панель: `update.sh`. Ждёт `healthy`-статуса контейнера; при откате swarm или
+   нездоровом статусе команда завершается с ошибкой.
+6. Docker Engine: только при `DOCKER_ENGINE_UPGRADE=1` и если установленная
+   версия отличается от `DOCKER_VERSION`. Пакеты скачиваются заранее, установка
+   идёт в самом конце. Перезапуск демона перезапускает все сервисы swarm на
+   хосте: live-restore к сервисам swarm не применяется.
+
+Простой на каждом шаге равен времени остановки старой задачи (или контейнера) и
+запуска новой: образы уже локальные, поэтому скачивание в простое не участвует.
+Единственный шаг, который перезапускает демон Docker, — шаг 6.
+
+Ручной откат. Для сервисов swarm: `docker service update --image <предыдущий образ> <сервис>`,
+предыдущий образ печатается в логе шага. Для Traefik:
+`docker rm -f dokploy-traefik && docker rename dokploy-traefik-previous dokploy-traefik && docker update --restart always dokploy-traefik && docker start dokploy-traefik`.
+
 В dashboard кнопка `Check for updates` для AgentHits fork сравнивает текущий
 Docker service image digest с `ghcr.io/agenthits/dokploy:agenthits-dev`.
 Если digest отличается, обновление через UI запускает `docker service update`

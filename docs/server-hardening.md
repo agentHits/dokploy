@@ -14,6 +14,8 @@
 
 Версия Traefik для серверов берётся из установщика: `TRAEFIK_IMAGE`, сейчас `traefik:v3.7.14`. Тест `apps/dokploy/__test__/server/component-versions-sync.test.ts` падает, если версия по умолчанию в панели расходится с установщиком.
 
+Флаги усиления принимают только `install` и `harden`. `install-agenthits.sh update` обновляет панель и её стек, но не меняет SSH, UFW и Fail2Ban.
+
 ## Как запускать
 
 ### macOS (панель установлена в OrbStack)
