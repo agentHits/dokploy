@@ -6,7 +6,7 @@ import {
 } from "../utils/servers/destination";
 import { PINNED_VERSIONS } from "./component-versions";
 import { rcloneInstallCommand } from "./server-setup";
-import { buildTraefikRunCommand, TRAEFIK_VERSION } from "./traefik-setup";
+import { buildTraefikCreateCommand, TRAEFIK_VERSION } from "./traefik-setup";
 
 export const COMPONENT_NAMES = [
 	"docker",
@@ -94,6 +94,217 @@ export const buildComponentStatuses = (
 		};
 	});
 
+export const DOCKER_UPGRADE_SKIPPED_MESSAGE =
+	"Docker Engine not upgraded: it restarts every container on this server. Enable it explicitly to upgrade.";
+
+export const filterDockerUpgrade = (
+	components: UpdatableComponent[],
+	upgradeDocker: boolean,
+) => {
+	if (upgradeDocker || !components.includes("docker")) {
+		return { components, skippedDocker: false };
+	}
+	return {
+		components: components.filter((component) => component !== "docker"),
+		skippedDocker: true,
+	};
+};
+
+const dockerVersionPattern = PINNED_VERSIONS.docker.replace(/\./g, "\\.");
+
+const dockerHelpers = () => `
+DOKPLOY_BACKUP_DIR="\${DOKPLOY_BACKUP_DIR:-/var/backups/dokploy}"
+DOKPLOY_OS_RELEASE="\${DOKPLOY_OS_RELEASE:-/etc/os-release}"
+DOKPLOY_APT_SOURCES_DIR="\${DOKPLOY_APT_SOURCES_DIR:-/etc/apt/sources.list.d}"
+DOKPLOY_DOCKER_KEYRING="\${DOKPLOY_DOCKER_KEYRING:-/etc/apt/keyrings/docker.asc}"
+DOCKER_FROM_APT=0
+DOCKER_SKIPPED=0
+DOCKER_PACKAGE_VERSION=""
+DOCKER_ROLLBACK_DIR=""
+
+docker_installed_version() {
+	if [ "$(dpkg-query -W -f='\${db:Status-Status}' "$1" 2>/dev/null)" = "installed" ]; then
+		dpkg-query -W -f='\${Version}' "$1"
+	fi
+}
+
+docker_candidate_version() {
+	apt-cache policy "$1" 2>/dev/null | awk '/^  Candidate:/ { print $2; exit }'
+}
+
+docker_repo_codenames() {
+	local file=""
+	for file in "$DOKPLOY_APT_SOURCES_DIR"/*.list; do
+		[ -f "$file" ] || continue
+		awk '/download\\.docker\\.com/ && !/^[[:space:]]*#/ { for (i = 2; i < NF; i++) if ($i ~ /download\\.docker\\.com/) { print $(i + 1); break } }' "$file"
+	done
+	for file in "$DOKPLOY_APT_SOURCES_DIR"/*.sources; do
+		[ -f "$file" ] || continue
+		awk 'BEGIN { RS = ""; FS = "\\n" } /download\\.docker\\.com/ { for (i = 1; i <= NF; i++) if ($i ~ /^Suites:/) { split($i, suite, /[ \\t]+/); print suite[2] } }' "$file"
+	done
+}
+
+docker_check_repo_codename() {
+	local repo_codenames="" repo_codename="" host_codename=""
+	repo_codenames="$(docker_repo_codenames)"
+	if [ -z "$repo_codenames" ]; then
+		return 0
+	fi
+	host_codename="$( (. "$DOKPLOY_OS_RELEASE" && printf '%s' "\${VERSION_CODENAME:-}") 2>/dev/null || true)"
+	for repo_codename in $repo_codenames; do
+		if [ -z "$host_codename" ] || [ "$repo_codename" != "$host_codename" ]; then
+			echo "Docker not updated: the Docker apt repository in $DOKPLOY_APT_SOURCES_DIR is for $repo_codename, but this host runs \${host_codename:-an unknown release}. Fix that source file yourself and run the update again. The other components continue."
+			return 1
+		fi
+	done
+	return 0
+}
+
+docker_pinned_candidate() {
+	apt-cache madison docker-ce | awk -F'|' '{ gsub(/ /, "", $2); print $2 }' | grep -m1 -E '^([0-9]+:)?${dockerVersionPattern}-' || true
+}
+
+docker_add_apt_repository() {
+	local id="" codename="" arch="" key=""
+	if [ -n "$(docker_repo_codenames)" ] || [ -e "$DOKPLOY_APT_SOURCES_DIR/docker.list" ]; then
+		abort_before_change "Pre-download failed: Docker ${PINNED_VERSIONS.docker} is not offered by the Docker apt repository configured on this host."
+	fi
+	id="$( (. "$DOKPLOY_OS_RELEASE" && printf '%s' "\${ID:-}") 2>/dev/null || true)"
+	codename="$( (. "$DOKPLOY_OS_RELEASE" && printf '%s' "\${VERSION_CODENAME:-}") 2>/dev/null || true)"
+	case "$id" in
+		ubuntu | debian) ;;
+		*)
+			abort_before_change "Pre-download failed: Docker ${PINNED_VERSIONS.docker} is not in the apt sources, and Docker's repository is only added automatically on ubuntu and debian (this host is '$id')."
+			;;
+	esac
+	if [ -z "$codename" ]; then
+		abort_before_change "Pre-download failed: VERSION_CODENAME is not set in $DOKPLOY_OS_RELEASE."
+	fi
+	key="$(mktemp)"
+	download_with_retry curl -fsSL "https://download.docker.com/linux/$id/gpg" -o "$key" || abort_before_change "Pre-download failed: Docker's apt key."
+	$SUDO_CMD install -d -m 0755 "$(dirname "$DOKPLOY_DOCKER_KEYRING")"
+	$SUDO_CMD install -m 0644 "$key" "$DOKPLOY_DOCKER_KEYRING"
+	rm -f "$key"
+	arch="$(dpkg --print-architecture)"
+	printf 'deb [arch=%s signed-by=%s] https://download.docker.com/linux/%s %s stable\\n' "$arch" "$DOKPLOY_DOCKER_KEYRING" "$id" "$codename" | $SUDO_CMD tee "$DOKPLOY_APT_SOURCES_DIR/docker.list" >/dev/null
+}
+
+docker_save_rollback_packages() {
+	local package="" installed="" candidate=""
+	if [ -z "$(docker_installed_version docker-ce)" ]; then
+		abort_before_change "Pre-download failed: current Docker packages for rollback (docker-ce is not installed)."
+	fi
+	DOCKER_ROLLBACK_DIR="$DOKPLOY_BACKUP_DIR/docker-rollback-$(date -u +%Y%m%dT%H%M%SZ)"
+	$SUDO_CMD mkdir -p "$DOKPLOY_BACKUP_DIR" || abort_before_change "Pre-download failed: current Docker packages for rollback."
+	$SUDO_CMD chmod 700 "$DOKPLOY_BACKUP_DIR" || abort_before_change "Pre-download failed: current Docker packages for rollback."
+	$SUDO_CMD sh -c 'umask 077 && mkdir -p "$1"' sh "$DOCKER_ROLLBACK_DIR" || abort_before_change "Pre-download failed: current Docker packages for rollback."
+	for package in docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras; do
+		installed="$(docker_installed_version "$package")"
+		if [ -z "$installed" ]; then
+			continue
+		fi
+		case "$package" in
+			docker-ce | docker-ce-cli) ;;
+			*)
+				candidate="$(docker_candidate_version "$package")"
+				if [ "$candidate" = "$installed" ]; then
+					continue
+				fi
+				;;
+		esac
+		$SUDO_CMD sh -c 'umask 077 && cd "$1" && apt-get download "$2" >/dev/null' sh "$DOCKER_ROLLBACK_DIR" "$package=$installed" || abort_before_change "Pre-download failed: current Docker packages for rollback."
+	done
+}
+
+docker_prepare_apt() {
+	$SUDO_CMD apt-get update -qq || abort_before_change "Pre-download failed: the apt package lists could not be refreshed."
+	DOCKER_PACKAGE_VERSION="$(docker_pinned_candidate)"
+	if [ -z "$DOCKER_PACKAGE_VERSION" ]; then
+		docker_add_apt_repository
+		$SUDO_CMD apt-get update -qq || abort_before_change "Pre-download failed: the apt package lists could not be refreshed."
+		DOCKER_PACKAGE_VERSION="$(docker_pinned_candidate)"
+		if [ -z "$DOCKER_PACKAGE_VERSION" ]; then
+			abort_before_change "Pre-download failed: Docker ${PINNED_VERSIONS.docker} is not in the apt sources, even after adding Docker's repository."
+		fi
+	fi
+	docker_save_rollback_packages
+	download_with_retry $SUDO_CMD apt-get install -y -qq --download-only "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin || abort_before_change "Pre-download failed: the Docker packages."
+}
+
+docker_ready_on() {
+	[ "$($SUDO_CMD docker version --format '{{.Server.Version}}' 2>/dev/null)" = "$1" ] || return 1
+	if [ "$2" = 1 ]; then
+		[ "$($SUDO_CMD docker inspect -f '{{.State.Running}}' dokploy-traefik 2>/dev/null)" = "true" ] || return 1
+	fi
+}
+
+docker_wait_ready() {
+	local attempt=0
+	until docker_ready_on "$1" "$2"; do
+		attempt=$((attempt + 1))
+		if [ "$attempt" -ge 30 ]; then
+			return 1
+		fi
+		sleep 2
+	done
+}
+
+docker_roll_back() {
+	local previous="$1"
+	local traefik_existed="$2"
+	echo "Rolling Docker back to $previous from $DOCKER_ROLLBACK_DIR" >&2
+	if $SUDO_CMD sh -c 'apt-get install -y --allow-downgrades --no-download "$1"/*.deb' sh "$DOCKER_ROLLBACK_DIR"; then
+		if ! $SUDO_CMD docker info >/dev/null 2>&1; then
+			$SUDO_CMD systemctl start docker >/dev/null 2>&1 || true
+		fi
+		if [ "$traefik_existed" = 1 ] && [ "$($SUDO_CMD docker inspect -f '{{.State.Running}}' dokploy-traefik 2>/dev/null)" != "true" ]; then
+			$SUDO_CMD docker start dokploy-traefik >/dev/null 2>&1 || true
+		fi
+		if docker_wait_ready "$previous" "$traefik_existed"; then
+			echo "Docker was rolled back to $previous. The packages it used are in $DOCKER_ROLLBACK_DIR." >&2
+			exit 1
+		fi
+	fi
+	echo "Error: the Docker rollback did not finish. Finish it by hand (the Engine should report $previous):" >&2
+	echo "  apt-get install -y --allow-downgrades --no-download $DOCKER_ROLLBACK_DIR/*.deb" >&2
+	echo "  systemctl start docker" >&2
+	echo "  docker start dokploy-traefik" >&2
+	echo "  docker version --format '{{.Server.Version}}'" >&2
+	exit 1
+}
+
+docker_update_from_apt() {
+	local previous="" traefik_existed=0
+	previous="$($SUDO_CMD docker version --format '{{.Server.Version}}' 2>/dev/null || true)"
+	if $SUDO_CMD docker inspect dokploy-traefik >/dev/null 2>&1; then
+		traefik_existed=1
+	fi
+	if ! $SUDO_CMD apt-get install -y --no-download "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin; then
+		echo "Error: installing the pre-downloaded Docker packages failed." >&2
+		docker_roll_back "$previous" "$traefik_existed"
+	fi
+	if ! docker_wait_ready "${PINNED_VERSIONS.docker}" "$traefik_existed"; then
+		echo "Error: Docker ${PINNED_VERSIONS.docker} did not come up healthy after the install." >&2
+		docker_roll_back "$previous" "$traefik_existed"
+	fi
+}
+`;
+
+const dockerPredownload = () => `
+if command -v apt-get >/dev/null 2>&1; then
+	DOCKER_FROM_APT=1
+	if docker_check_repo_codename; then
+		docker_prepare_apt
+	else
+		DOCKER_SKIPPED=1
+	fi
+else
+	GET_DOCKER_SCRIPT="$(mktemp)"
+	download_with_retry curl -fsSL https://get.docker.com -o "$GET_DOCKER_SCRIPT" || abort_before_change "Pre-download failed: get.docker.com."
+	echo "No apt-get on this host: the Docker packages are not pre-downloaded; the Docker step fetches them."
+fi
+`;
+
 // Runs before any step: a failed download stops the update while nothing
 // running has been touched. Only Docker and Traefik replace running services;
 // the other components are plain binaries with no running state to protect.
@@ -105,17 +316,7 @@ const predownloadGate = (components: UpdatableComponent[]) => {
 		);
 	}
 	if (components.includes("docker")) {
-		const dockerVersionPattern = PINNED_VERSIONS.docker.replace(/\./g, "\\.");
-		downloads.push(`GET_DOCKER_SCRIPT="$(mktemp)"
-download_with_retry curl -fsSL https://get.docker.com -o "$GET_DOCKER_SCRIPT" || abort_before_change "Pre-download failed: get.docker.com."
-if command -v apt-get >/dev/null 2>&1; then
-	$SUDO_CMD apt-get update -qq || abort_before_change "Pre-download failed: the apt package lists could not be refreshed."
-	DOCKER_PACKAGE_VERSION="$(apt-cache madison docker-ce | awk -F'|' '{ gsub(/ /, "", $2); print $2 }' | grep -m1 -E '^([0-9]+:)?${dockerVersionPattern}-' || true)"
-	[ -n "$DOCKER_PACKAGE_VERSION" ] || abort_before_change "Pre-download failed: Docker ${PINNED_VERSIONS.docker} is not in the apt sources."
-	download_with_retry $SUDO_CMD apt-get install -y -qq --download-only "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin || abort_before_change "Pre-download failed: the Docker packages."
-else
-	echo "No apt-get on this host: the Docker packages are not pre-downloaded; the Docker step fetches them."
-fi`);
+		downloads.push(dockerPredownload());
 	}
 	if (downloads.length === 0) {
 		return "";
@@ -136,6 +337,7 @@ download_with_retry() {
 	done
 	return 1
 }
+${components.includes("docker") ? dockerHelpers() : ""}
 echo "Downloading update artifacts before anything is changed"
 ${downloads.join("\n")}
 `;
@@ -145,10 +347,18 @@ const updateStepFor = (component: UpdatableComponent) => {
 	switch (component) {
 		case "docker":
 			return `
-echo "Updating Docker to ${PINNED_VERSIONS.docker}"
-$SUDO_CMD sh "$GET_DOCKER_SCRIPT" --version ${PINNED_VERSIONS.docker}
-rm -f "$GET_DOCKER_SCRIPT"
-echo "Docker version ${PINNED_VERSIONS.docker} installed ✅"
+if [ "$DOCKER_SKIPPED" = 1 ]; then
+	echo "Docker update skipped: its apt repository does not match this release (see above)."
+else
+	echo "Updating Docker to ${PINNED_VERSIONS.docker}"
+	if [ "$DOCKER_FROM_APT" = 1 ]; then
+		docker_update_from_apt
+	else
+		$SUDO_CMD sh "$GET_DOCKER_SCRIPT" --version ${PINNED_VERSIONS.docker}
+		rm -f "$GET_DOCKER_SCRIPT"
+	fi
+	echo "Docker version ${PINNED_VERSIONS.docker} installed ✅"
+fi
 `;
 		case "rclone":
 			return `
@@ -171,13 +381,26 @@ restore_traefik() {
 	exit 1
 }
 trap restore_traefik ERR HUP INT TERM
+traefik_networks="$($SUDO_CMD docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' dokploy-traefik 2>/dev/null || true)"
 if $SUDO_CMD docker inspect dokploy-traefik >/dev/null 2>&1; then
-	$SUDO_CMD docker stop dokploy-traefik >/dev/null
 	$SUDO_CMD docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
 	$SUDO_CMD docker rename dokploy-traefik dokploy-traefik-previous
 	traefik_previous_kept=1
 fi
-${buildTraefikRunCommand(TRAEFIK_VERSION)}
+${buildTraefikCreateCommand(TRAEFIK_VERSION)}
+$SUDO_CMD docker network connect dokploy-network dokploy-traefik
+for traefik_network in $traefik_networks; do
+	case "$traefik_network" in
+		bridge | dokploy-network) continue ;;
+	esac
+	if $SUDO_CMD docker network inspect "$traefik_network" >/dev/null 2>&1; then
+		$SUDO_CMD docker network connect "$traefik_network" dokploy-traefik >/dev/null
+	fi
+done
+if [ "$traefik_previous_kept" = 1 ]; then
+	$SUDO_CMD docker stop dokploy-traefik-previous >/dev/null
+fi
+$SUDO_CMD docker start dokploy-traefik >/dev/null
 sleep "\${TRAEFIK_SETTLE_SECONDS:-10}"
 if [ "$($SUDO_CMD docker inspect -f '{{.State.Running}}' dokploy-traefik 2>/dev/null)" != "true" ]; then
 	restore_traefik
@@ -285,10 +508,15 @@ export const updateServerComponents = async (
 	serverId: string,
 	components: UpdatableComponent[],
 	onData?: (data: string) => void,
+	upgradeDocker = false,
 ) => {
+	const plan = filterDockerUpgrade(components, upgradeDocker);
+	if (plan.skippedDocker) {
+		onData?.(`${DOCKER_UPGRADE_SKIPPED_MESSAGE}\n`);
+	}
 	const { exitCode } = await runSshCommand(
 		serverId,
-		buildComponentUpdateScript(components),
+		buildComponentUpdateScript(plan.components),
 		onData,
 	);
 	if (exitCode !== 0) {

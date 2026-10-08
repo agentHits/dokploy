@@ -24,18 +24,24 @@ export const TRAEFIK_HTTP3_PORT =
 export const TRAEFIK_VERSION =
 	process.env.TRAEFIK_VERSION || PINNED_VERSIONS.traefik;
 
+const traefikContainerOptions = (version: string) => `--name dokploy-traefik \
+	--restart always \
+	-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
+	-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
+	-v /var/run/docker.sock:/var/run/docker.sock \
+	-p ${TRAEFIK_SSL_PORT}:${TRAEFIK_SSL_PORT} \
+	-p ${TRAEFIK_PORT}:${TRAEFIK_PORT} \
+	-p ${TRAEFIK_HTTP3_PORT}:${TRAEFIK_HTTP3_PORT}/udp \
+	traefik:v${version}`;
+
 export const buildTraefikRunCommand = (version: string) => `
-		$SUDO_CMD docker run -d \
-			--name dokploy-traefik \
-			--restart always \
-			-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
-			-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
-			-v /var/run/docker.sock:/var/run/docker.sock \
-			-p ${TRAEFIK_SSL_PORT}:${TRAEFIK_SSL_PORT} \
-			-p ${TRAEFIK_PORT}:${TRAEFIK_PORT} \
-			-p ${TRAEFIK_HTTP3_PORT}:${TRAEFIK_HTTP3_PORT}/udp \
-			traefik:v${version}
+		$SUDO_CMD docker run -d ${traefikContainerOptions(version)}
 		$SUDO_CMD docker network connect dokploy-network dokploy-traefik
+`;
+
+// Created but not started, so networks are attached before the ports are taken.
+export const buildTraefikCreateCommand = (version: string) => `
+		$SUDO_CMD docker create ${traefikContainerOptions(version)}
 `;
 
 export interface TraefikOptions {
