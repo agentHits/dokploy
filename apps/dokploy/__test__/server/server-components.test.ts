@@ -129,6 +129,9 @@ describe("buildComponentUpdateScript", () => {
 			buildTraefikCreateWithImage('"$1"', "$traefik_http_publish").trim(),
 		);
 		expect(script).toContain('traefik_http_publish="-p 80:80"');
+		expect(script).toContain(
+			"docker network disconnect bridge dokploy-traefik",
+		);
 		expect(script).not.toContain("docker rename");
 	});
 	it("stops and removes the old Traefik, creates the new one, attaches its networks, and starts it last", () => {

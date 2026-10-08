@@ -462,6 +462,10 @@ if $SUDO_CMD docker inspect dokploy-traefik >/dev/null 2>&1; then
 	traefik_old_image="$($SUDO_CMD docker inspect -f '{{.Config.Image}}' dokploy-traefik 2>/dev/null || true)"
 	traefik_extra_networks="$($SUDO_CMD docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' dokploy-traefik 2>/dev/null || true)"
 fi
+traefik_keep_bridge=1
+if [ "$traefik_existed" = 1 ] && ! echo " $traefik_extra_networks " | grep -q " bridge "; then
+	traefik_keep_bridge=0
+fi
 traefik_http_publish="-p ${TRAEFIK_PORT}:${TRAEFIK_PORT}"
 if [ "$traefik_existed" = 1 ] && ! $SUDO_CMD docker inspect -f '{{json .HostConfig.PortBindings}}' dokploy-traefik | grep -q '"${TRAEFIK_PORT}/tcp"'; then
 	traefik_http_publish=""
@@ -532,6 +536,9 @@ if ! $SUDO_CMD docker start dokploy-traefik >/dev/null; then
 fi
 if ! traefik_wait_settled; then
 	traefik_restore "checking the new Traefik container (running, with no restarts)"
+fi
+if [ "$traefik_keep_bridge" = 0 ]; then
+	$SUDO_CMD docker network disconnect bridge dokploy-traefik >/dev/null 2>&1 || true
 fi
 if ! $SUDO_CMD docker update --restart always dokploy-traefik >/dev/null; then
 	traefik_restore "setting the restart policy of the new Traefik container"
