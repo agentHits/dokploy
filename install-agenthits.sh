@@ -4,12 +4,16 @@ set -euo pipefail
 DOKPLOY_IMAGE="${DOKPLOY_IMAGE:-ghcr.io/agenthits/dokploy:agenthits-dev}"
 DOKPLOY_RELEASE_TAG="${DOKPLOY_RELEASE_TAG:-agenthits-dev}"
 DOKPLOY_OFFICIAL_VERSION="${DOKPLOY_OFFICIAL_VERSION:-v0.29.8}"
-TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.7.5}"
-POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18.4}"
-REDIS_IMAGE="${REDIS_IMAGE:-redis:8.8.0}"
+TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.7.14}"
+POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18.6}"
+REDIS_IMAGE="${REDIS_IMAGE:-redis:8.10.2}"
 POSTGRES_DATA_TARGET="${POSTGRES_DATA_TARGET:-}"
 AGENTHITS_SCRIPT_BASE_URL="${AGENTHITS_SCRIPT_BASE_URL:-https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev}"
-DOCKER_VERSION="${DOCKER_VERSION:-28.5.0}"
+DOCKER_VERSION="${DOCKER_VERSION:-29.8.2}"
+NIXPACKS_VERSION="${NIXPACKS_VERSION:-1.41.0}"
+RAILPACK_VERSION="${RAILPACK_VERSION:-0.40.1}"
+BUILDPACKS_VERSION="${BUILDPACKS_VERSION:-0.40.9}"
+RCLONE_VERSION="${RCLONE_VERSION:-1.75.1}"
 DOKPLOY_MACHINE="${DOKPLOY_MACHINE:-dokploy}"
 DOKPLOY_MACHINE_DISTRO="${DOKPLOY_MACHINE_DISTRO:-ubuntu:noble}"
 PASSTHROUGH_VARS=(
@@ -26,8 +30,15 @@ PASSTHROUGH_VARS=(
 	DOCKER_SWARM_INIT_ARGS
 	ADVERTISE_ADDR
 	PUBLIC_IP
+	DOKPLOY_SERVER_HARDENING
+	HARDEN_SSH
+	HARDEN_UFW
+	HARDEN_FAIL2BAN
 )
 ORB=""
+HARDEN_UFW="${HARDEN_UFW:-0}"
+HARDEN_SSH="${HARDEN_SSH:-0}"
+HARDEN_FAIL2BAN="${HARDEN_FAIL2BAN:-0}"
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -334,6 +345,51 @@ install_docker_if_missing() {
 	ensure_docker_running
 }
 
+tool_version_matches() {
+	local expected="$1"
+	shift
+	command_exists "$1" && "$@" 2>/dev/null | grep -q -- "$expected"
+}
+
+install_toolchain() {
+	local arch="" pack_suffix=""
+	case "$(uname -m)" in
+		x86_64 | amd64)
+			arch=amd64
+			;;
+		aarch64 | arm64)
+			arch=arm64
+			pack_suffix="-arm64"
+			;;
+		*)
+			echo "Unsupported architecture for the toolchain: $(uname -m)" >&2
+			exit 1
+			;;
+	esac
+
+	if ! tool_version_matches "$NIXPACKS_VERSION" nixpacks --version; then
+		NIXPACKS_VERSION="$NIXPACKS_VERSION" bash -c "$(curl -fsSL https://nixpacks.com/install.sh)"
+	fi
+	if ! tool_version_matches "$RAILPACK_VERSION" railpack --version; then
+		RAILPACK_VERSION="$RAILPACK_VERSION" bash -c "$(curl -fsSL https://railpack.com/install.sh)"
+	fi
+	if ! tool_version_matches "$BUILDPACKS_VERSION" pack --version; then
+		curl -sSL "https://github.com/buildpacks/pack/releases/download/v${BUILDPACKS_VERSION}/pack-v${BUILDPACKS_VERSION}-linux${pack_suffix}.tgz" | tar -C /usr/local/bin/ --no-same-owner -xz pack
+	fi
+	if ! tool_version_matches "$RCLONE_VERSION" rclone --version; then
+		if ! command_exists unzip; then
+			apt-get update -qq
+			DEBIAN_FRONTEND=noninteractive apt-get install -y -qq unzip >/dev/null
+		fi
+		local rclone_dir=""
+		rclone_dir="$(mktemp -d)"
+		curl -fsSL "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-${arch}.zip" -o "$rclone_dir/rclone.zip"
+		unzip -q "$rclone_dir/rclone.zip" -d "$rclone_dir"
+		install -m 0755 "$rclone_dir/rclone-v${RCLONE_VERSION}-linux-${arch}/rclone" /usr/bin/rclone
+		rm -rf "$rclone_dir"
+	fi
+}
+
 has_amd64_binfmt() {
 	# Without systemd (e.g. Alpine) binfmt_misc is often not mounted, which
 	# hides handlers the kernel already has.
@@ -619,6 +675,15 @@ install_on_macos() {
 	echo "Shell in the machine: $ORB -m $DOKPLOY_MACHINE -u root"
 }
 
+harden_on_macos() {
+	if ! find_orb || ! orb_machine_exists; then
+		echo "OrbStack machine '$DOKPLOY_MACHINE' does not exist. Run this script with 'install' first." >&2
+		exit 1
+	fi
+	"$ORB" start "$DOKPLOY_MACHINE" >/dev/null 2>&1 || true
+	run_in_orb_machine harden
+}
+
 update_on_macos() {
 	if ! find_orb || ! orb_machine_exists; then
 		echo "OrbStack machine '$DOKPLOY_MACHINE' does not exist. Run this script with 'install' first." >&2
@@ -628,12 +693,154 @@ update_on_macos() {
 	run_in_orb_machine update
 }
 
+# Hardening flags (opt-in). They close the findings from Dokploy's
+# Setup Server > Security tab: UFW, SSH password login and Fail2Ban.
+ssh_listen_port() {
+	local port=""
+	port="$(sshd -T 2>/dev/null | awk '$1 == "port" { print $2; exit }')"
+	echo "${port:-22}"
+}
+
+require_root_public_key() {
+	local keys_file=/root/.ssh/authorized_keys
+	if [ ! -s "$keys_file" ] || ! ssh-keygen -l -f "$keys_file" >/dev/null 2>&1; then
+		echo "Refusing to turn off password login: $keys_file has no valid public key." >&2
+		echo "Add your public key to that file first, then run again." >&2
+		exit 1
+	fi
+}
+
+harden_ssh_keys_only() {
+	require_root_public_key
+
+	# The Security tab reads the main sshd_config, not drop-ins, and sshd keeps
+	# the first value it sees, so the options go on the first line of that file.
+	local config=/etc/ssh/sshd_config
+	local backup=/etc/ssh/sshd_config.agenthits-backup
+	if [ ! -f "$backup" ]; then
+		cp -p "$config" "$backup"
+	fi
+	local option=""
+	local key=""
+	for option in "PubkeyAuthentication yes" "PasswordAuthentication no" "KbdInteractiveAuthentication no" "PermitRootLogin prohibit-password" "UsePAM no"; do
+		key="${option%% *}"
+		sed -i -E "/^[#[:space:]]*${key}[[:space:]]/Id" "$config"
+		sed -i "1i ${option}" "$config"
+	done
+	if ! sshd -t; then
+		cp -p "$backup" "$config"
+		echo "sshd rejected the hardened config, the original was restored." >&2
+		exit 1
+	fi
+	systemctl reload ssh 2>/dev/null || systemctl reload sshd
+	echo "SSH: password login is off, keys only."
+}
+
+harden_ufw() {
+	if ! command_exists apt-get; then
+		echo "UFW: the --ufw flag supports Debian and Ubuntu only; skipped." >&2
+		return 0
+	fi
+
+	DEBIAN_FRONTEND=noninteractive apt-get install -y ufw >/dev/null
+	local ssh_port=""
+	ssh_port="$(ssh_listen_port)"
+
+	ufw default deny incoming >/dev/null
+	ufw default allow outgoing >/dev/null
+	# ufw drops forwarded traffic by default, which cuts container networking.
+	sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
+	# SSH must be allowed before enabling, or the next login fails.
+	ufw allow "${ssh_port}/tcp" comment 'SSH' >/dev/null
+	ufw allow 80/tcp comment 'HTTP' >/dev/null
+	ufw allow 443/tcp comment 'HTTPS' >/dev/null
+	ufw allow 443/udp comment 'HTTP/3' >/dev/null
+	ufw allow 3000/tcp comment 'Dokploy panel' >/dev/null
+	ufw --force enable >/dev/null
+	echo "UFW: enabled. Incoming is denied except SSH (${ssh_port}), 80, 443 and 3000."
+}
+
+harden_fail2ban() {
+	if ! command_exists apt-get; then
+		echo "Fail2Ban: the --fail2ban flag supports Debian and Ubuntu only; skipped." >&2
+		return 0
+	fi
+
+	DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban >/dev/null
+	if [ ! -f /etc/fail2ban/jail.local ]; then
+		cat >/etc/fail2ban/jail.local <<'EOF'
+[sshd]
+enabled = true
+backend = auto
+mode = aggressive
+maxretry = 5
+findtime = 10m
+bantime = 1h
+EOF
+	fi
+	systemctl enable --now fail2ban >/dev/null 2>&1
+	systemctl restart fail2ban
+	echo "Fail2Ban: sshd jail is active in aggressive mode."
+}
+
+hardening_requested() {
+	[ "$HARDEN_SSH" = "1" ] || [ "$HARDEN_UFW" = "1" ] || [ "$HARDEN_FAIL2BAN" = "1" ]
+}
+
+traefik_version_from_image() {
+	case "$1" in
+		traefik:v*) echo "${1#traefik:v}" ;;
+	esac
+}
+
+# The panel hardens every server it sets up. An explicit DOKPLOY_SERVER_HARDENING
+# wins; otherwise it follows the host flags so one install flag covers both.
+panel_server_hardening() {
+	if [ -n "${DOKPLOY_SERVER_HARDENING:-}" ]; then
+		echo "$DOKPLOY_SERVER_HARDENING"
+		return 0
+	fi
+	local items=""
+	if [ "$HARDEN_SSH" = "1" ]; then
+		items="ssh"
+	fi
+	if [ "$HARDEN_UFW" = "1" ]; then
+		items="${items:+$items,}ufw"
+	fi
+	if [ "$HARDEN_FAIL2BAN" = "1" ]; then
+		items="${items:+$items,}fail2ban"
+	fi
+	echo "$items"
+}
+
+apply_hardening() {
+	if [ "$HARDEN_SSH" = "1" ]; then
+		if command_exists sshd; then
+			harden_ssh_keys_only
+		else
+			echo "SSH: no sshd on this host, skipped."
+		fi
+	fi
+	if [ "$HARDEN_UFW" = "1" ]; then
+		harden_ufw
+	fi
+	if [ "$HARDEN_FAIL2BAN" = "1" ]; then
+		harden_fail2ban
+	fi
+}
+
 install_agenthits_dokploy() {
 	require_root_linux_host
+	# Check the key before anything is changed, so a missing key cannot
+	# leave a half-installed server behind.
+	if [ "$HARDEN_SSH" = "1" ] && command_exists sshd; then
+		require_root_public_key
+	fi
 	require_free_port 80
 	require_free_port 443
 	require_free_port 3000
 	install_docker_if_missing
+	install_toolchain
 	ensure_amd64_support
 
 	local endpoint_mode=""
@@ -680,6 +887,10 @@ install_agenthits_dokploy() {
 	if [ -n "${DOKPLOY_FORK_VERSION:-}" ]; then
 		fork_version_env_args=(-e "DOKPLOY_FORK_VERSION=$DOKPLOY_FORK_VERSION")
 	fi
+	local panel_hardening=""
+	panel_hardening="$(panel_server_hardening)"
+	local traefik_version=""
+	traefik_version="$(traefik_version_from_image "$TRAEFIK_IMAGE")"
 
 	docker service create \
 		--name dokploy-postgres \
@@ -718,6 +929,8 @@ install_agenthits_dokploy() {
 		--constraint 'node.role == manager' \
 		$endpoint_mode \
 		-e RELEASE_TAG="$DOKPLOY_RELEASE_TAG" \
+		-e DOKPLOY_SERVER_HARDENING="$panel_hardening" \
+		-e TRAEFIK_VERSION="$traefik_version" \
 		-e DOKPLOY_OFFICIAL_VERSION="$DOKPLOY_OFFICIAL_VERSION" \
 		"${fork_version_env_args[@]}" \
 		-e ADVERTISE_ADDR="$advertise_addr" \
@@ -740,6 +953,8 @@ install_agenthits_dokploy() {
 		"$TRAEFIK_IMAGE"
 
 	docker network connect dokploy-network dokploy-traefik
+
+	apply_hardening
 
 	local public_ip="${PUBLIC_IP:-${ADVERTISE_ADDR:-$(get_public_ip)}}"
 	local formatted_addr
@@ -772,15 +987,56 @@ update_agenthits_dokploy() {
 	return "$status"
 }
 
+parse_hardening_flags() {
+	local arg=""
+	for arg in "$@"; do
+		case "$arg" in
+			install | update | harden) ;;
+			--harden)
+				HARDEN_UFW=1
+				HARDEN_SSH=1
+				HARDEN_FAIL2BAN=1
+				;;
+			--ufw)
+				HARDEN_UFW=1
+				;;
+			--ssh-keys-only)
+				HARDEN_SSH=1
+				;;
+			--fail2ban)
+				HARDEN_FAIL2BAN=1
+				;;
+			*)
+				echo "Unknown argument: $arg" >&2
+				exit 1
+				;;
+		esac
+	done
+}
+
 main() {
-	local mode="${1:-install}"
-	case "$mode" in
-		install | update) ;;
-		*)
-			echo "Usage: $0 [install|update]" >&2
-			exit 1
-			;;
-	esac
+	local mode="install"
+	if [ "$#" -gt 0 ]; then
+		case "$1" in
+			install | update | harden)
+				mode="$1"
+				;;
+			--*) ;;
+			*)
+				echo "Usage: $0 [install|update|harden] [--harden] [--ufw] [--ssh-keys-only] [--fail2ban]" >&2
+				exit 1
+				;;
+		esac
+	fi
+	parse_hardening_flags "$@"
+	if [ "$mode" = "update" ] && hardening_requested; then
+		echo "Hardening flags work with install and harden, not with update." >&2
+		exit 1
+	fi
+	if [ "$mode" = "harden" ] && ! hardening_requested; then
+		echo "harden needs at least one flag: --harden, --ufw, --ssh-keys-only or --fail2ban." >&2
+		exit 1
+	fi
 
 	local platform=""
 	platform="$(detect_platform)"
@@ -790,22 +1046,22 @@ main() {
 				echo "On macOS run this script as your own user, without sudo." >&2
 				exit 1
 			fi
-			if [ "$mode" = "install" ]; then
-				install_on_macos
-			else
-				update_on_macos
-			fi
+			case "$mode" in
+				install) install_on_macos ;;
+				harden) harden_on_macos ;;
+				*) update_on_macos ;;
+			esac
 			;;
 		linux | wsl)
-			reexec_as_root "$mode"
+			reexec_as_root "$@"
 			if [ "$platform" = "wsl" ]; then
 				prepare_wsl
 			fi
-			if [ "$mode" = "install" ]; then
-				install_agenthits_dokploy
-			else
-				update_agenthits_dokploy
-			fi
+			case "$mode" in
+				install) install_agenthits_dokploy ;;
+				harden) apply_hardening ;;
+				*) update_agenthits_dokploy ;;
+			esac
 			;;
 		windows)
 			echo "On Windows run install-agenthits.ps1 in PowerShell (as administrator):" >&2

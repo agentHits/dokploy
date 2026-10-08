@@ -29,7 +29,7 @@ Installer сам определяет систему:
 
 | Система | Что делает installer |
 | --- | --- |
-| Linux: Ubuntu, Debian, Raspbian, Fedora, CentOS, RHEL | Ставит Docker через get.docker.com (версия `DOCKER_VERSION`, по умолчанию 28.5.0; если для релиза ее нет — последнюю) |
+| Linux: Ubuntu, Debian, Raspbian, Fedora, CentOS, RHEL | Ставит Docker через get.docker.com (версия `DOCKER_VERSION`, по умолчанию 29.8.2; если для релиза ее нет — последнюю) |
 | Linux: Rocky, Alma, Oracle, Arch, Manjaro, openSUSE, Alpine, производные Debian/RHEL | Ставит Docker пакетным менеджером дистрибутива. На Alpine сначала `apk add bash curl` |
 | Linux на ARM (`aarch64`) | Дополнительно включает эмуляцию `amd64` (qemu): образ собирается только под `amd64` |
 | macOS (Apple Silicon и Intel) | Ставит OrbStack (через Homebrew, если его нет) и панель в отдельную Linux-машину OrbStack |
@@ -48,9 +48,9 @@ Installer сам определяет систему:
 
 ```text
 Dokploy: ghcr.io/agenthits/dokploy:agenthits-dev
-Traefik: traefik:v3.7.5
-Postgres: postgres:18.4
-Redis: redis:8.8.0
+Traefik: traefik:v3.7.14
+Postgres: postgres:18.6
+Redis: redis:8.10.2
 ```
 
 Для `postgres:18+` installer автоматически монтирует volume в

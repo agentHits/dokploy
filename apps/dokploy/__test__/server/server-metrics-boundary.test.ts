@@ -74,6 +74,17 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@dokploy/server", () => ({
+	COMPONENTS_UPDATE_FAILED: "Components update failed ❌",
+	UPDATABLE_COMPONENTS: [
+		"docker",
+		"traefik",
+		"rclone",
+		"nixpacks",
+		"railpack",
+		"buildpacks",
+	],
+	serverComponentsStatus: async () => [],
+	updateServerComponents: async () => undefined,
 	IS_CLOUD: false,
 	createServer: mocks.createServer,
 	defaultCommand: mocks.defaultCommand,
@@ -110,6 +121,17 @@ vi.mock("@dokploy/server", () => ({
 }));
 
 vi.mock("@dokploy/server/index", () => ({
+	COMPONENTS_UPDATE_FAILED: "Components update failed ❌",
+	UPDATABLE_COMPONENTS: [
+		"docker",
+		"traefik",
+		"rclone",
+		"nixpacks",
+		"railpack",
+		"buildpacks",
+	],
+	serverComponentsStatus: async () => [],
+	updateServerComponents: async () => undefined,
 	IS_CLOUD: false,
 	createServer: mocks.createServer,
 	defaultCommand: mocks.defaultCommand,

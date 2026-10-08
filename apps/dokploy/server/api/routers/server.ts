@@ -1,4 +1,5 @@
 import {
+	COMPONENTS_UPDATE_FAILED,
 	createServer,
 	defaultCommand,
 	deleteServer,
@@ -19,10 +20,13 @@ import {
 	removeDeploymentsByServerId,
 	resolveServerMetricsConfigUpdate,
 	serverAudit,
+	serverComponentsStatus,
 	serverSetup,
 	serverValidate,
 	setupMonitoring,
+	UPDATABLE_COMPONENTS,
 	updateServerById,
+	updateServerComponents,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
 import {
@@ -551,6 +555,65 @@ export const serverRouter = createTRPCRouter({
 					cause: error as Error,
 				});
 			}
+		}),
+	components: withPermission("server", "read")
+		.input(apiFindOneServer)
+		.query(async ({ input, ctx }) => {
+			await assertServerAccess(ctx, input.serverId);
+			const server = await findServerById(input.serverId);
+			if (server.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to validate this server",
+				});
+			}
+			try {
+				return await serverComponentsStatus(input.serverId);
+			} catch (error) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: error instanceof Error ? error.message : `Error: ${error}`,
+					cause: error as Error,
+				});
+			}
+		}),
+	updateComponentsWithLogs: withPermission("server", "execute")
+		.meta({
+			openapi: {
+				path: "/server/update-components-with-logs",
+				method: "POST",
+				override: true,
+				enabled: false,
+			},
+		})
+		.input(
+			z.object({
+				serverId: z.string(),
+				components: z.array(z.enum(UPDATABLE_COMPONENTS)).min(1),
+			}),
+		)
+		.subscription(async ({ input, ctx }) => {
+			await assertServerAccess(ctx, input.serverId);
+			const server = await findServerById(input.serverId);
+			if (server.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to update this server",
+				});
+			}
+			return observable<string>((emit) => {
+				updateServerComponents(input.serverId, input.components, (log) => {
+					emit.next(log);
+				})
+					.catch((error) => {
+						emit.next(
+							`${error instanceof Error ? error.message : error}\n${COMPONENTS_UPDATE_FAILED}\n`,
+						);
+					})
+					.finally(() => {
+						emit.complete();
+					});
+			});
 		}),
 	setupMonitoring: withPermission("server", "execute")
 		.input(apiUpdateServerMonitoring)

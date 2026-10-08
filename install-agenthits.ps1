@@ -7,9 +7,14 @@ runs install-agenthits.sh inside it. Run in PowerShell as administrator:
 Update:
 
   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev/install-agenthits.ps1))) update
+
+Hardening (optional) is set with environment variables before the install:
+
+  $env:HARDEN_SSH = '1'; $env:HARDEN_UFW = '1'; $env:HARDEN_FAIL2BAN = '1'
+  irm https://raw.githubusercontent.com/agentHits/dokploy/AgentHits-Dev/install-agenthits.ps1 | iex
 #>
 param(
-	[ValidateSet('install', 'update')]
+	[ValidateSet('install', 'update', 'harden')]
 	[string]$Mode = 'install'
 )
 
@@ -22,7 +27,8 @@ $BaseUrl = if ($env:AGENTHITS_SCRIPT_BASE_URL) { $env:AGENTHITS_SCRIPT_BASE_URL 
 $PassthroughVars = @(
 	'DOKPLOY_IMAGE', 'DOKPLOY_RELEASE_TAG', 'DOKPLOY_OFFICIAL_VERSION', 'DOKPLOY_FORK_VERSION',
 	'TRAEFIK_IMAGE', 'POSTGRES_IMAGE', 'REDIS_IMAGE', 'POSTGRES_DATA_TARGET',
-	'AGENTHITS_SCRIPT_BASE_URL', 'DOCKER_VERSION', 'DOCKER_SWARM_INIT_ARGS', 'ADVERTISE_ADDR', 'PUBLIC_IP'
+	'AGENTHITS_SCRIPT_BASE_URL', 'DOCKER_VERSION', 'DOCKER_SWARM_INIT_ARGS', 'ADVERTISE_ADDR', 'PUBLIC_IP',
+	'DOKPLOY_SERVER_HARDENING', 'HARDEN_SSH', 'HARDEN_UFW', 'HARDEN_FAIL2BAN'
 )
 # VM creator id of WSL in the Hyper-V firewall (documented by Microsoft).
 $WslVmCreatorId = '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'
