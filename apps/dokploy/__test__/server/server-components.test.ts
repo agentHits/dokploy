@@ -253,6 +253,19 @@ describe("buildComponentUpdateScript", () => {
 		);
 	});
 
+	it("removes the Docker key and source this run wrote when a later Docker step fails", () => {
+		const script = buildComponentUpdateScript(["docker"]);
+
+		expect(script).toContain('rm -f "$DOKPLOY_APT_SOURCES_DIR/docker.list"');
+		expect(script).toContain('rm -f "$DOKPLOY_DOCKER_KEYRING"');
+		expect(script).toMatch(
+			/--download-only[^\n]*; then\s+docker_undo_repo\s+abort_before_change/,
+		);
+		expect(script).toMatch(
+			/docker_save_rollback_packages; then\s+docker_undo_repo\s+return 1/,
+		);
+	});
+
 	it("ends with the marker the UI waits for", () => {
 		expect(buildComponentUpdateScript(["buildpacks"])).toContain(
 			COMPONENTS_UPDATE_DONE,
@@ -485,6 +498,7 @@ type ScriptOptions = {
 	osRelease?: string;
 	sourceFiles?: Record<string, string>;
 	withoutApt?: boolean;
+	preexistingKeyring?: string;
 };
 
 const listBackups = (backups: string) => {
@@ -525,6 +539,10 @@ const runComponentScript = (
 		const keyring = path.join(dir, "keyrings", "docker.asc");
 		const backups = path.join(dir, "backups");
 		mkdirSync(sources);
+		if (options.preexistingKeyring !== undefined) {
+			mkdirSync(path.dirname(keyring));
+			writeFileSync(keyring, options.preexistingKeyring);
+		}
 		writeFileSync(callLog, "");
 		writeFileSync(path.join(dir, "engine"), "28.3.0\n");
 		writeFileSync(
@@ -569,6 +587,8 @@ const runComponentScript = (
 			calls: readFileSync(callLog, "utf8").split("\n").filter(Boolean),
 			backups: listBackups(backups),
 			keyringExists: existsSync(keyring),
+			keyring: existsSync(keyring) ? readFileSync(keyring, "utf8") : null,
+			keyringDirExists: existsSync(path.dirname(keyring)),
 			sources: readSources(sources),
 		};
 	} finally {
@@ -1148,6 +1168,84 @@ describe("buildComponentUpdateScript run order", () => {
 			);
 			expect(run.keyringExists).toBe(false);
 			expect(run.sources).toEqual({});
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"removes the Docker key and source it wrote, then aborts, when the new packages cannot be downloaded",
+		() => {
+			const run = runComponentScript(["docker", "traefik"], {
+				env: { FAKE_CANDIDATE_AFTER_REPO: "1", FAKE_PREDOWNLOAD_FAILS: "1" },
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.stderr).toContain(
+				"Pre-download failed: the Docker packages. Nothing was changed.",
+			);
+			expect(run.sources).toEqual({});
+			expect(run.keyringExists).toBe(false);
+			expect(run.keyringDirExists).toBe(false);
+			expect(run.calls.some((call) => call.startsWith("docker rename"))).toBe(
+				false,
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"removes what it wrote, then skips only Docker, when the rollback packages cannot be saved",
+		() => {
+			const run = runComponentScript(["docker", "traefik"], {
+				env: { FAKE_CANDIDATE_AFTER_REPO: "1", FAKE_DOWNLOAD_FAILS: "1" },
+			});
+
+			expect(run.status).toBe(0);
+			expect(run.stdout).toContain(
+				"Docker not updated: the current Docker packages could not be saved for rollback. The other components continue.",
+			);
+			expect(run.stdout).toContain(
+				`Traefik version ${TRAEFIK_VERSION} installed`,
+			);
+			expect(run.sources).toEqual({});
+			expect(run.keyringExists).toBe(false);
+			expect(run.keyringDirExists).toBe(false);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"removes what it wrote, then skips only Docker, when the pinned version is still missing after the update",
+		() => {
+			const run = runComponentScript(["docker", "traefik"], {
+				env: { FAKE_NO_CANDIDATE: "1" },
+			});
+
+			expect(run.status).toBe(0);
+			expect(run.stdout).toContain(
+				"Docker not updated: Docker 29.8.2 is not in the apt sources, even after adding Docker's repository. The other components continue.",
+			);
+			expect(run.stdout).toContain(
+				`Traefik version ${TRAEFIK_VERSION} installed`,
+			);
+			expect(run.sources).toEqual({});
+			expect(run.keyringExists).toBe(false);
+			expect(run.keyringDirExists).toBe(false);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"keeps a Docker key that existed before the run and removes only the source it wrote",
+		() => {
+			const run = runComponentScript(["docker", "traefik"], {
+				env: { FAKE_CANDIDATE_AFTER_REPO: "1", FAKE_DOWNLOAD_FAILS: "1" },
+				preexistingKeyring: "existing key\n",
+			});
+
+			expect(run.status).toBe(0);
+			expect(run.keyring).toBe("existing key\n");
+			expect(run.sources).toEqual({});
+			expect(run.calls.some((call) => call.startsWith("curl"))).toBe(false);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);

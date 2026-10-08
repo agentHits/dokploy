@@ -121,6 +121,9 @@ DOCKER_SKIPPED=0
 DOCKER_SKIP_REASON=""
 DOCKER_PACKAGE_VERSION=""
 DOCKER_ROLLBACK_DIR=""
+DOCKER_KEY_WRITTEN=0
+DOCKER_SOURCE_WRITTEN=0
+DOCKER_KEYDIR_CREATED=0
 
 docker_skip() {
 	DOCKER_SKIPPED=1
@@ -169,6 +172,21 @@ docker_pinned_candidate() {
 	apt-cache madison docker-ce | awk -F'|' '{ gsub(/ /, "", $2); print $2 }' | grep -m1 -E '^([0-9]+:)?${dockerVersionPattern}-' || true
 }
 
+docker_undo_repo() {
+	if [ "$DOCKER_SOURCE_WRITTEN" = 1 ]; then
+		$SUDO_CMD rm -f "$DOKPLOY_APT_SOURCES_DIR/docker.list" || true
+		DOCKER_SOURCE_WRITTEN=0
+	fi
+	if [ "$DOCKER_KEY_WRITTEN" = 1 ]; then
+		$SUDO_CMD rm -f "$DOKPLOY_DOCKER_KEYRING" || true
+		DOCKER_KEY_WRITTEN=0
+	fi
+	if [ "$DOCKER_KEYDIR_CREATED" = 1 ]; then
+		$SUDO_CMD rmdir "$(dirname "$DOKPLOY_DOCKER_KEYRING")" 2>/dev/null || true
+		DOCKER_KEYDIR_CREATED=0
+	fi
+}
+
 docker_add_apt_repository() {
 	local id="" codename="" arch="" key=""
 	if [ -n "$(docker_repo_codenames)" ] || [ -e "$DOKPLOY_APT_SOURCES_DIR/docker.list" ]; then
@@ -188,24 +206,38 @@ docker_add_apt_repository() {
 		docker_skip "VERSION_CODENAME is not set in $DOKPLOY_OS_RELEASE, so Docker's repository cannot be added"
 		return 1
 	fi
-	if ! key="$(mktemp)"; then
-		docker_skip "a temporary file for Docker's apt key could not be created"
-		return 1
+	if [ ! -e "$DOKPLOY_DOCKER_KEYRING" ]; then
+		if [ ! -d "$(dirname "$DOKPLOY_DOCKER_KEYRING")" ]; then
+			DOCKER_KEYDIR_CREATED=1
+		fi
+		if ! key="$(mktemp)"; then
+			docker_undo_repo
+			docker_skip "a temporary file for Docker's apt key could not be created"
+			return 1
+		fi
+		if ! download_with_retry curl -fsSL "https://download.docker.com/linux/$id/gpg" -o "$key"; then
+			rm -f "$key"
+			docker_undo_repo
+			docker_skip "Docker's apt key could not be downloaded"
+			return 1
+		fi
+		DOCKER_KEY_WRITTEN=1
+		if ! $SUDO_CMD install -d -m 0755 "$(dirname "$DOKPLOY_DOCKER_KEYRING")" || ! $SUDO_CMD install -m 0644 "$key" "$DOKPLOY_DOCKER_KEYRING"; then
+			rm -f "$key"
+			docker_undo_repo
+			docker_skip "Docker's apt key could not be installed"
+			return 1
+		fi
+		rm -f "$key"
 	fi
-	if ! download_with_retry curl -fsSL "https://download.docker.com/linux/$id/gpg" -o "$key"; then
-		docker_skip "Docker's apt key could not be downloaded"
-		return 1
-	fi
-	if ! $SUDO_CMD install -d -m 0755 "$(dirname "$DOKPLOY_DOCKER_KEYRING")" || ! $SUDO_CMD install -m 0644 "$key" "$DOKPLOY_DOCKER_KEYRING"; then
-		docker_skip "Docker's apt key could not be installed"
-		return 1
-	fi
-	rm -f "$key"
 	if ! arch="$(dpkg --print-architecture)"; then
+		docker_undo_repo
 		docker_skip "the architecture could not be read for Docker's apt source"
 		return 1
 	fi
+	DOCKER_SOURCE_WRITTEN=1
 	if ! printf 'deb [arch=%s signed-by=%s] https://download.docker.com/linux/%s %s stable\\n' "$arch" "$DOKPLOY_DOCKER_KEYRING" "$id" "$codename" | $SUDO_CMD tee "$DOKPLOY_APT_SOURCES_DIR/docker.list" >/dev/null; then
+		docker_undo_repo
 		docker_skip "Docker's apt source could not be written"
 		return 1
 	fi
@@ -255,19 +287,23 @@ docker_prepare_apt() {
 			return 1
 		fi
 		if ! $SUDO_CMD apt-get update -qq; then
+			docker_undo_repo
 			docker_skip "the apt package lists could not be refreshed after adding Docker's repository"
 			return 1
 		fi
 		DOCKER_PACKAGE_VERSION="$(docker_pinned_candidate)"
 		if [ -z "$DOCKER_PACKAGE_VERSION" ]; then
+			docker_undo_repo
 			docker_skip "Docker ${PINNED_VERSIONS.docker} is not in the apt sources, even after adding Docker's repository"
 			return 1
 		fi
 	fi
 	if ! docker_save_rollback_packages; then
+		docker_undo_repo
 		return 1
 	fi
 	if ! download_with_retry $SUDO_CMD apt-get install -y -qq --download-only "docker-ce=$DOCKER_PACKAGE_VERSION" "docker-ce-cli=$DOCKER_PACKAGE_VERSION" containerd.io docker-buildx-plugin docker-compose-plugin; then
+		docker_undo_repo
 		abort_before_change "Pre-download failed: the Docker packages."
 	fi
 	return 0
