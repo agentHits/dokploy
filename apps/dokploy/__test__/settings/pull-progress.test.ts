@@ -4,8 +4,10 @@ import {
 	downloadRate,
 	estimateRemainingSeconds,
 	isDownloadFinished,
+	isLayerId,
 	type LayerDownload,
 	parseDownloadProgress,
+	parseEngineDownloadProgress,
 	parsePullLine,
 	recordLayerDownload,
 	summarizeDownload,
@@ -32,7 +34,12 @@ const track = (lines: string[]) => {
 		const layer = parsePullLine(line);
 		if (layer) {
 			states.set(layer.id, layer.status);
-			recordLayerDownload(downloads, layer.id, layer.status);
+			recordLayerDownload(
+				downloads,
+				layer.id,
+				layer.status,
+				parseDownloadProgress(layer.status),
+			);
 		}
 	}
 	return summarizeDownload(states, downloads);
@@ -66,9 +73,9 @@ describe("docker pull progress", () => {
 			current: 0,
 			total: 1_200,
 		});
-		expect(parseDownloadProgress("Extracting [=====>   ]  8.1MB/9.6MB")).toBe(
-			null,
-		);
+		expect(
+			parseDownloadProgress("Extracting [=====>   ]  8.1MB/9.6MB"),
+		).toBeNull();
 		expect(parseDownloadProgress("Waiting")).toBeNull();
 	});
 
@@ -91,8 +98,9 @@ describe("docker pull progress", () => {
 			downloads,
 			"4ac6ba6b019e",
 			"Downloading [=====>   ]  4MB/10MB",
+			parseDownloadProgress("Downloading [=====>   ]  4MB/10MB"),
 		);
-		recordLayerDownload(downloads, "4ac6ba6b019e", "Download complete");
+		recordLayerDownload(downloads, "4ac6ba6b019e", "Download complete", null);
 
 		expect(downloads.get("4ac6ba6b019e")).toEqual({
 			current: 10_000_000,
@@ -102,13 +110,61 @@ describe("docker pull progress", () => {
 
 	it("keeps a layer without a known total unsized when it completes", () => {
 		const downloads = new Map<string, LayerDownload>();
-		recordLayerDownload(downloads, "9d3c1e7a2b40", "Downloading  4MB");
-		recordLayerDownload(downloads, "9d3c1e7a2b40", "Download complete");
+		recordLayerDownload(
+			downloads,
+			"9d3c1e7a2b40",
+			"Downloading  4MB",
+			parseDownloadProgress("Downloading  4MB"),
+		);
+		recordLayerDownload(downloads, "9d3c1e7a2b40", "Download complete", null);
 
 		expect(downloads.get("9d3c1e7a2b40")).toEqual({
 			current: 4_000_000,
 			total: null,
 		});
+	});
+
+	it("reads download bytes from engine events and ignores extraction progress", () => {
+		expect(
+			parseEngineDownloadProgress({
+				id: "4ac6ba6b019e",
+				status: "Downloading",
+				progressDetail: { current: 5_000_000, total: 20_000_000 },
+			}),
+		).toEqual({ current: 5_000_000, total: 20_000_000 });
+		expect(
+			parseEngineDownloadProgress({
+				id: "4ac6ba6b019e",
+				status: "Downloading",
+				progressDetail: { current: 5_000_000 },
+			}),
+		).toEqual({ current: 5_000_000, total: null });
+		expect(
+			parseEngineDownloadProgress({
+				id: "4ac6ba6b019e",
+				status: "Downloading",
+				progressDetail: { current: 5_000_000, total: 0 },
+			}),
+		).toEqual({ current: 5_000_000, total: null });
+		expect(
+			parseEngineDownloadProgress({
+				id: "4ac6ba6b019e",
+				status: "Downloading",
+				progressDetail: {},
+			}),
+		).toBeNull();
+		expect(
+			parseEngineDownloadProgress({
+				id: "4ac6ba6b019e",
+				status: "Extracting",
+				progressDetail: { current: 8_100_000, total: 9_600_000 },
+			}),
+		).toBeNull();
+	});
+
+	it("recognises layer ids and skips other engine events", () => {
+		expect(isLayerId("4ac6ba6b019e")).toBe(true);
+		expect(isLayerId("latest")).toBe(false);
 	});
 
 	it("uses the layer count while a layer has not announced its size", () => {

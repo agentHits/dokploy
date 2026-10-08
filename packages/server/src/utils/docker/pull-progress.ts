@@ -13,10 +13,19 @@ export interface DownloadSummary {
 	remainingBytes: number | null;
 }
 
+export interface EnginePullEvent {
+	id?: string;
+	status?: string;
+	progressDetail?: { current?: unknown; total?: unknown };
+	error?: string;
+	errorDetail?: { message?: string };
+}
+
 const RATE_WINDOW_MS = 5_000;
 const RATE_MIN_WINDOW_MS = 1_000;
 
 const PULL_LINE = /^([0-9a-f]{12,64}): (.+)$/;
+const LAYER_ID = /^[0-9a-f]{12,64}$/;
 
 // Docker prints decimal units: kB is 1000 bytes, not 1024.
 const UNIT_BYTES: Record<string, number> = {
@@ -35,6 +44,8 @@ const FINISHED_STATUSES = new Set([
 	"Pull complete",
 	"Already exists",
 ]);
+
+export const isLayerId = (id: string) => LAYER_ID.test(id);
 
 export const parsePullLine = (line: string) => {
 	const [, id, status] = PULL_LINE.exec(line) ?? [];
@@ -59,6 +70,27 @@ export const parseDownloadProgress = (status: string): LayerDownload | null => {
 	return { current, total: toBytes(totalAmount, totalUnit) };
 };
 
+const isKnownAmount = (value: unknown): value is number =>
+	typeof value === "number" && Number.isFinite(value) && value >= 0;
+
+// Extracting events carry extraction progress, not download bytes.
+export const parseEngineDownloadProgress = (
+	event: EnginePullEvent,
+): LayerDownload | null => {
+	if (event.status !== "Downloading") {
+		return null;
+	}
+	const current = event.progressDetail?.current;
+	const total = event.progressDetail?.total;
+	if (!isKnownAmount(current)) {
+		return null;
+	}
+	return {
+		current: Math.round(current),
+		total: isKnownAmount(total) && total > 0 ? Math.round(total) : null,
+	};
+};
+
 export const isDownloadFinished = (status: string) =>
 	FINISHED_STATUSES.has(status) || status.startsWith("Extracting");
 
@@ -66,9 +98,9 @@ export const recordLayerDownload = (
 	downloads: Map<string, LayerDownload>,
 	id: string,
 	status: string,
+	progress: LayerDownload | null,
 ) => {
 	const previous = downloads.get(id);
-	const progress = parseDownloadProgress(status);
 	if (progress) {
 		const total = progress.total ?? previous?.total ?? null;
 		const current = Math.max(previous?.current ?? 0, progress.current);
