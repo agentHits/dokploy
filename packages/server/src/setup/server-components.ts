@@ -333,7 +333,7 @@ docker_wait_ready() {
 		if [ "$attempt" -ge 30 ]; then
 			return 1
 		fi
-		sleep 2
+		sleep 1
 	done
 }
 

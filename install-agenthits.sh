@@ -37,6 +37,7 @@ PASSTHROUGH_VARS=(
 	DOCKER_ENGINE_UPGRADE
 	DOKPLOY_BACKUP_DIR
 	DOKPLOY_HEALTH_TIMEOUT
+	DOKPLOY_DOCKER_VERIFY_TIMEOUT
 	DOKPLOY_HEALTH_INTERVAL
 	DOKPLOY_TRAEFIK_SETTLE
 	AGENTHITS_PULL_RETRY_DELAY
@@ -48,6 +49,7 @@ HARDEN_FAIL2BAN="${HARDEN_FAIL2BAN:-0}"
 DOCKER_ENGINE_UPGRADE="${DOCKER_ENGINE_UPGRADE:-0}"
 DOKPLOY_BACKUP_DIR="${DOKPLOY_BACKUP_DIR:-/var/backups/dokploy}"
 DOKPLOY_HEALTH_TIMEOUT="${DOKPLOY_HEALTH_TIMEOUT:-240}"
+DOKPLOY_DOCKER_VERIFY_TIMEOUT="${DOKPLOY_DOCKER_VERIFY_TIMEOUT:-120}"
 DOKPLOY_HEALTH_INTERVAL="${DOKPLOY_HEALTH_INTERVAL:-3}"
 DOKPLOY_TRAEFIK_SETTLE="${DOKPLOY_TRAEFIK_SETTLE:-10}"
 AGENTHITS_PULL_RETRY_DELAY="${AGENTHITS_PULL_RETRY_DELAY:-10}"
@@ -1233,10 +1235,11 @@ docker_stack_ready() {
 	[ "$(docker_engine_version)" = "$1" ] && swarm_node_active && panel_ready && postgres_ready && redis_ready && traefik_running
 }
 
-wait_until_ready() {
-	local check="$1"
-	shift
-	local deadline=$(($(date +%s) + DOKPLOY_HEALTH_TIMEOUT))
+wait_within() {
+	local seconds="$1"
+	local check="$2"
+	shift 2
+	local deadline=$(($(date +%s) + seconds))
 	until "$check" "$@"; do
 		if [ "$(date +%s)" -ge "$deadline" ]; then
 			return 1
@@ -1462,7 +1465,7 @@ rollback_docker_engine() {
 	if ! docker_daemon_running; then
 		start_docker_service || true
 	fi
-	if ! wait_until_ready docker_daemon_running; then
+	if ! wait_within "$DOKPLOY_DOCKER_VERIFY_TIMEOUT" docker_daemon_running; then
 		return 1
 	fi
 	if docker inspect dokploy-traefik >/dev/null 2>&1; then
@@ -1471,7 +1474,7 @@ rollback_docker_engine() {
 			docker start dokploy-traefik >/dev/null || true
 		fi
 	fi
-	wait_until_ready docker_stack_ready "$DOCKER_ENGINE_PREVIOUS_VERSION"
+	wait_within "$DOKPLOY_DOCKER_VERIFY_TIMEOUT" docker_stack_ready "$DOCKER_ENGINE_PREVIOUS_VERSION"
 }
 
 fail_docker_engine_upgrade() {
@@ -1498,8 +1501,8 @@ upgrade_docker_engine() {
 	if ! docker_daemon_running; then
 		start_docker_service || true
 	fi
-	if ! wait_until_ready docker_stack_ready "$DOCKER_VERSION"; then
-		fail_docker_engine_upgrade "Error: the host was not healthy on Docker Engine $DOCKER_VERSION within $DOKPLOY_HEALTH_TIMEOUT seconds."
+	if ! wait_within "$DOKPLOY_DOCKER_VERIFY_TIMEOUT" docker_stack_ready "$DOCKER_VERSION"; then
+		fail_docker_engine_upgrade "Error: the host was not healthy on Docker Engine $DOCKER_VERSION within $DOKPLOY_DOCKER_VERIFY_TIMEOUT seconds."
 	fi
 	echo "Docker Engine is $DOCKER_VERSION"
 }

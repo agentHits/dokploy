@@ -299,6 +299,18 @@ describe("buildComponentUpdateScript", () => {
 		);
 	});
 
+	it("waits 30 seconds for the new Docker before rolling back", () => {
+		const script = buildComponentUpdateScript(["docker"]);
+		const wait = script.slice(
+			script.indexOf("docker_wait_ready() {"),
+			script.indexOf("docker_roll_back() {"),
+		);
+
+		expect(wait).toContain('if [ "$attempt" -ge 30 ]; then');
+		expect(wait).toContain("sleep 1");
+		expect(wait).not.toContain("sleep 2");
+	});
+
 	it("ends with the marker the UI waits for", () => {
 		expect(buildComponentUpdateScript(["buildpacks"])).toContain(
 			COMPONENTS_UPDATE_DONE,

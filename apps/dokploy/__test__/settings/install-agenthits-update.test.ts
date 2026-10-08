@@ -321,6 +321,7 @@ const runInstaller = (
 				AGENTHITS_PULL_RETRY_DELAY: "0",
 				DOKPLOY_HEALTH_INTERVAL: "0",
 				DOKPLOY_HEALTH_TIMEOUT: "2",
+				DOKPLOY_DOCKER_VERIFY_TIMEOUT: "2",
 				DOKPLOY_TRAEFIK_SETTLE: "0",
 				REDIS_IMAGE: "redis:8.10.2",
 				POSTGRES_IMAGE: "postgres:18.6",
@@ -1081,5 +1082,43 @@ describe("install-agenthits.sh Docker rollback restart policy", () => {
 
 		expect(result.status).not.toBe(0);
 		expect(calls).toContain("update --restart always dokploy-traefik");
+	});
+});
+
+describe("install-agenthits.sh Docker verification window", () => {
+	it("checks Docker within DOKPLOY_DOCKER_VERIFY_TIMEOUT, 120 seconds by default", () => {
+		const installer = readFileSync(installerScript, "utf8");
+		const rollback = installer.slice(
+			installer.indexOf("rollback_docker_engine() {"),
+			installer.indexOf("fail_docker_engine_upgrade() {"),
+		);
+		const upgrade = installer.slice(
+			installer.indexOf("upgrade_docker_engine() {"),
+			installer.indexOf("# Order: Redis, Traefik, Postgres"),
+		);
+
+		expect(installer).toContain(
+			'DOKPLOY_DOCKER_VERIFY_TIMEOUT="${DOKPLOY_DOCKER_VERIFY_TIMEOUT:-120}"',
+		);
+		for (const section of [rollback, upgrade]) {
+			expect(section).toContain('wait_within "$DOKPLOY_DOCKER_VERIFY_TIMEOUT"');
+			expect(section).not.toContain("DOKPLOY_HEALTH_TIMEOUT");
+		}
+	});
+
+	it("passes DOKPLOY_DOCKER_VERIFY_TIMEOUT through the macOS and WSL launchers", () => {
+		const installer = readFileSync(installerScript, "utf8");
+		const powershell = readFileSync(powershellScript, "utf8");
+		const macos = installer.slice(
+			installer.indexOf("PASSTHROUGH_VARS=("),
+			installer.indexOf("\n)", installer.indexOf("PASSTHROUGH_VARS=(")),
+		);
+		const wsl = powershell.slice(
+			powershell.indexOf("$PassthroughVars = @("),
+			powershell.indexOf("\n)", powershell.indexOf("$PassthroughVars = @(")),
+		);
+
+		expect(macos).toContain("DOKPLOY_DOCKER_VERIFY_TIMEOUT");
+		expect(wsl).toContain("'DOKPLOY_DOCKER_VERIFY_TIMEOUT'");
 	});
 });
