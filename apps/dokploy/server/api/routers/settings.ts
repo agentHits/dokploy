@@ -729,6 +729,14 @@ export const settingsRouter = createTRPCRouter({
 				return true;
 			}
 
+			if (isHostStackUpdateRunning()) {
+				throw new TRPCError({
+					code: "CONFLICT",
+					message:
+						"The panel host components are being updated. Try again when they finish.",
+				});
+			}
+
 			const keepImages = input?.keepImages;
 			const data = await getUpdateData(packageInfo.version);
 			if (data.updateAvailable) {
