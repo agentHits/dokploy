@@ -9,6 +9,7 @@ DOKPLOY_OFFICIAL_VERSION="${DOKPLOY_OFFICIAL_VERSION_OVERRIDE:-v0.29.8}"
 DOKPLOY_FORK_VERSION="${DOKPLOY_FORK_VERSION_OVERRIDE:-}"
 DOKPLOY_HEALTH_TIMEOUT="${DOKPLOY_HEALTH_TIMEOUT:-240}"
 DOKPLOY_HEALTH_INTERVAL="${DOKPLOY_HEALTH_INTERVAL:-3}"
+DOCKER_VERSION="${DOCKER_VERSION:-29.8.2}"
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -34,7 +35,7 @@ install_docker_if_missing() {
 	if command_exists docker; then
 		echo "Docker already installed"
 	else
-		curl -sSL https://get.docker.com | sh -s -- --version 28.5.0
+		curl -sSL https://get.docker.com | sh -s -- --version "$DOCKER_VERSION"
 	fi
 }
 

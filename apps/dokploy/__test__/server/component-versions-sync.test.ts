@@ -66,6 +66,16 @@ describe("install-agenthits.sh defaults", () => {
 	});
 });
 
+describe("update.sh defaults", () => {
+	const updateScript = read("update.sh");
+
+	it("pins Docker", () => {
+		expect(
+			pinIn(updateScript, /DOCKER_VERSION="\$\{DOCKER_VERSION:-([^}]+)\}"/),
+		).toBe(PINNED_VERSIONS.docker);
+	});
+});
+
 describe("Dockerfile", () => {
 	const dockerfile = read("Dockerfile");
 
