@@ -1,6 +1,7 @@
 import { readdirSync } from "node:fs";
 import { join, posix } from "node:path";
 import { quoteShellArg } from "@dokploy/server/utils/filesystem/safe-path";
+import { ExecError } from "@dokploy/server/utils/process/ExecError";
 import {
 	execAsync,
 	execAsyncRemote,
@@ -11,8 +12,10 @@ import semver from "semver";
 import { db } from "../db";
 import { compose } from "../db/schema";
 import {
+	buildTraefikTlsMigrationStep,
 	initializeStandaloneTraefik,
 	initializeTraefikService,
+	TRAEFIK_MAIN_CONFIG_PATH,
 	type TraefikOptions,
 } from "../setup/traefik-setup";
 import { UPDATE_IMAGE_PULLED_MARKER } from "./web-server-update";
@@ -1128,6 +1131,29 @@ export const checkPortInUse = async (
 	}
 };
 
+const convertTraefikConfigToTls = async (serverId?: string) => {
+	// Loaded lazily: a static import would close a cycle through server-setup and monitoring-setup, which import this module.
+	const { wrapComponentUpdateSteps } = await import(
+		"../setup/server-components"
+	);
+	const script = wrapComponentUpdateSteps(buildTraefikTlsMigrationStep());
+	try {
+		if (serverId) {
+			await execAsyncRemote(serverId, script);
+		} else {
+			await execAsync(script);
+		}
+	} catch (error) {
+		const stderr =
+			error instanceof ExecError ? error.stderr?.trim() : undefined;
+		const detail =
+			stderr || (error instanceof Error ? error.message : String(error));
+		throw new Error(
+			`Traefik config ${TRAEFIK_MAIN_CONFIG_PATH} could not be converted to tlsChallenge. ${detail}`,
+		);
+	}
+};
+
 export const writeTraefikSetup = async (input: TraefikOptions) => {
 	const resourceType = await getDockerResourceType(
 		"dokploy-traefik",
@@ -1135,6 +1161,7 @@ export const writeTraefikSetup = async (input: TraefikOptions) => {
 	);
 
 	if (resourceType === "service") {
+		await convertTraefikConfigToTls(input.serverId);
 		await initializeTraefikService({
 			env: input.env,
 			additionalPorts: input.additionalPorts,
@@ -1142,6 +1169,7 @@ export const writeTraefikSetup = async (input: TraefikOptions) => {
 		});
 		await reconnectServicesToTraefik(input.serverId);
 	} else if (resourceType === "standalone") {
+		await convertTraefikConfigToTls(input.serverId);
 		await initializeStandaloneTraefik({
 			env: input.env,
 			additionalPorts: input.additionalPorts,

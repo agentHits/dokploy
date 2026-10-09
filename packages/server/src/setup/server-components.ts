@@ -8,7 +8,7 @@ import { PINNED_VERSIONS } from "./component-versions";
 import { rcloneInstallCommand } from "./server-setup";
 import {
 	buildTraefikCreateWithImage,
-	TRAEFIK_PORT,
+	buildTraefikTlsMigrationStep,
 	TRAEFIK_VERSION,
 } from "./traefik-setup";
 
@@ -457,6 +457,8 @@ traefik_existed=0
 traefik_old_stopped=0
 traefik_old_image=""
 traefik_extra_networks=""
+traefik_acme_backup=""
+traefik_tls_converted=""
 if $SUDO_CMD docker inspect dokploy-traefik >/dev/null 2>&1; then
 	traefik_existed=1
 	traefik_old_image="$($SUDO_CMD docker inspect -f '{{.Config.Image}}' dokploy-traefik 2>/dev/null || true)"
@@ -466,12 +468,8 @@ traefik_keep_bridge=1
 if [ "$traefik_existed" = 1 ] && ! echo " $traefik_extra_networks " | grep -q " bridge "; then
 	traefik_keep_bridge=0
 fi
-traefik_http_publish="-p ${TRAEFIK_PORT}:${TRAEFIK_PORT}"
-if [ "$traefik_existed" = 1 ] && ! $SUDO_CMD docker inspect -f '{{json .HostConfig.PortBindings}}' dokploy-traefik | grep -q '"${TRAEFIK_PORT}/tcp"'; then
-	traefik_http_publish=""
-fi
 traefik_create() {
-${buildTraefikCreateWithImage('"$1"', "$traefik_http_publish")}
+${buildTraefikCreateWithImage('"$1"')}
 }
 traefik_connect() {
 	$SUDO_CMD docker network connect dokploy-network dokploy-traefik || return 1
@@ -503,6 +501,7 @@ traefik_restore() {
 	local failed_step="$1"
 	trap - HUP INT TERM
 	echo "Error: Traefik update failed while $failed_step." >&2
+	if [ "$traefik_tls_converted" = 1 ]; then echo "Kept the converted Traefik config (tlsChallenge). Port 443 is published, so the restored container works with it. Previous config saved to $traefik_acme_backup." >&2; fi
 	if [ "$traefik_old_stopped" = 1 ]; then
 		echo "Restoring the previous Traefik container from $traefik_old_image." >&2
 		$SUDO_CMD docker rm -f dokploy-traefik >/dev/null 2>&1 || true
@@ -514,10 +513,15 @@ traefik_restore() {
 	fi
 	exit 1
 }
-if [ "$traefik_existed" = 1 ] && [ "\${traefik_old_image%%@*}" = "traefik:v${TRAEFIK_VERSION}" ] && traefik_check_running; then
+if [ "$traefik_existed" = 1 ] && [ "\${traefik_old_image%%@*}" = "traefik:v${TRAEFIK_VERSION}" ] && traefik_check_running && ! $SUDO_CMD grep -q '^[[:space:]]*httpChallenge:' /etc/dokploy/traefik/traefik.yml 2>/dev/null && ! $SUDO_CMD docker inspect -f '{{json .HostConfig.PortBindings}}' dokploy-traefik 2>/dev/null | grep -q '"80/tcp"'; then
 	echo "Traefik already runs traefik:v${TRAEFIK_VERSION}"
 else
 	trap 'traefik_restore "being interrupted"' HUP INT TERM
+	if ! {
+${buildTraefikTlsMigrationStep()}
+	}; then
+		traefik_restore "converting the Traefik config to tlsChallenge"
+	fi
 	$SUDO_CMD docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
 	if [ "$traefik_existed" = 1 ]; then
 		if ! $SUDO_CMD docker stop dokploy-traefik >/dev/null; then

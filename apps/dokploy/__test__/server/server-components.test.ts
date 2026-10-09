@@ -32,9 +32,22 @@ import {
 	buildTraefikCreateCommand,
 	buildTraefikCreateWithImage,
 	buildTraefikRunCommand,
+	buildTraefikTlsMigrationStep,
 	TRAEFIK_VERSION,
 } from "@dokploy/server/setup/traefik-setup";
 import { describe, expect, it } from "vitest";
+
+const PORT_80_PUBLICATION =
+	/(?:-p|--publish)[=\s]+\S*\b80\b|published=80\b|\b80\/tcp\b/;
+
+const TRAEFIK_SKIP_CHECK_LINE =
+	/^if \[ "\$traefik_existed" = 1 \] && \[ "\$\{traefik_old_image%%@\*\}" = .*$/m;
+
+// The read-only skip check names httpChallenge and 80/tcp; the assertions cover everything else.
+const withoutSkipCheck = (script: string) => {
+	expect(script.match(TRAEFIK_SKIP_CHECK_LINE)).not.toBeNull();
+	return script.replace(TRAEFIK_SKIP_CHECK_LINE, "");
+};
 
 describe("parseComponentVersions", () => {
 	it("extracts the semantic version from each tool's output", () => {
@@ -125,14 +138,18 @@ describe("buildComponentUpdateScript", () => {
 
 		expect(script).toContain(`docker pull traefik:v${TRAEFIK_VERSION}`);
 		expect(script).toContain(`traefik_create "traefik:v${TRAEFIK_VERSION}"`);
-		expect(script).toContain(
-			buildTraefikCreateWithImage('"$1"', "$traefik_http_publish").trim(),
-		);
-		expect(script).toContain('traefik_http_publish="-p 80:80"');
+		expect(script).toContain(buildTraefikCreateWithImage('"$1"').trim());
 		expect(script).toContain(
 			"docker network disconnect bridge dokploy-traefik",
 		);
 		expect(script).not.toContain("docker rename");
+	});
+	it("never publishes host port 80 when it replaces the Traefik container", () => {
+		const script = withoutSkipCheck(buildComponentUpdateScript(["traefik"]));
+
+		expect(script).not.toMatch(PORT_80_PUBLICATION);
+		expect(script).toMatch(/-p 443:443\s/);
+		expect(script).toContain("-p 443:443/udp");
 	});
 	it("stops and removes the old Traefik, creates the new one, attaches its networks, and starts it last", () => {
 		const script = buildComponentUpdateScript(["traefik"]);
@@ -176,6 +193,48 @@ describe("buildComponentUpdateScript", () => {
 		);
 		expect(check).toBeGreaterThanOrEqual(0);
 		expect(raise).toBeGreaterThan(check);
+	});
+	it("converts the Traefik config to tlsChallenge before the old container is stopped", () => {
+		const script = buildComponentUpdateScript(["traefik"]);
+		const step = buildTraefikTlsMigrationStep();
+		const at = script.indexOf(step);
+
+		expect(at).toBeGreaterThanOrEqual(0);
+		expect(script.slice(0, at)).toMatch(/if ! \{\n$/);
+		expect(script.slice(at + step.length)).toMatch(
+			/^\n\s*\}; then\n\s*traefik_restore "converting the Traefik config to tlsChallenge"\n/,
+		);
+		expect(at).toBeLessThan(
+			script.indexOf("if ! $SUDO_CMD docker stop dokploy-traefik >/dev/null;"),
+		);
+	});
+	it("keeps the converted Traefik config on rollback, names the backup, and never restores httpChallenge", () => {
+		const script = buildComponentUpdateScript(["traefik"]);
+		const kept = script.indexOf(
+			'if [ "$traefik_tls_converted" = 1 ]; then echo "Kept the converted Traefik config (tlsChallenge). Port 443 is published, so the restored container works with it. Previous config saved to $traefik_acme_backup." >&2; fi',
+		);
+		const trapSet = script.indexOf(
+			"trap 'traefik_restore \"being interrupted\"' HUP INT TERM",
+		);
+
+		const definition = script.indexOf("traefik_restore() {");
+
+		expect(kept).toBeGreaterThan(definition);
+		expect(kept).toBeLessThan(trapSet);
+		expect(kept).toBeLessThan(
+			script.indexOf('echo "Restoring the previous Traefik container from'),
+		);
+		expect(script.slice(definition, trapSet)).not.toContain(
+			'cat "$traefik_acme_backup"',
+		);
+		expect(script.indexOf('traefik_tls_converted=""')).toBeLessThan(trapSet);
+	});
+	it("keeps httpChallenge out of the Traefik step apart from the conversion", () => {
+		const script = withoutSkipCheck(buildComponentUpdateScript(["traefik"]));
+
+		expect(script.replace(buildTraefikTlsMigrationStep(), "")).not.toMatch(
+			/httpchallenge/i,
+		);
 	});
 	it("passes the pinned versions into the installers through env", () => {
 		const script = buildComponentUpdateScript(["nixpacks", "railpack"]);
@@ -407,6 +466,7 @@ case "$1" in
 		case "$*" in
 			*Config.Image*) echo "$FAKE_OLD_IMAGE" ;;
 			*NetworkSettings*) echo "$FAKE_TRAEFIK_NETWORKS" ;;
+			*PortBindings*) echo "$FAKE_PORT_BINDINGS" ;;
 			*RestartCount*)
 				traefik_now="$(cat "$FAKE_STATE/traefik-image" 2>/dev/null || echo "$FAKE_OLD_IMAGE")"
 				if [ "$FAKE_NOT_RUNNING" = 1 ] && [ "$traefik_now" != "$FAKE_OLD_IMAGE" ]; then echo "false 0"; else echo "true 0"; fi
@@ -545,6 +605,7 @@ const SYSTEM_TOOLS = [
 	"cut",
 	"wc",
 	"sort",
+	"test",
 ];
 
 const linkSystemTools = (binDir: string) => {
@@ -553,8 +614,13 @@ const linkSystemTools = (binDir: string) => {
 		const found = spawnSync("sh", ["-c", `command -v ${name}`], {
 			encoding: "utf8",
 		}).stdout.trim();
-		if (found) {
-			symlinkSync(found, path.join(binDir, name));
+		const executable = found.startsWith("/")
+			? found
+			: ["/usr/bin", "/bin"]
+					.map((dir) => path.join(dir, name))
+					.find((candidate) => existsSync(candidate));
+		if (executable) {
+			symlinkSync(executable, path.join(binDir, name));
 		}
 	}
 	return binDir;
@@ -573,6 +639,7 @@ type ScriptOptions = {
 	sourceFiles?: Record<string, string>;
 	withoutApt?: boolean;
 	preexistingKeyring?: string;
+	traefikConfig?: string;
 };
 
 const listBackups = (backups: string) => {
@@ -612,7 +679,17 @@ const runComponentScript = (
 		const sources = path.join(dir, "sources");
 		const keyring = path.join(dir, "keyrings", "docker.asc");
 		const backups = path.join(dir, "backups");
+		const traefikConfigPath = path.join(
+			dir,
+			"etc-root",
+			"traefik",
+			"traefik.yml",
+		);
 		mkdirSync(sources);
+		if (options.traefikConfig !== undefined) {
+			mkdirSync(path.dirname(traefikConfigPath), { recursive: true });
+			writeFileSync(traefikConfigPath, options.traefikConfig);
+		}
 		if (options.preexistingKeyring !== undefined) {
 			mkdirSync(path.dirname(keyring));
 			writeFileSync(keyring, options.preexistingKeyring);
@@ -636,8 +713,12 @@ const runComponentScript = (
 		const pathValue = options.withoutApt
 			? `${dir}:${linkSystemTools(path.join(dir, "bin"))}`
 			: `${dir}:${process.env.PATH}`;
+		// Config paths point into the temp dir, so a run never touches the host's real config.
 		const result = spawnSync(BASH, [], {
-			input: buildComponentUpdateScript(components),
+			input: buildComponentUpdateScript(components).replaceAll(
+				"/etc/dokploy",
+				path.join(dir, "etc-root"),
+			),
 			encoding: "utf8",
 			env: {
 				...process.env,
@@ -666,6 +747,14 @@ const runComponentScript = (
 			keyring: existsSync(keyring) ? readFileSync(keyring, "utf8") : null,
 			keyringDirExists: existsSync(path.dirname(keyring)),
 			sources: readSources(sources),
+			traefikConfigFile: existsSync(traefikConfigPath)
+				? readFileSync(traefikConfigPath, "utf8")
+				: null,
+			traefikBackups: existsSync(path.dirname(traefikConfigPath))
+				? readdirSync(path.dirname(traefikConfigPath)).filter((name) =>
+						name.includes(".bak-"),
+					)
+				: [],
 		};
 	} finally {
 		rmSync(dir, { force: true, recursive: true });
@@ -675,6 +764,12 @@ const runComponentScript = (
 const SPAWN_TEST_TIMEOUT_MS = 30_000;
 const DOCKER_OLD = "5:28.3.0-1~ubuntu.24.04~noble";
 const DOCKER_NEW = "5:29.8.2-1~ubuntu.24.04~noble";
+const HTTP_CHALLENGE_CONFIG =
+	"certificatesResolvers:\n  letsencrypt:\n    acme:\n      email: admin@example.com\n      httpChallenge:\n        entryPoint: web\n";
+const TLS_CHALLENGE_CONFIG =
+	"certificatesResolvers:\n  letsencrypt:\n    acme:\n      email: admin@example.com\n      tlsChallenge: {}\n";
+const UNCONVERTIBLE_CONFIG =
+	"certificatesResolvers:\n  letsencrypt:\n    acme:\n      httpChallenge:   # HTTP-01\n        entryPoint: web\n";
 
 describe("buildComponentUpdateScript run order", () => {
 	it(
@@ -807,6 +902,117 @@ describe("buildComponentUpdateScript run order", () => {
 			"docker update --restart always dokploy-traefik",
 		);
 	});
+	it(
+		"converts a Traefik config that still uses httpChallenge before the old container is stopped",
+		() => {
+			const run = runComponentScript(["traefik"], {
+				traefikConfig: HTTP_CHALLENGE_CONFIG,
+			});
+
+			expect(run.status).toBe(0);
+			expect(run.traefikConfigFile).toBe(TLS_CHALLENGE_CONFIG);
+			expect(run.traefikBackups).toHaveLength(1);
+			expect(run.calls).toContain("docker stop dokploy-traefik");
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"leaves the old Traefik running when its config cannot be converted",
+		() => {
+			const run = runComponentScript(["traefik"], {
+				traefikConfig: UNCONVERTIBLE_CONFIG,
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.stderr).toContain("could not convert");
+			expect(run.traefikConfigFile).toBe(UNCONVERTIBLE_CONFIG);
+			expect(run.calls.some((call) => call.startsWith("docker stop"))).toBe(
+				false,
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"keeps the converted Traefik config when a later step fails, without restoring httpChallenge",
+		() => {
+			const run = runComponentScript(["traefik"], {
+				traefikConfig: HTTP_CHALLENGE_CONFIG,
+				env: { FAKE_CREATE_FAILS: "1" },
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.stderr).toContain("Kept the converted Traefik config");
+			expect(run.stderr).not.toContain("Restored the previous Traefik config");
+			expect(run.traefikConfigFile).toBe(TLS_CHALLENGE_CONFIG);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"converts and replaces Traefik when its image is the target but the config still uses httpChallenge",
+		() => {
+			const run = runComponentScript(["traefik"], {
+				traefikConfig: HTTP_CHALLENGE_CONFIG,
+				env: {
+					FAKE_OLD_IMAGE: `traefik:v${TRAEFIK_VERSION}`,
+					FAKE_PORT_BINDINGS: "{}",
+				},
+			});
+
+			expect(run.status).toBe(0);
+			expect(run.stdout).not.toContain("Traefik already runs");
+			expect(run.traefikConfigFile).toBe(TLS_CHALLENGE_CONFIG);
+			expect(run.calls).toContain("docker stop dokploy-traefik");
+			expect(run.stdout).toContain(
+				`Traefik version ${TRAEFIK_VERSION} installed`,
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"leaves Traefik running when its image is the target and neither the config nor port 80 needs a change",
+		() => {
+			const run = runComponentScript(["traefik"], {
+				traefikConfig: TLS_CHALLENGE_CONFIG,
+				env: {
+					FAKE_OLD_IMAGE: `traefik:v${TRAEFIK_VERSION}`,
+					FAKE_PORT_BINDINGS: "{}",
+				},
+			});
+
+			expect(run.status).toBe(0);
+			expect(run.stdout).toContain(
+				`Traefik already runs traefik:v${TRAEFIK_VERSION}`,
+			);
+			expect(run.calls.some((call) => call.startsWith("docker stop"))).toBe(
+				false,
+			);
+			expect(run.calls.some((call) => call.startsWith("docker create"))).toBe(
+				false,
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"replaces Traefik when its image is the target but port 80 is still published",
+		() => {
+			const run = runComponentScript(["traefik"], {
+				traefikConfig: TLS_CHALLENGE_CONFIG,
+				env: {
+					FAKE_OLD_IMAGE: `traefik:v${TRAEFIK_VERSION}`,
+					FAKE_PORT_BINDINGS:
+						'{"80/tcp":[{"HostIp":"0.0.0.0","HostPort":"80"}]}',
+				},
+			});
+
+			expect(run.status).toBe(0);
+			expect(run.stdout).not.toContain("Traefik already runs");
+			expect(run.calls).toContain("docker stop dokploy-traefik");
+			expect(run.stdout).toContain(
+				`Traefik version ${TRAEFIK_VERSION} installed`,
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
 	it("creates the new Traefik with --restart no and raises the policy only after the start", () => {
 		const run = runComponentScript(["traefik"]);
 
@@ -1470,14 +1676,18 @@ describe("buildTraefikCreateCommand", () => {
 		expect(command).toContain("-p 443:443/udp");
 		expect(command).toContain("traefik:v3.7.5");
 	});
+
+	it("never publishes host port 80", () => {
+		expect(buildTraefikCreateCommand("3.7.5")).not.toMatch(PORT_80_PUBLICATION);
+	});
 });
 
 describe("buildTraefikRunCommand", () => {
-	it("publishes the HTTP, HTTPS and HTTP/3 ports with the requested image", () => {
+	it("publishes HTTPS and HTTP/3 with the requested image and never port 80", () => {
 		const command = buildTraefikRunCommand("3.7.5");
 
 		expect(command).toMatch(/-p 443:443\s/);
-		expect(command).toMatch(/-p 80:80\s/);
+		expect(command).not.toMatch(PORT_80_PUBLICATION);
 		expect(command).toContain("-p 443:443/udp");
 		expect(command).toContain("traefik:v3.7.5");
 	});

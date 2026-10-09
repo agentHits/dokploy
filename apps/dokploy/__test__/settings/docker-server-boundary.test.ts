@@ -412,6 +412,20 @@ describe("settings Docker server boundary", () => {
 		expect(mocks.writeTraefikSetup).not.toHaveBeenCalled();
 	});
 
+	it("rejects a Traefik port that publishes host port 80 before Traefik is rewritten", async () => {
+		await expect(
+			createCaller().updateTraefikPorts({
+				additionalPorts: [
+					{ protocol: "tcp", publishedPort: 80, targetPort: 8081 },
+				],
+				serverId: "server-1",
+			}),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+		expect(mocks.checkPortInUse).not.toHaveBeenCalled();
+		expect(mocks.writeTraefikSetup).not.toHaveBeenCalled();
+	});
+
 	it("denies inaccessible Traefik port reads before Traefik reads", async () => {
 		mocks.getAccessibleServerIds.mockResolvedValue(new Set(["server-2"]));
 

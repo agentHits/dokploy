@@ -55,13 +55,13 @@ DOKPLOY_TRAEFIK_SETTLE="${DOKPLOY_TRAEFIK_SETTLE:-10}"
 AGENTHITS_PULL_RETRY_DELAY="${AGENTHITS_PULL_RETRY_DELAY:-10}"
 DOKPLOY_APT_SOURCES_DIR="${DOKPLOY_APT_SOURCES_DIR:-/etc/apt/sources.list.d}"
 DOKPLOY_OS_RELEASE="${DOKPLOY_OS_RELEASE:-/etc/os-release}"
+TRAEFIK_CONFIG_FILE="${TRAEFIK_CONFIG_FILE:-/etc/dokploy/traefik/traefik.yml}"
 DOCKER_PACKAGE_VERSION=""
 DOCKER_ENGINE_UPGRADE_NEEDED=0
 DOCKER_ENGINE_PREVIOUS_VERSION=""
 DOCKER_ROLLBACK_DIR=""
 DOCKER_ROLLBACK_DIR_CREATED=0
 TRAEFIK_EXTRA_NETWORKS=""
-TRAEFIK_HTTP_PUBLISH=1
 TRAEFIK_OLD_IMAGE=""
 TRAEFIK_OLD_STOPPED=0
 POSTGRES_KEPT=0
@@ -137,12 +137,20 @@ get_postgres_data_target() {
 create_default_traefik_files() {
 	mkdir -p /etc/dokploy/traefik/dynamic
 
-	if [ -d /etc/dokploy/traefik/traefik.yml ]; then
-		rm -rf /etc/dokploy/traefik/traefik.yml
+	if [ -d "$TRAEFIK_CONFIG_FILE" ]; then
+		case "$TRAEFIK_CONFIG_FILE" in
+			/etc/dokploy/traefik/traefik.yml | */traefik.yml)
+				rm -rf "$TRAEFIK_CONFIG_FILE"
+				;;
+			*)
+				echo "Error: $TRAEFIK_CONFIG_FILE is a directory, not the Traefik config file. Remove it by hand, then run the installer again." >&2
+				exit 1
+				;;
+		esac
 	fi
 
-	if [ ! -f /etc/dokploy/traefik/traefik.yml ]; then
-		cat >/etc/dokploy/traefik/traefik.yml <<'EOF'
+	if [ ! -f "$TRAEFIK_CONFIG_FILE" ]; then
+		cat >"$TRAEFIK_CONFIG_FILE" <<'EOF'
 global:
   sendAnonymousUsage: false
 providers:
@@ -173,8 +181,7 @@ certificatesResolvers:
     acme:
       email: test@localhost.com
       storage: /etc/dokploy/traefik/dynamic/acme.json
-      httpChallenge:
-        entryPoint: web
+      tlsChallenge: {}
 EOF
 	fi
 
@@ -804,12 +811,11 @@ harden_ufw() {
 	sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
 	# SSH must be allowed before enabling, or the next login fails.
 	ufw allow "${ssh_port}/tcp" comment 'SSH' >/dev/null
-	ufw allow 80/tcp comment 'HTTP' >/dev/null
 	ufw allow 443/tcp comment 'HTTPS' >/dev/null
 	ufw allow 443/udp comment 'HTTP/3' >/dev/null
 	ufw allow 3000/tcp comment 'Dokploy panel' >/dev/null
 	ufw --force enable >/dev/null
-	echo "UFW: enabled. Incoming is denied except SSH (${ssh_port}), 80, 443 and 3000."
+	echo "UFW: enabled. Incoming is denied except SSH (${ssh_port}), 443 and 3000."
 }
 
 harden_fail2ban() {
@@ -888,7 +894,6 @@ install_agenthits_dokploy() {
 	if [ "$HARDEN_SSH" = "1" ] && command_exists sshd; then
 		require_root_public_key
 	fi
-	require_free_port 80
 	require_free_port 443
 	require_free_port 3000
 	install_docker_if_missing
@@ -927,6 +932,7 @@ install_agenthits_dokploy() {
 	mkdir -p /etc/dokploy
 	chmod 755 /etc/dokploy
 	create_default_traefik_files
+	if ! migrate_traefik_acme_to_tls "$TRAEFIK_CONFIG_FILE"; then echo "Error: could not convert the Traefik config to tlsChallenge. Check the file named above, then run the installer again." >&2; exit 1; fi
 
 	create_secret_if_missing dokploy_postgres_password "$(generate_random_secret)"
 	create_secret_if_missing dokploy_auth_secret "$(generate_random_secret)"
@@ -1341,17 +1347,12 @@ traefik_extra_networks() {
 create_dokploy_traefik() {
 	local image="$1"
 	local restart="$2"
-	local http_publish=()
-	if [ "${TRAEFIK_HTTP_PUBLISH:-1}" = "1" ]; then
-		http_publish=(-p 80:80/tcp)
-	fi
 	docker create \
 		--name dokploy-traefik \
 		--restart "$restart" \
-		-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
+		-v "$TRAEFIK_CONFIG_FILE:/etc/traefik/traefik.yml" \
 		-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
 		-v /var/run/docker.sock:/var/run/docker.sock:ro \
-		${http_publish[@]+"${http_publish[@]}"} \
 		-p 443:443/tcp \
 		-p 443:443/udp \
 		"$image" >/dev/null || return 1
@@ -1392,6 +1393,7 @@ traefik_restore() {
 	local failed_step="$1"
 	trap - HUP INT TERM
 	echo "Error: Traefik update failed while $failed_step." >&2
+	if [ -n "${TRAEFIK_ACME_BACKUP:-}" ] && [ -f "$TRAEFIK_ACME_BACKUP" ]; then echo "Kept the converted Traefik config (tlsChallenge). Previous config saved to $TRAEFIK_ACME_BACKUP." >&2; fi
 	if [ "$TRAEFIK_OLD_STOPPED" = "1" ]; then
 		echo "Restoring the previous Traefik container from $TRAEFIK_OLD_IMAGE." >&2
 		docker rm -f dokploy-traefik >/dev/null 2>&1 || true
@@ -1404,10 +1406,69 @@ traefik_restore() {
 	exit 1
 }
 
+# HTTP-01 needs port 80, which the Traefik container does not publish, so renewal
+# runs over 443 with tlsChallenge.
+migrate_traefik_acme_to_tls() {
+	local config="${1:-$TRAEFIK_CONFIG_FILE}"
+	if [ ! -f "$config" ] || ! grep -q '^[[:space:]]*httpChallenge:' "$config"; then
+		return 0
+	fi
+
+	local backup=""
+	backup="$config.bak-$(date -u +%Y%m%d%H%M%S)"
+	if ! cp -p "$config" "$backup"; then
+		rm -f "$backup"
+		return 1
+	fi
+
+	local awk_status=0
+	awk '
+		/^[[:space:]]*httpChallenge:[[:space:]]*$/ { match($0, /[^[:space:]]/); indent = RSTART - 1; print substr($0, 1, indent) "tlsChallenge: {}"; skipping = 1; next }
+		/^[[:space:]]*httpChallenge:[[:space:]]*\{.*\}[[:space:]]*$/ { match($0, /[^[:space:]]/); print substr($0, 1, RSTART - 1) "tlsChallenge: {}"; next }
+		skipping && /^[[:space:]]*$/ { print; next }
+		skipping && /^[[:space:]]*#/ { next }
+		skipping { if (match($0, /[^[:space:]]/) && RSTART - 1 > indent) next; skipping = 0 }
+		{ print }
+	' "$config" >"$config.tmp" || awk_status=$?
+	if [ "$awk_status" -ne 0 ] || grep -q 'httpChallenge' "$config.tmp" || ! grep -q 'tlsChallenge: {}' "$config.tmp"; then
+		rm -f "$config.tmp"
+		echo "Error: could not convert $config to tlsChallenge. The previous config is saved at $backup." >&2
+		return 1
+	fi
+
+	local orphan_line=""
+	orphan_line="$(awk '
+		/^[[:space:]]*tlsChallenge:[[:space:]]*\{\}[[:space:]]*$/ { match($0, /[^[:space:]]/); level = RSTART - 1; armed = 1; next }
+		armed && /^[[:space:]]*(#.*)?$/ { next }
+		armed { armed = 0; match($0, /[^[:space:]]/); if (RSTART - 1 > level) { print NR; exit } }
+	' "$config.tmp")"
+	if [ -n "$orphan_line" ]; then
+		rm -f "$config.tmp"
+		echo "Error: converting $config would leave output line $orphan_line indented under tlsChallenge. The config is unchanged; the previous config is saved at $backup." >&2
+		return 1
+	fi
+
+	if ! cat "$config.tmp" >"$config"; then
+		rm -f "$config.tmp"
+		if cat "$backup" >"$config"; then
+			echo "Error: could not write $config. The previous config was restored from $backup." >&2
+		else
+			echo "Error: could not write $config, and restoring it from $backup failed. Copy $backup back over $config." >&2
+		fi
+		return 1
+	fi
+	rm -f "$config.tmp"
+	TRAEFIK_ACME_BACKUP="$backup"
+	echo "Certificate renewal now uses port 443 (tlsChallenge). Previous config saved to $backup"
+}
+
 swap_dokploy_traefik() {
+	TRAEFIK_ACME_BACKUP=""
 	local current=""
 	current="$(docker inspect --format '{{.Config.Image}}' dokploy-traefik 2>/dev/null || true)"
-	if [ "$(image_without_digest "$current")" = "$(image_without_digest "$TRAEFIK_IMAGE")" ]; then
+	if [ "$(image_without_digest "$current")" = "$(image_without_digest "$TRAEFIK_IMAGE")" ] &&
+		! grep -q '^[[:space:]]*httpChallenge:' "$TRAEFIK_CONFIG_FILE" 2>/dev/null &&
+		! docker inspect -f '{{json .HostConfig.PortBindings}}' dokploy-traefik 2>/dev/null | grep -q '"80/tcp"'; then
 		echo "Traefik already runs $TRAEFIK_IMAGE"
 		return 0
 	fi
@@ -1418,12 +1479,9 @@ swap_dokploy_traefik() {
 	fi
 	TRAEFIK_OLD_IMAGE="$current"
 	TRAEFIK_EXTRA_NETWORKS="$(traefik_extra_networks)"
-	TRAEFIK_HTTP_PUBLISH=1
-	if [ "$existed" = "1" ] && ! docker inspect -f '{{json .HostConfig.PortBindings}}' dokploy-traefik | grep -q '"80/tcp"'; then
-		TRAEFIK_HTTP_PUBLISH=0
-	fi
 	TRAEFIK_OLD_STOPPED=0
 	trap 'traefik_restore "being interrupted"' HUP INT TERM
+	if ! migrate_traefik_acme_to_tls; then traefik_restore "converting the Traefik config to tlsChallenge"; fi
 	docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
 	if [ "$existed" = "1" ]; then
 		if ! docker stop dokploy-traefik >/dev/null; then

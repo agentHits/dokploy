@@ -7,7 +7,7 @@
 | Флаг установщика | Переменная окружения | Что делает |
 |---|---|---|
 | `--ssh-keys-only` | `HARDEN_SSH=1` | Вход только по ключу: `PasswordAuthentication no`, `UsePAM no`, `PermitRootLogin prohibit-password`. Требует валидный ключ в `/root/.ssh/authorized_keys`. Пропускается, если на хосте нет sshd. |
-| `--ufw` | `HARDEN_UFW=1` | UFW: входящие запрещены, разрешены SSH, 80 и 443 (tcp, и 443 udp для HTTP/3). Пересылка для Docker разрешена. Только Debian и Ubuntu. |
+| `--ufw` | `HARDEN_UFW=1` | UFW: входящие запрещены, разрешены SSH, 443 (tcp, и 443 udp для HTTP/3). Пересылка для Docker разрешена. Только Debian и Ubuntu. |
 | `--fail2ban` | `HARDEN_FAIL2BAN=1` | Fail2Ban: защита sshd в режиме `aggressive`, настройка в `/etc/fail2ban/jail.local`. Только Debian и Ubuntu. |
 | `--harden` | все три | Все три флага сразу. |
 | — | `DOKPLOY_SERVER_HARDENING=ssh,ufw,fail2ban` | То же самое панель применяет к новым серверам в «Setup Server». Если задан флаг установки, переменная выставляется автоматически. |

@@ -27,14 +27,12 @@ export const TRAEFIK_VERSION =
 const traefikContainerOptions = (
 	image: string,
 	restart: string,
-	httpPublish = `-p ${TRAEFIK_PORT}:${TRAEFIK_PORT}`,
 ) => `--name dokploy-traefik \
 	--restart ${restart} \
 	-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
 	-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
 	-v /var/run/docker.sock:/var/run/docker.sock:ro \
 	-p ${TRAEFIK_SSL_PORT}:${TRAEFIK_SSL_PORT} \
-	${httpPublish} \
 	-p ${TRAEFIK_HTTP3_PORT}:${TRAEFIK_HTTP3_PORT}/udp \
 	${image}`;
 
@@ -45,15 +43,131 @@ export const buildTraefikRunCommand = (version: string) => `
 
 // Created with no restart policy and not started: networks are attached before the
 // ports are taken, and the policy is raised only after the new container runs.
-export const buildTraefikCreateWithImage = (
-	image: string,
-	httpPublish?: string,
-) => `
-		$SUDO_CMD docker create ${traefikContainerOptions(image, "no", httpPublish)}
+export const buildTraefikCreateWithImage = (image: string) => `
+		$SUDO_CMD docker create ${traefikContainerOptions(image, "no")}
 `;
 
 export const buildTraefikCreateCommand = (version: string) =>
 	buildTraefikCreateWithImage(`traefik:v${version}`);
+
+export const TRAEFIK_MAIN_CONFIG_PATH = "/etc/dokploy/traefik/traefik.yml";
+
+export const HTTP_CHALLENGE_TO_TLS_AWK = String.raw`/^[[:space:]]*httpChallenge:[[:space:]]*$/ {
+	match($0, /[^[:space:]]/)
+	indent = RSTART - 1
+	print substr($0, 1, indent) "tlsChallenge: {}"
+	skipping = 1
+	next
+}
+/^[[:space:]]*httpChallenge:[[:space:]]*\{.*\}[[:space:]]*$/ {
+	match($0, /[^[:space:]]/)
+	print substr($0, 1, RSTART - 1) "tlsChallenge: {}"
+	next
+}
+skipping && /^[[:space:]]*$/ {
+	print
+	next
+}
+skipping && /^[[:space:]]*#/ {
+	next
+}
+skipping {
+	if (match($0, /[^[:space:]]/) && RSTART - 1 > indent) next
+	skipping = 0
+}
+{ print }
+`;
+
+const TLS_CHILD_CHECK_AWK = String.raw`prev_tls && match($0, /[^[:space:]]/) && RSTART - 1 > tls_indent {
+	bad = 1
+}
+{ prev_tls = 0 }
+/^[[:space:]]*tlsChallenge: \{\}[[:space:]]*$/ {
+	match($0, /[^[:space:]]/)
+	tls_indent = RSTART - 1
+	prev_tls = 1
+}
+END { exit bad }
+`;
+
+// The step runs as one command so the caller can branch on its status. The config is
+// rewritten in place because the Traefik container bind-mounts that file, and the backup
+// is recorded before the write so an interrupted or failed write can still be restored.
+export const buildTraefikTlsMigrationStep = (
+	configPath = TRAEFIK_MAIN_CONFIG_PATH,
+) => `traefik_acme_backup=""
+traefik_convert_acme_to_tls() {
+	local config="${configPath}"
+	local backup converted awk_status=0
+	local grep_status=0 exists_status=0
+	if ! $SUDO_CMD test -e /; then
+		grep -Eq '^[[:space:]]*httpChallenge:' "$config" || grep_status=$?
+		if [ "$grep_status" -eq 1 ]; then
+			return 0
+		fi
+		echo "Error: could not run test as root. Nothing was changed." >&2
+		return 1
+	fi
+	$SUDO_CMD test -e "$config" || exists_status=$?
+	if [ "$exists_status" -eq 1 ]; then
+		return 0
+	fi
+	if [ "$exists_status" -ne 0 ]; then
+		echo "Error: could not check $config. Nothing was changed." >&2
+		return 1
+	fi
+	if ! $SUDO_CMD test -f "$config"; then
+		echo "Error: $config is not a regular file. Nothing was changed." >&2
+		return 1
+	fi
+	$SUDO_CMD grep -Eq '^[[:space:]]*httpChallenge:' "$config" || grep_status=$?
+	if [ "$grep_status" -eq 1 ]; then
+		return 0
+	fi
+	if [ "$grep_status" -ne 0 ]; then
+		echo "Error: could not read $config. Nothing was changed." >&2
+		return 1
+	fi
+	backup="$config.bak-$(date -u +%Y%m%d%H%M%S)"
+	if ! $SUDO_CMD cp -p "$config" "$backup"; then
+		echo "Error: could not back up $config to $backup. The Traefik config was not changed." >&2
+		return 1
+	fi
+	traefik_acme_backup="$backup"
+	if ! converted="$(mktemp "\${TMPDIR:-/tmp}/traefik-tls.XXXXXX")"; then
+		echo "Error: could not create a temporary file to convert $config. The original config was left unchanged. Previous config saved to $backup" >&2
+		return 1
+	fi
+	$SUDO_CMD awk '${HTTP_CHALLENGE_TO_TLS_AWK}' "$config" > "$converted" || awk_status=$?
+	if [ "$awk_status" -ne 0 ]; then
+		rm -f "$converted"
+		echo "Error: awk exited with status $awk_status while converting $config to tlsChallenge. The original config was left unchanged. Previous config saved to $backup" >&2
+		return 1
+	fi
+	if grep -Fq httpChallenge "$converted" || ! grep -Fq 'tlsChallenge: {}' "$converted"; then
+		rm -f "$converted"
+		echo "Error: could not convert $config to tlsChallenge. The original config was left unchanged. Previous config saved to $backup" >&2
+		return 1
+	fi
+	if ! awk '${TLS_CHILD_CHECK_AWK}' "$converted"; then
+		rm -f "$converted"
+		echo "Error: the converted config for $config has lines under tlsChallenge. The original config was left unchanged. Previous config saved to $backup" >&2
+		return 1
+	fi
+	if ! $SUDO_CMD tee "$config" < "$converted" >/dev/null; then
+		rm -f "$converted"
+		if $SUDO_CMD cp -p "$backup" "$config"; then
+			echo "Error: could not write $config. The previous config was restored from $backup" >&2
+		else
+			echo "Error: could not write $config, and restoring it from $backup failed. Restore it from the backup before starting Traefik." >&2
+		fi
+		return 1
+	fi
+	traefik_tls_converted=1
+	rm -f "$converted"
+	echo "Certificate renewal now uses port 443 (tlsChallenge). Previous config saved to $backup"
+}
+traefik_convert_acme_to_tls`;
 
 export interface TraefikOptions {
 	env?: string[];
@@ -65,6 +179,10 @@ export interface TraefikOptions {
 	}[];
 }
 
+// Host port 80 is never published, even when a stored port list still contains it.
+const withoutHostPort80 = (ports: TraefikOptions["additionalPorts"] = []) =>
+	ports.filter((port) => port.publishedPort !== 80);
+
 export const initializeStandaloneTraefik = async ({
 	env,
 	serverId,
@@ -74,30 +192,28 @@ export const initializeStandaloneTraefik = async ({
 	const imageName = `traefik:v${TRAEFIK_VERSION}`;
 	const containerName = "dokploy-traefik";
 
+	const publishable = withoutHostPort80(additionalPorts);
+
 	const exposedPorts: Record<string, {}> = {
-		[`${TRAEFIK_PORT}/tcp`]: {},
 		[`${TRAEFIK_SSL_PORT}/tcp`]: {},
 		[`${TRAEFIK_HTTP3_PORT}/udp`]: {},
 	};
 
 	const portBindings: Record<string, Array<{ HostPort: string }>> = {
-		[`${TRAEFIK_PORT}/tcp`]: [{ HostPort: TRAEFIK_PORT.toString() }],
 		[`${TRAEFIK_SSL_PORT}/tcp`]: [{ HostPort: TRAEFIK_SSL_PORT.toString() }],
 		[`${TRAEFIK_HTTP3_PORT}/udp`]: [
 			{ HostPort: TRAEFIK_HTTP3_PORT.toString() },
 		],
 	};
 
-	const enableDashboard = additionalPorts.some(
-		(port) => port.targetPort === 8080,
-	);
+	const enableDashboard = publishable.some((port) => port.targetPort === 8080);
 
 	if (enableDashboard) {
 		exposedPorts["8080/tcp"] = {};
 		portBindings["8080/tcp"] = [{ HostPort: "8080" }];
 	}
 
-	for (const port of additionalPorts) {
+	for (const port of publishable) {
 		const portKey = `${port.targetPort}/${port.protocol ?? "tcp"}`;
 		exposedPorts[portKey] = {};
 		portBindings[portKey] = [{ HostPort: port.publishedPort.toString() }];
@@ -207,14 +323,8 @@ export const initializeTraefikService = async ({
 					PublishMode: "host",
 					Protocol: "udp",
 				},
-				{
-					TargetPort: 80,
-					PublishedPort: TRAEFIK_PORT,
-					PublishMode: "host",
-					Protocol: "tcp",
-				},
 
-				...additionalPorts.map((port) => ({
+				...withoutHostPort80(additionalPorts).map((port) => ({
 					TargetPort: port.targetPort,
 					PublishedPort: port.publishedPort,
 					Protocol: port.protocol as "tcp" | "udp" | "sctp" | undefined,
@@ -339,9 +449,7 @@ export const getDefaultTraefikConfig = () => {
 					acme: {
 						email: "test@localhost.com",
 						storage: "/etc/dokploy/traefik/dynamic/acme.json",
-						httpChallenge: {
-							entryPoint: "web",
-						},
+						tlsChallenge: {},
 					},
 				},
 			},
@@ -394,9 +502,7 @@ export const getDefaultServerTraefikConfig = () => {
 				acme: {
 					email: "test@localhost.com",
 					storage: "/etc/dokploy/traefik/dynamic/acme.json",
-					httpChallenge: {
-						entryPoint: "web",
-					},
+					tlsChallenge: {},
 				},
 			},
 		},
