@@ -66,20 +66,7 @@ export const initializePostgres = async () => {
 	});
 
 	if (inspect) {
-		const currentContainerSpec = inspect.Spec.TaskTemplate.ContainerSpec;
-		await service.update({
-			version: Number.parseInt(inspect.Version.Index, 10),
-			...settings,
-			TaskTemplate: {
-				...settings.TaskTemplate,
-				ContainerSpec: {
-					...containerSpec,
-					Image: currentContainerSpec.Image,
-					Mounts: currentContainerSpec.Mounts,
-				},
-			},
-		});
-		console.log("Postgres Started ✅");
+		console.log("Postgres service already exists, leaving it unchanged");
 		return;
 	}
 

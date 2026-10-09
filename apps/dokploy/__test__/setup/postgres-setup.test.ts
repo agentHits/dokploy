@@ -53,18 +53,11 @@ vi.mock("@dokploy/server/utils/docker/utils", () => ({
 const serviceNotFound = () =>
 	Object.assign(new Error("service not found"), { statusCode: 404 });
 
-const existingMounts = [
-	{
-		Type: "volume",
-		Source: "test-postgres-volume",
-		Target: "/var/lib/postgresql/data",
-	},
-];
-
 describe("initializePostgres", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		pullImageMock.mockResolvedValue(undefined);
+		createServiceMock.mockResolvedValue(undefined);
 		inspectMock.mockRejectedValue(serviceNotFound());
 	});
 
@@ -102,27 +95,53 @@ describe("initializePostgres", () => {
 		expect(spec?.Env).toContain("PGDATA=/var/lib/postgresql/data");
 	});
 
-	it("keeps the existing image and mounts when the service already exists", async () => {
+	it("leaves an existing service unchanged, including its secrets and mounts", async () => {
 		inspectMock.mockResolvedValue({
 			Version: { Index: 7 },
 			Spec: {
 				TaskTemplate: {
-					ContainerSpec: { Image: "postgres:16", Mounts: existingMounts },
+					ContainerSpec: {
+						Image: "postgres:16",
+						Env: ["POSTGRES_PASSWORD_FILE=/run/secrets/pg"],
+						Secrets: [{ SecretName: "pg", SecretID: "test-secret-id" }],
+						Mounts: [
+							{
+								Type: "volume",
+								Source: "test-postgres-volume",
+								Target: "/var/lib/postgresql",
+							},
+						],
+					},
 				},
 			},
 		});
 
-		await initializePostgres();
+		await expect(initializePostgres()).resolves.toBeUndefined();
+
+		expect(updateMock).not.toHaveBeenCalled();
+		expect(createServiceMock).not.toHaveBeenCalled();
+		expect(pullImageMock).not.toHaveBeenCalled();
+	});
+
+	it("rethrows an inspect error that is not a 404", async () => {
+		inspectMock.mockRejectedValue(
+			Object.assign(new Error("connection refused"), { statusCode: 500 }),
+		);
+
+		await expect(initializePostgres()).rejects.toThrow("connection refused");
 
 		expect(pullImageMock).not.toHaveBeenCalled();
 		expect(createServiceMock).not.toHaveBeenCalled();
-		expect(updateMock).toHaveBeenCalledTimes(1);
+	});
 
-		const options = updateMock.mock.calls[0]?.[0];
-		const spec = options?.TaskTemplate?.ContainerSpec;
-		expect(options?.version).toBe(7);
-		expect(spec?.Image).toBe("postgres:16");
-		expect(spec?.Mounts).toEqual(existingMounts);
-		expect(spec?.Env).toContain("PGDATA=/var/lib/postgresql/data");
+	it("resolves when createService reports the service already exists (409)", async () => {
+		createServiceMock.mockRejectedValueOnce(
+			Object.assign(new Error("service already exists"), { statusCode: 409 }),
+		);
+
+		await expect(initializePostgres()).resolves.toBeUndefined();
+
+		expect(pullImageMock).toHaveBeenCalledWith("postgres:18.6");
+		expect(createServiceMock).toHaveBeenCalledTimes(1);
 	});
 });
