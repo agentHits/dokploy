@@ -458,6 +458,7 @@ traefik_old_stopped=0
 traefik_old_image=""
 traefik_extra_networks=""
 traefik_acme_backup=""
+traefik_tls_converted=""
 if $SUDO_CMD docker inspect dokploy-traefik >/dev/null 2>&1; then
 	traefik_existed=1
 	traefik_old_image="$($SUDO_CMD docker inspect -f '{{.Config.Image}}' dokploy-traefik 2>/dev/null || true)"
@@ -500,7 +501,7 @@ traefik_restore() {
 	local failed_step="$1"
 	trap - HUP INT TERM
 	echo "Error: Traefik update failed while $failed_step." >&2
-	if [ -n "$traefik_acme_backup" ]; then $SUDO_CMD cat "$traefik_acme_backup" | $SUDO_CMD tee /etc/dokploy/traefik/traefik.yml >/dev/null && echo "Restored the previous Traefik config from $traefik_acme_backup." >&2; fi
+	if [ "$traefik_tls_converted" = 1 ]; then echo "Kept the converted Traefik config (tlsChallenge). Port 443 is published, so the restored container works with it. Previous config saved to $traefik_acme_backup." >&2; fi
 	if [ "$traefik_old_stopped" = 1 ]; then
 		echo "Restoring the previous Traefik container from $traefik_old_image." >&2
 		$SUDO_CMD docker rm -f dokploy-traefik >/dev/null 2>&1 || true

@@ -1,4 +1,6 @@
 import { writeTraefikSetup } from "@dokploy/server/services/settings";
+import { TRAEFIK_MAIN_CONFIG_PATH } from "@dokploy/server/setup/traefik-setup";
+import { ExecError } from "@dokploy/server/utils/process/ExecError";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -102,6 +104,32 @@ describe("writeTraefikSetup", () => {
 		);
 		expect(mocks.initializeStandaloneTraefik).not.toHaveBeenCalled();
 		expect(mocks.initializeTraefikService).not.toHaveBeenCalled();
+	});
+
+	it("names the config and the backup in the error when the conversion fails", async () => {
+		mocks.execAsyncRemote.mockImplementation(
+			async (_serverId: string, command: string) => {
+				if (command.includes(RESOURCE_CHECK)) {
+					return answerResourceCheck("standalone", command);
+				}
+				throw new ExecError("Remote command failed with exit code 1", {
+					command,
+					serverId: "server-1",
+					exitCode: 1,
+					stderr: `Error: could not convert ${TRAEFIK_MAIN_CONFIG_PATH} to tlsChallenge. The original config was left unchanged. Previous config saved to ${TRAEFIK_MAIN_CONFIG_PATH}.bak-20261009000000\n`,
+				});
+			},
+		);
+
+		const failure = writeTraefikSetup({ serverId: "server-1" });
+
+		await expect(failure).rejects.toThrow(
+			`Traefik config ${TRAEFIK_MAIN_CONFIG_PATH} could not be converted to tlsChallenge`,
+		);
+		await expect(failure).rejects.toThrow(
+			`${TRAEFIK_MAIN_CONFIG_PATH}.bak-20261009000000`,
+		);
+		expect(mocks.initializeStandaloneTraefik).not.toHaveBeenCalled();
 	});
 
 	it("runs the conversion on this host, not over SSH, when no server is given", async () => {

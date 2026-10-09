@@ -1344,7 +1344,10 @@ describe("install-agenthits.sh Traefik settle check", () => {
 
 const runMigrateTraefikAcme = (
 	config: string | null,
-	{ passPath = true }: { passPath?: boolean } = {},
+	{
+		passPath = true,
+		failWrite = false,
+	}: { passPath?: boolean; failWrite?: boolean } = {},
 ) => {
 	const installer = readFileSync(installerScript, "utf8");
 	const dir = mkdtempSync(path.join(tmpdir(), "traefik-acme-"));
@@ -1354,9 +1357,12 @@ const runMigrateTraefikAcme = (
 			writeFileSync(configPath, config);
 		}
 		const scriptPath = path.join(dir, "migrate.sh");
+		const failingCat = failWrite
+			? 'cat() {\n\tcase "$1" in\n\t\t*.tmp) return 1 ;;\n\t\t*) command cat "$@" ;;\n\tesac\n}\n'
+			: "";
 		writeFileSync(
 			scriptPath,
-			`set -eu\n${shellFunctionText(installer, "migrate_traefik_acme_to_tls")}\nmigrate_traefik_acme_to_tls${passPath ? ' "$1"' : ""}\n`,
+			`set -eu\n${failingCat}${shellFunctionText(installer, "migrate_traefik_acme_to_tls")}\nmigrate_traefik_acme_to_tls${passPath ? ' "$1"' : ""}\n`,
 		);
 		const result = spawnSync("/bin/bash", [scriptPath, configPath], {
 			encoding: "utf8",
@@ -1377,6 +1383,27 @@ const runMigrateTraefikAcme = (
 			backupName,
 			backupBytes: backupName ? readFileSync(path.join(dir, backupName)) : null,
 		};
+	} finally {
+		rmSync(dir, { force: true, recursive: true });
+	}
+};
+
+const runDirectoryGuard = (target: string) => {
+	const installer = readFileSync(installerScript, "utf8");
+	const lines = installer.split("\n");
+	const start = lines.indexOf('\tif [ -d "$TRAEFIK_CONFIG_FILE" ]; then');
+	const end = lines.indexOf("\tfi", start);
+	const dir = mkdtempSync(path.join(tmpdir(), "traefik-guard-"));
+	try {
+		const scriptPath = path.join(dir, "guard.sh");
+		writeFileSync(
+			scriptPath,
+			`set -eu\nTRAEFIK_CONFIG_FILE="$1"\n${lines.slice(start, end + 1).join("\n")}\n`,
+		);
+		return spawnSync("/bin/bash", [scriptPath, target], {
+			encoding: "utf8",
+			env: { ...process.env, PATH: `/bin:/usr/bin:${process.env.PATH}` },
+		});
 	} finally {
 		rmSync(dir, { force: true, recursive: true });
 	}
@@ -1423,22 +1450,23 @@ describe("install-agenthits.sh Traefik ACME migration", () => {
 		expect(migrate).toContain('cat "$config.tmp" >"$config"');
 	});
 
-	it("restores the saved config before any container is recreated", () => {
+	it("keeps the converted config and reports the backup before any container is recreated", () => {
 		const installer = readFileSync(installerScript, "utf8");
 		const restore = shellFunctionText(installer, "traefik_restore");
 		const failed = restore.indexOf(
 			'echo "Error: Traefik update failed while $failed_step." >&2',
 		);
-		const configRestore = restore.indexOf(
-			'cat "$TRAEFIK_ACME_BACKUP" > "$TRAEFIK_CONFIG_FILE"',
+		const kept = restore.indexOf(
+			'echo "Kept the converted Traefik config (tlsChallenge). Previous config saved to $TRAEFIK_ACME_BACKUP." >&2',
 		);
 		const containerRestore = restore.indexOf(
 			'if [ "$TRAEFIK_OLD_STOPPED" = "1" ]; then',
 		);
 
 		expect(failed).toBeGreaterThanOrEqual(0);
-		expect(configRestore).toBeGreaterThan(failed);
-		expect(containerRestore).toBeGreaterThan(configRestore);
+		expect(kept).toBeGreaterThan(failed);
+		expect(containerRestore).toBeGreaterThan(kept);
+		expect(restore).not.toContain('cat "$TRAEFIK_ACME_BACKUP"');
 	});
 
 	it("converts a block-form httpChallenge and keeps a byte-exact backup", () => {
@@ -1646,7 +1674,7 @@ describe("install-agenthits.sh Traefik ACME migration", () => {
 		expect(run.backupBytes).toEqual(Buffer.from(original));
 	});
 
-	it("reads and restores the Traefik config only through TRAEFIK_CONFIG_FILE", () => {
+	it("reads and writes the Traefik config only through TRAEFIK_CONFIG_FILE", () => {
 		const installer = readFileSync(installerScript, "utf8");
 		const migrate = shellFunctionText(installer, "migrate_traefik_acme_to_tls");
 		const swap = shellFunctionText(installer, "swap_dokploy_traefik");
@@ -1657,7 +1685,6 @@ describe("install-agenthits.sh Traefik ACME migration", () => {
 		);
 		expect(migrate).toContain('local config="${1:-$TRAEFIK_CONFIG_FILE}"');
 		expect(swap).toContain('"$TRAEFIK_CONFIG_FILE" 2>/dev/null');
-		expect(restore).toContain('> "$TRAEFIK_CONFIG_FILE"');
 		for (const text of [migrate, swap, restore]) {
 			expect(text).not.toContain("/etc/dokploy/traefik/traefik.yml");
 		}
@@ -1696,19 +1723,20 @@ describe("install-agenthits.sh Traefik ACME migration", () => {
 	);
 
 	it(
-		"restores the previous Traefik config when the new Traefik does not start",
+		"keeps the converted Traefik config when the new Traefik does not start",
 		() => {
-			const { result, configText } = runInstaller({
+			const { result, configText, configBackupText } = runInstaller({
 				traefikImage: "traefik:v3.6.25",
 				traefikRunning: "false",
 				traefikConfig: HTTP_TRAEFIK_CONFIG,
 			});
 
 			expect(result.status).not.toBe(0);
-			expect(result.stderr).toContain(
-				"Restored the previous Traefik config from",
+			expect(result.stderr).toMatch(
+				/Kept the converted Traefik config \(tlsChallenge\)\. Previous config saved to \S+traefik\.yml\.bak-\d{14}\./,
 			);
-			expect(configText).toBe(HTTP_TRAEFIK_CONFIG);
+			expect(configText).toBe(TLS_TRAEFIK_CONFIG);
+			expect(configBackupText).toBe(HTTP_TRAEFIK_CONFIG);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);
@@ -1732,8 +1760,117 @@ describe("install-agenthits.sh Traefik ACME migration", () => {
 		expect(container).toContain(
 			"-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \\",
 		);
-		for (const text of [defaults, container]) {
-			expect(text).not.toContain("/etc/dokploy/traefik/traefik.yml");
+		expect(defaults).toContain('case "$TRAEFIK_CONFIG_FILE" in');
+		expect(defaults).toContain(
+			"/etc/dokploy/traefik/traefik.yml | */traefik.yml)",
+		);
+		expect(defaults).not.toMatch(
+			/(?:-[df]|rm -rf|cat >)\s*\/etc\/dokploy\/traefik\/traefik\.yml/,
+		);
+		expect(container).not.toContain("/etc/dokploy/traefik/traefik.yml");
+	});
+
+	it("keeps a comment line inside a block-form httpChallenge without ending the skip", () => {
+		const original = textLines(
+			"certificatesResolvers:",
+			"  letsencrypt:",
+			"    acme:",
+			"      email: ops@example.com",
+			"      httpChallenge:",
+			"# note",
+			"        entryPoint: web",
+		);
+		const run = runMigrateTraefikAcme(original);
+
+		expect(run.result.status).toBe(0);
+		expect(run.configText).toBe(
+			textLines(
+				"certificatesResolvers:",
+				"  letsencrypt:",
+				"    acme:",
+				"      email: ops@example.com",
+				"      tlsChallenge: {}",
+			),
+		);
+		expect(parse(run.configText ?? "")).toEqual({
+			certificatesResolvers: {
+				letsencrypt: {
+					acme: { email: "ops@example.com", tlsChallenge: {} },
+				},
+			},
+		});
+		expect(run.backupBytes).toEqual(Buffer.from(original));
+	});
+
+	it("refuses a conversion that would leave a line indented under tlsChallenge", () => {
+		const original = textLines(
+			"certificatesResolvers:",
+			"  letsencrypt:",
+			"    acme:",
+			"      httpChallenge: {entryPoint: web}",
+			"        extra: true",
+		);
+		const run = runMigrateTraefikAcme(original);
+
+		expect(run.result.status).toBe(1);
+		expect(run.result.stderr).toMatch(
+			/would leave output line 5 indented under tlsChallenge\. The config is unchanged/,
+		);
+		expect(run.configText).toBe(original);
+		expect(run.entries).not.toContain("traefik.yml.tmp");
+	});
+
+	it("restores the original config when the in-place write fails", () => {
+		const original = textLines(
+			"certificatesResolvers:",
+			"  letsencrypt:",
+			"    acme:",
+			"      email: ops@example.com",
+			"      httpChallenge:",
+			"        entryPoint: web",
+		);
+		const run = runMigrateTraefikAcme(original, { failWrite: true });
+
+		expect(run.result.status).toBe(1);
+		expect(run.result.stderr).toMatch(
+			/could not write \S+traefik\.yml\. The previous config was restored from \S+traefik\.yml\.bak-\d{14}\./,
+		);
+		expect(run.configText).toBe(original);
+		expect(run.backupBytes).toEqual(Buffer.from(original));
+		expect(run.entries).not.toContain("traefik.yml.tmp");
+	});
+
+	it("removes a directory only when its path ends in traefik.yml", () => {
+		const root = mkdtempSync(path.join(tmpdir(), "traefik-guard-target-"));
+		try {
+			const target = path.join(root, "traefik.yml");
+			mkdirSync(target);
+			writeFileSync(path.join(target, "stale"), "x");
+
+			const result = runDirectoryGuard(target);
+
+			expect(result.status).toBe(0);
+			expect(existsSync(target)).toBe(false);
+		} finally {
+			rmSync(root, { force: true, recursive: true });
+		}
+	});
+
+	it("refuses to remove a directory at any other path", () => {
+		const root = mkdtempSync(path.join(tmpdir(), "traefik-guard-target-"));
+		try {
+			const target = path.join(root, "other.yml");
+			mkdirSync(target);
+
+			const result = runDirectoryGuard(target);
+
+			expect(result.status).toBe(1);
+			expect(result.stderr).toContain(
+				"is a directory, not the Traefik config file",
+			);
+			expect(existsSync(target)).toBe(true);
+		} finally {
+			rmSync(root, { force: true, recursive: true });
 		}
 	});
 });

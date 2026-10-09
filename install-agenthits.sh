@@ -138,7 +138,15 @@ create_default_traefik_files() {
 	mkdir -p /etc/dokploy/traefik/dynamic
 
 	if [ -d "$TRAEFIK_CONFIG_FILE" ]; then
-		rm -rf "$TRAEFIK_CONFIG_FILE"
+		case "$TRAEFIK_CONFIG_FILE" in
+			/etc/dokploy/traefik/traefik.yml | */traefik.yml)
+				rm -rf "$TRAEFIK_CONFIG_FILE"
+				;;
+			*)
+				echo "Error: $TRAEFIK_CONFIG_FILE is a directory, not the Traefik config file. Remove it by hand, then run the installer again." >&2
+				exit 1
+				;;
+		esac
 	fi
 
 	if [ ! -f "$TRAEFIK_CONFIG_FILE" ]; then
@@ -1385,7 +1393,7 @@ traefik_restore() {
 	local failed_step="$1"
 	trap - HUP INT TERM
 	echo "Error: Traefik update failed while $failed_step." >&2
-	if [ -n "${TRAEFIK_ACME_BACKUP:-}" ] && [ -f "$TRAEFIK_ACME_BACKUP" ]; then cat "$TRAEFIK_ACME_BACKUP" > "$TRAEFIK_CONFIG_FILE" && echo "Restored the previous Traefik config from $TRAEFIK_ACME_BACKUP." >&2; fi
+	if [ -n "${TRAEFIK_ACME_BACKUP:-}" ] && [ -f "$TRAEFIK_ACME_BACKUP" ]; then echo "Kept the converted Traefik config (tlsChallenge). Previous config saved to $TRAEFIK_ACME_BACKUP." >&2; fi
 	if [ "$TRAEFIK_OLD_STOPPED" = "1" ]; then
 		echo "Restoring the previous Traefik container from $TRAEFIK_OLD_IMAGE." >&2
 		docker rm -f dokploy-traefik >/dev/null 2>&1 || true
@@ -1415,26 +1423,11 @@ migrate_traefik_acme_to_tls() {
 
 	local awk_status=0
 	awk '
-		/^[[:space:]]*httpChallenge:[[:space:]]*$/ {
-			match($0, /[^[:space:]]/)
-			indent = RSTART - 1
-			print substr($0, 1, indent) "tlsChallenge: {}"
-			skipping = 1
-			next
-		}
-		/^[[:space:]]*httpChallenge:[[:space:]]*\{.*\}[[:space:]]*$/ {
-			match($0, /[^[:space:]]/)
-			print substr($0, 1, RSTART - 1) "tlsChallenge: {}"
-			next
-		}
-		skipping && /^[[:space:]]*$/ {
-			print
-			next
-		}
-		skipping {
-			if (match($0, /[^[:space:]]/) && RSTART - 1 > indent) next
-			skipping = 0
-		}
+		/^[[:space:]]*httpChallenge:[[:space:]]*$/ { match($0, /[^[:space:]]/); indent = RSTART - 1; print substr($0, 1, indent) "tlsChallenge: {}"; skipping = 1; next }
+		/^[[:space:]]*httpChallenge:[[:space:]]*\{.*\}[[:space:]]*$/ { match($0, /[^[:space:]]/); print substr($0, 1, RSTART - 1) "tlsChallenge: {}"; next }
+		skipping && /^[[:space:]]*$/ { print; next }
+		skipping && /^[[:space:]]*#/ { next }
+		skipping { if (match($0, /[^[:space:]]/) && RSTART - 1 > indent) next; skipping = 0 }
 		{ print }
 	' "$config" >"$config.tmp" || awk_status=$?
 	if [ "$awk_status" -ne 0 ] || grep -q 'httpChallenge' "$config.tmp" || ! grep -q 'tlsChallenge: {}' "$config.tmp"; then
@@ -1443,10 +1436,25 @@ migrate_traefik_acme_to_tls() {
 		return 1
 	fi
 
+	local orphan_line=""
+	orphan_line="$(awk '
+		/^[[:space:]]*tlsChallenge:[[:space:]]*\{\}[[:space:]]*$/ { match($0, /[^[:space:]]/); level = RSTART - 1; armed = 1; next }
+		armed && /^[[:space:]]*(#.*)?$/ { next }
+		armed { armed = 0; match($0, /[^[:space:]]/); if (RSTART - 1 > level) { print NR; exit } }
+	' "$config.tmp")"
+	if [ -n "$orphan_line" ]; then
+		rm -f "$config.tmp"
+		echo "Error: converting $config would leave output line $orphan_line indented under tlsChallenge. The config is unchanged; the previous config is saved at $backup." >&2
+		return 1
+	fi
+
 	if ! cat "$config.tmp" >"$config"; then
 		rm -f "$config.tmp"
-		TRAEFIK_ACME_BACKUP="$backup"
-		echo "Error: could not write $config. The previous config is saved at $backup." >&2
+		if cat "$backup" >"$config"; then
+			echo "Error: could not write $config. The previous config was restored from $backup." >&2
+		else
+			echo "Error: could not write $config, and restoring it from $backup failed. Copy $backup back over $config." >&2
+		fi
 		return 1
 	fi
 	rm -f "$config.tmp"

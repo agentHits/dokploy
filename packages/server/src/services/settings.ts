@@ -1,6 +1,7 @@
 import { readdirSync } from "node:fs";
 import { join, posix } from "node:path";
 import { quoteShellArg } from "@dokploy/server/utils/filesystem/safe-path";
+import { ExecError } from "@dokploy/server/utils/process/ExecError";
 import {
 	execAsync,
 	execAsyncRemote,
@@ -14,6 +15,7 @@ import {
 	buildTraefikTlsMigrationStep,
 	initializeStandaloneTraefik,
 	initializeTraefikService,
+	TRAEFIK_MAIN_CONFIG_PATH,
 	type TraefikOptions,
 } from "../setup/traefik-setup";
 import { UPDATE_IMAGE_PULLED_MARKER } from "./web-server-update";
@@ -1132,10 +1134,20 @@ const convertTraefikConfigToTls = async (serverId?: string) => {
 		"../setup/server-components"
 	);
 	const script = wrapComponentUpdateSteps(buildTraefikTlsMigrationStep());
-	if (serverId) {
-		await execAsyncRemote(serverId, script);
-	} else {
-		await execAsync(script);
+	try {
+		if (serverId) {
+			await execAsyncRemote(serverId, script);
+		} else {
+			await execAsync(script);
+		}
+	} catch (error) {
+		const stderr =
+			error instanceof ExecError ? error.stderr?.trim() : undefined;
+		const detail =
+			stderr || (error instanceof Error ? error.message : String(error));
+		throw new Error(
+			`Traefik config ${TRAEFIK_MAIN_CONFIG_PATH} could not be converted to tlsChallenge. ${detail}`,
+		);
 	}
 };
 

@@ -194,21 +194,26 @@ describe("buildComponentUpdateScript", () => {
 			script.indexOf("if ! $SUDO_CMD docker stop dokploy-traefik >/dev/null;"),
 		);
 	});
-	it("restores the Traefik config from its backup inside the restore function, before any container is recreated", () => {
+	it("keeps the converted Traefik config on rollback, names the backup, and never restores httpChallenge", () => {
 		const script = buildComponentUpdateScript(["traefik"]);
-		const restore = script.indexOf(
-			'if [ -n "$traefik_acme_backup" ]; then $SUDO_CMD cat "$traefik_acme_backup" | $SUDO_CMD tee /etc/dokploy/traefik/traefik.yml >/dev/null && echo "Restored the previous Traefik config from $traefik_acme_backup." >&2; fi',
+		const kept = script.indexOf(
+			'if [ "$traefik_tls_converted" = 1 ]; then echo "Kept the converted Traefik config (tlsChallenge). Port 443 is published, so the restored container works with it. Previous config saved to $traefik_acme_backup." >&2; fi',
 		);
 		const trapSet = script.indexOf(
 			"trap 'traefik_restore \"being interrupted\"' HUP INT TERM",
 		);
 
-		expect(restore).toBeGreaterThan(script.indexOf("traefik_restore() {"));
-		expect(restore).toBeLessThan(trapSet);
-		expect(restore).toBeLessThan(
+		const definition = script.indexOf("traefik_restore() {");
+
+		expect(kept).toBeGreaterThan(definition);
+		expect(kept).toBeLessThan(trapSet);
+		expect(kept).toBeLessThan(
 			script.indexOf('echo "Restoring the previous Traefik container from'),
 		);
-		expect(script.indexOf('traefik_acme_backup=""')).toBeLessThan(trapSet);
+		expect(script.slice(definition, trapSet)).not.toContain(
+			'cat "$traefik_acme_backup"',
+		);
+		expect(script.indexOf('traefik_tls_converted=""')).toBeLessThan(trapSet);
 	});
 	it("keeps httpChallenge out of the Traefik step apart from the conversion", () => {
 		const script = buildComponentUpdateScript(["traefik"]);
@@ -909,6 +914,21 @@ describe("buildComponentUpdateScript run order", () => {
 			expect(run.calls.some((call) => call.startsWith("docker stop"))).toBe(
 				false,
 			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"keeps the converted Traefik config when a later step fails, without restoring httpChallenge",
+		() => {
+			const run = runComponentScript(["traefik"], {
+				traefikConfig: HTTP_CHALLENGE_CONFIG,
+				env: { FAKE_CREATE_FAILS: "1" },
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.stderr).toContain("Kept the converted Traefik config");
+			expect(run.stderr).not.toContain("Restored the previous Traefik config");
+			expect(run.traefikConfigFile).toBe(TLS_CHALLENGE_CONFIG);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);

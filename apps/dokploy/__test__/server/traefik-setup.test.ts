@@ -529,6 +529,139 @@ describe("buildTraefikTlsMigrationStep", () => {
 		SPAWN_TEST_TIMEOUT_MS,
 	);
 
+	it("keeps a comment inside an httpChallenge block from ending the skip", () => {
+		const configPath = path.join(dir, "traefik.yml");
+		const original = lines(
+			"certificatesResolvers:",
+			"  letsencrypt:",
+			"    acme:",
+			"      httpChallenge:",
+			"      # note",
+			"        entryPoint: web",
+		);
+		writeFileSync(configPath, original);
+
+		const run = runStep(configPath);
+
+		expect(run.status).toBe(0);
+		expect(readFileSync(configPath, "utf8")).toBe(
+			lines(
+				"certificatesResolvers:",
+				"  letsencrypt:",
+				"    acme:",
+				"      tlsChallenge: {}",
+			),
+		);
+		expect(readFileSync(backupFile())).toEqual(Buffer.from(original));
+	});
+
+	it.each(["bash", "/bin/sh"])(
+		"fails when a line under the converted tlsChallenge is more indented (%s)",
+		(shell) => {
+			const configPath = path.join(dir, "traefik.yml");
+			const original = lines(
+				"certificatesResolvers:",
+				"  letsencrypt:",
+				"    acme:",
+				"      httpChallenge: {entryPoint: web}",
+				"        extra: 1",
+			);
+			writeFileSync(configPath, original);
+			const tmp = path.join(dir, "tmp");
+			mkdirSync(tmp);
+
+			const run = spawnSync(
+				shell,
+				["-c", buildTraefikTlsMigrationStep(configPath)],
+				{
+					encoding: "utf8",
+					env: { ...process.env, SUDO_CMD: "", TMPDIR: tmp },
+				},
+			);
+			const backup = backupFile();
+
+			expect(run.status).toBe(1);
+			expect(run.stderr).toContain("has lines under tlsChallenge");
+			expect(run.stderr).toContain(backup);
+			expect(readFileSync(configPath, "utf8")).toBe(original);
+			expect(readFileSync(backup)).toEqual(Buffer.from(original));
+			expect(readdirSync(tmp)).toEqual([]);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it.each(["bash", "/bin/sh"])(
+		"keeps saving when sudo cannot run test and the config needs no conversion (%s)",
+		(shell) => {
+			const configPath = path.join(dir, "traefik.yml");
+			const original = lines(
+				"certificatesResolvers:",
+				"  letsencrypt:",
+				"    acme:",
+				"      tlsChallenge: {}",
+			);
+			writeFileSync(configPath, original);
+			const shims = path.join(dir, "shims");
+			const tmp = path.join(dir, "tmp");
+			mkdirSync(shims);
+			mkdirSync(tmp);
+			writeFileSync(path.join(shims, "sudo"), "#!/bin/sh\nexit 1\n");
+			chmodSync(path.join(shims, "sudo"), 0o755);
+
+			const run = spawnSync(
+				shell,
+				["-c", buildTraefikTlsMigrationStep(configPath)],
+				{
+					encoding: "utf8",
+					env: {
+						...process.env,
+						PATH: `${shims}:/bin:/usr/bin:${process.env.PATH ?? ""}`,
+						SUDO_CMD: "sudo",
+						TMPDIR: tmp,
+					},
+				},
+			);
+
+			expect(run.status).toBe(0);
+			expect(readFileSync(configPath, "utf8")).toBe(original);
+			expect(filesInDir()).toEqual(["shims", "tmp", "traefik.yml"].sort());
+			expect(readdirSync(tmp)).toEqual([]);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it.each(["bash", "/bin/sh"])(
+		"fails closed when sudo cannot run test and the config is missing (%s)",
+		(shell) => {
+			const configPath = path.join(dir, "traefik.yml");
+			const shims = path.join(dir, "shims");
+			const tmp = path.join(dir, "tmp");
+			mkdirSync(shims);
+			mkdirSync(tmp);
+			writeFileSync(path.join(shims, "sudo"), "#!/bin/sh\nexit 1\n");
+			chmodSync(path.join(shims, "sudo"), 0o755);
+
+			const run = spawnSync(
+				shell,
+				["-c", buildTraefikTlsMigrationStep(configPath)],
+				{
+					encoding: "utf8",
+					env: {
+						...process.env,
+						PATH: `${shims}:/bin:/usr/bin:${process.env.PATH ?? ""}`,
+						SUDO_CMD: "sudo",
+						TMPDIR: tmp,
+					},
+				},
+			);
+
+			expect(run.status).toBe(1);
+			expect(run.stderr).toContain("could not run test as root");
+			expect(filesInDir()).toEqual(["shims", "tmp"].sort());
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
 	it("does nothing when there is no config file", () => {
 		const run = runStep(path.join(dir, "traefik.yml"));
 
