@@ -11,6 +11,7 @@ import semver from "semver";
 import { db } from "../db";
 import { compose } from "../db/schema";
 import {
+	buildTraefikTlsMigrationStep,
 	initializeStandaloneTraefik,
 	initializeTraefikService,
 	type TraefikOptions,
@@ -1125,6 +1126,19 @@ export const checkPortInUse = async (
 	}
 };
 
+const convertTraefikConfigToTls = async (serverId?: string) => {
+	// Loaded lazily: a static import would close a cycle through server-setup and monitoring-setup, which import this module.
+	const { wrapComponentUpdateSteps } = await import(
+		"../setup/server-components"
+	);
+	const script = wrapComponentUpdateSteps(buildTraefikTlsMigrationStep());
+	if (serverId) {
+		await execAsyncRemote(serverId, script);
+	} else {
+		await execAsync(script);
+	}
+};
+
 export const writeTraefikSetup = async (input: TraefikOptions) => {
 	const resourceType = await getDockerResourceType(
 		"dokploy-traefik",
@@ -1132,6 +1146,7 @@ export const writeTraefikSetup = async (input: TraefikOptions) => {
 	);
 
 	if (resourceType === "service") {
+		await convertTraefikConfigToTls(input.serverId);
 		await initializeTraefikService({
 			env: input.env,
 			additionalPorts: input.additionalPorts,
@@ -1139,6 +1154,7 @@ export const writeTraefikSetup = async (input: TraefikOptions) => {
 		});
 		await reconnectServicesToTraefik(input.serverId);
 	} else if (resourceType === "standalone") {
+		await convertTraefikConfigToTls(input.serverId);
 		await initializeStandaloneTraefik({
 			env: input.env,
 			additionalPorts: input.additionalPorts,

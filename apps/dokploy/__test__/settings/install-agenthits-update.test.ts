@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import {
 	chmodSync,
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
@@ -14,6 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 const repoRoot = path.resolve(
 	path.dirname(fileURLToPath(import.meta.url)),
@@ -74,6 +76,9 @@ case "$1" in
 		case "$*" in
 			*Config.Image*) echo "$FAKE_TRAEFIK_IMAGE" ;;
 			*NetworkSettings*) echo "$FAKE_TRAEFIK_NETWORKS" ;;
+			*HostConfig.PortBindings*)
+				if [ "$FAKE_TRAEFIK_PORT80" = "1" ]; then echo '{"80/tcp":[{"HostIp":"","HostPort":"80"}],"443/tcp":[{"HostIp":"","HostPort":"443"}]}'; fi
+				;;
 			*RestartCount*)
 				traefik_now="$(cat "$DOCKER_TRAEFIK_IMAGE_FILE" 2>/dev/null || echo "$FAKE_TRAEFIK_IMAGE")"
 				if [ "$FAKE_TRAEFIK_RUNNING" = "false" ] && [ "$traefik_now" != "$FAKE_TRAEFIK_IMAGE" ]; then echo "false 0"; else echo "true 0"; fi
@@ -243,6 +248,25 @@ fi
 exec ${realPath("uname")} "$@"
 `;
 
+const textLines = (...rows: string[]) => `${rows.join("\n")}\n`;
+
+const TLS_TRAEFIK_CONFIG = textLines(
+	"certificatesResolvers:",
+	"  letsencrypt:",
+	"    acme:",
+	"      email: ops@example.com",
+	"      tlsChallenge: {}",
+);
+
+const HTTP_TRAEFIK_CONFIG = textLines(
+	"certificatesResolvers:",
+	"  letsencrypt:",
+	"    acme:",
+	"      email: ops@example.com",
+	"      httpChallenge:",
+	"        entryPoint: web",
+);
+
 type OperatorScenario = {
 	redisImage?: string;
 	postgresImage?: string;
@@ -250,6 +274,8 @@ type OperatorScenario = {
 	panelImage?: string;
 	traefikRunning?: "true" | "false";
 	traefikNetworks?: string;
+	traefikPublishesPort80?: boolean;
+	traefikConfig?: string;
 	missingNetworks?: string;
 	connectFails?: string;
 	updateState?: string;
@@ -280,6 +306,8 @@ const runInstaller = (
 		const backupDir = path.join(dir, "backups");
 		const sourcesDir = path.join(dir, "sources");
 		const osRelease = path.join(dir, "os-release");
+		const traefikConfig = path.join(dir, "traefik.yml");
+		writeFileSync(traefikConfig, scenario.traefikConfig ?? TLS_TRAEFIK_CONFIG);
 		writeFileSync(callLog, "");
 		writeFileSync(indexFile, "1");
 		writeFileSync(engineFile, `${scenario.engineVersion ?? "29.8.2"}\n`);
@@ -325,6 +353,7 @@ const runInstaller = (
 				DOKPLOY_BACKUP_DIR: backupDir,
 				DOKPLOY_APT_SOURCES_DIR: sourcesDir,
 				DOKPLOY_OS_RELEASE: osRelease,
+				TRAEFIK_CONFIG_FILE: traefikConfig,
 				DOCKER_ENGINE_UPGRADE: scenario.upgradeEngine ? "1" : "0",
 				AGENTHITS_PULL_RETRY_DELAY: "0",
 				DOKPLOY_HEALTH_INTERVAL: "0",
@@ -344,6 +373,7 @@ const runInstaller = (
 				FAKE_TRAEFIK_RUNNING: scenario.traefikRunning ?? "true",
 				FAKE_TRAEFIK_NETWORKS:
 					scenario.traefikNetworks ?? "bridge dokploy-network",
+				FAKE_TRAEFIK_PORT80: scenario.traefikPublishesPort80 ? "1" : "0",
 				FAKE_MISSING_NETWORKS: scenario.missingNetworks ?? "",
 				FAKE_CONNECT_FAILS: scenario.connectFails ?? "",
 				FAKE_UPDATE_STATE: scenario.updateState ?? "completed",
@@ -384,7 +414,20 @@ const runInstaller = (
 		const backupModes = backups.map(
 			(name) => statSync(path.join(backupDir, name)).mode & 0o777,
 		);
-		return { result, calls, backups, backupModes, backupEntries };
+		const configBackup = readdirSync(dir).find((name) =>
+			name.includes(".bak-"),
+		);
+		return {
+			result,
+			calls,
+			backups,
+			backupModes,
+			backupEntries,
+			configText: readFileSync(traefikConfig, "utf8"),
+			configBackupText: configBackup
+				? readFileSync(path.join(dir, configBackup), "utf8")
+				: undefined,
+		};
 	} finally {
 		rmSync(dir, { force: true, recursive: true });
 	}
@@ -392,6 +435,13 @@ const runInstaller = (
 
 const firstIndex = (calls: string[], prefix: string) =>
 	calls.findIndex((call) => call.startsWith(prefix));
+
+const shellFunctionText = (script: string, name: string) => {
+	const lines = script.split("\n");
+	const start = lines.indexOf(`${name}() {`);
+	const end = lines.indexOf("}", start);
+	return lines.slice(start, end + 1).join("\n");
+};
 
 const DOCKER_NEW = "5:29.8.2-1~ubuntu.24.04~noble";
 const DOCKER_OLD = "5:28.3.0-1~ubuntu.24.04~noble";
@@ -1050,6 +1100,8 @@ printf '%s\\n' 'echo fake nixpacks "$NIXPACKS_VERSION"' > "$out"
 			const curl = path.join(dir, "curl");
 			writeFileSync(curl, FAKE_INSTALL_CURL);
 			chmodSync(curl, 0o755);
+			const traefikConfig = path.join(dir, "traefik.yml");
+			writeFileSync(traefikConfig, TLS_TRAEFIK_CONFIG);
 			const script = [
 				"set -euo pipefail",
 				helperText(),
@@ -1062,6 +1114,7 @@ printf '%s\\n' 'echo fake nixpacks "$NIXPACKS_VERSION"' > "$out"
 					...process.env,
 					PATH: `${dir}:${binDir}`,
 					FAKE_CURL_MODE: curlMode,
+					TRAEFIK_CONFIG_FILE: traefikConfig,
 				},
 			});
 		} finally {
@@ -1202,11 +1255,35 @@ describe("install-agenthits.sh publishes no port 80", () => {
 		SPAWN_TEST_TIMEOUT_MS,
 	);
 
+	it(
+		"replaces Traefik with the same image when the running one still publishes port 80",
+		() => {
+			const { result, calls } = runInstaller({
+				traefikImage: "traefik:v3.7.14",
+				traefikPublishesPort80: true,
+			});
+
+			expect(result.status).toBe(0);
+			expect(result.stdout).not.toContain("Traefik already runs");
+			expect(result.stdout).toContain("Traefik runs traefik:v3.7.14");
+			const created = calls.filter((call) =>
+				call.startsWith("create --name dokploy-traefik"),
+			);
+			expect(created).toHaveLength(1);
+			expect(created[0]).not.toMatch(PORT_80_PUBLICATION);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
 	it("keeps port 80 out of the static Traefik config, the firewall and the preflight checks", () => {
 		const installer = readFileSync(installerScript, "utf8");
+		const defaults = shellFunctionText(
+			installer,
+			"create_default_traefik_files",
+		);
 
-		expect(installer).toContain("tlsChallenge: {}");
-		expect(installer).not.toContain("httpChallenge");
+		expect(defaults).toContain("tlsChallenge: {}");
+		expect(defaults).not.toContain("httpChallenge");
 		expect(installer).not.toContain("TRAEFIK_HTTP_PUBLISH");
 		expect(installer).not.toMatch(/ufw allow 80\//);
 		expect(installer).not.toMatch(/require_free_port 80\b/);
@@ -1263,4 +1340,400 @@ describe("install-agenthits.sh Traefik settle check", () => {
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);
+});
+
+const runMigrateTraefikAcme = (
+	config: string | null,
+	{ passPath = true }: { passPath?: boolean } = {},
+) => {
+	const installer = readFileSync(installerScript, "utf8");
+	const dir = mkdtempSync(path.join(tmpdir(), "traefik-acme-"));
+	try {
+		const configPath = path.join(dir, "traefik.yml");
+		if (config !== null) {
+			writeFileSync(configPath, config);
+		}
+		const scriptPath = path.join(dir, "migrate.sh");
+		writeFileSync(
+			scriptPath,
+			`set -eu\n${shellFunctionText(installer, "migrate_traefik_acme_to_tls")}\nmigrate_traefik_acme_to_tls${passPath ? ' "$1"' : ""}\n`,
+		);
+		const result = spawnSync("/bin/bash", [scriptPath, configPath], {
+			encoding: "utf8",
+			env: {
+				...process.env,
+				PATH: `/bin:/usr/bin:${process.env.PATH}`,
+				TRAEFIK_CONFIG_FILE: configPath,
+			},
+		});
+		const entries = readdirSync(dir).sort();
+		const backupName = entries.find((name) => name.includes(".bak-"));
+		return {
+			result,
+			configText: existsSync(configPath)
+				? readFileSync(configPath, "utf8")
+				: null,
+			entries,
+			backupName,
+			backupBytes: backupName ? readFileSync(path.join(dir, backupName)) : null,
+		};
+	} finally {
+		rmSync(dir, { force: true, recursive: true });
+	}
+};
+
+describe("install-agenthits.sh Traefik ACME migration", () => {
+	it("runs the migration after the trap and before the old Traefik container is stopped", () => {
+		const installer = readFileSync(installerScript, "utf8");
+		const swap = shellFunctionText(installer, "swap_dokploy_traefik");
+		const trap = swap.indexOf(
+			"trap 'traefik_restore \"being interrupted\"' HUP INT TERM",
+		);
+		const migrate = swap.indexOf(
+			'if ! migrate_traefik_acme_to_tls; then traefik_restore "converting the Traefik config to tlsChallenge"; fi',
+		);
+		const stop = swap.indexOf("docker stop dokploy-traefik");
+
+		expect(trap).toBeGreaterThanOrEqual(0);
+		expect(migrate).toBeGreaterThan(trap);
+		expect(stop).toBeGreaterThan(migrate);
+	});
+
+	it("skips the early return when the config still has httpChallenge or the container publishes port 80", () => {
+		const installer = readFileSync(installerScript, "utf8");
+		const swap = shellFunctionText(installer, "swap_dokploy_traefik");
+
+		expect(swap).toContain('TRAEFIK_ACME_BACKUP=""');
+		expect(swap).toContain(
+			"! grep -q '^[[:space:]]*httpChallenge:' \"$TRAEFIK_CONFIG_FILE\" 2>/dev/null",
+		);
+		expect(swap).toContain(
+			`! docker inspect -f '{{json .HostConfig.PortBindings}}' dokploy-traefik 2>/dev/null | grep -q '"80/tcp"'`,
+		);
+	});
+
+	it("names the backup with a UTC timestamp and writes the converted file in place", () => {
+		const installer = readFileSync(installerScript, "utf8");
+		const migrate = shellFunctionText(installer, "migrate_traefik_acme_to_tls");
+
+		expect(installer).toContain("migrate_traefik_acme_to_tls() {");
+		expect(migrate).toContain('backup="$config.bak-$(date -u +%Y%m%d%H%M%S)"');
+		expect(migrate).toContain('cp -p "$config" "$backup"');
+		expect(migrate).toContain('print substr($0, 1, indent) "tlsChallenge: {}"');
+		expect(migrate).toContain('cat "$config.tmp" >"$config"');
+	});
+
+	it("restores the saved config before any container is recreated", () => {
+		const installer = readFileSync(installerScript, "utf8");
+		const restore = shellFunctionText(installer, "traefik_restore");
+		const failed = restore.indexOf(
+			'echo "Error: Traefik update failed while $failed_step." >&2',
+		);
+		const configRestore = restore.indexOf(
+			'cat "$TRAEFIK_ACME_BACKUP" > "$TRAEFIK_CONFIG_FILE"',
+		);
+		const containerRestore = restore.indexOf(
+			'if [ "$TRAEFIK_OLD_STOPPED" = "1" ]; then',
+		);
+
+		expect(failed).toBeGreaterThanOrEqual(0);
+		expect(configRestore).toBeGreaterThan(failed);
+		expect(containerRestore).toBeGreaterThan(configRestore);
+	});
+
+	it("converts a block-form httpChallenge and keeps a byte-exact backup", () => {
+		const original = textLines(
+			"global:",
+			"  sendAnonymousUsage: false",
+			"entryPoints:",
+			"  web:",
+			"    address: :80",
+			"certificatesResolvers:",
+			"  letsencrypt:",
+			"    acme:",
+			"      email: ops@example.com",
+			"      storage: /etc/traefik/acme.json",
+			"      httpChallenge:",
+			"        entryPoint: web",
+		);
+		const run = runMigrateTraefikAcme(original);
+
+		expect(run.result.status).toBe(0);
+		expect(run.result.stdout).toMatch(
+			/^Certificate renewal now uses port 443 \(tlsChallenge\)\. Previous config saved to \S+traefik\.yml\.bak-\d{14}\n$/,
+		);
+		expect(run.configText).toBe(
+			textLines(
+				"global:",
+				"  sendAnonymousUsage: false",
+				"entryPoints:",
+				"  web:",
+				"    address: :80",
+				"certificatesResolvers:",
+				"  letsencrypt:",
+				"    acme:",
+				"      email: ops@example.com",
+				"      storage: /etc/traefik/acme.json",
+				"      tlsChallenge: {}",
+			),
+		);
+		expect(run.backupName).toMatch(/^traefik\.yml\.bak-\d{14}$/);
+		expect(run.backupBytes).toEqual(Buffer.from(original));
+		expect(run.entries).not.toContain("traefik.yml.tmp");
+	});
+
+	it("keeps the keys that follow a block-form httpChallenge", () => {
+		const original = textLines(
+			"certificatesResolvers:",
+			"  letsencrypt:",
+			"    acme:",
+			"      email: ops@example.com",
+			"      httpChallenge:",
+			"        entryPoint: web",
+			"      storage: /etc/traefik/acme.json",
+			"  staging:",
+			"    acme:",
+			"      email: ops@example.com",
+			"dynamic:",
+			"  directory: /etc/traefik/dynamic",
+		);
+		const run = runMigrateTraefikAcme(original);
+
+		expect(run.result.status).toBe(0);
+		expect(run.configText).toBe(
+			textLines(
+				"certificatesResolvers:",
+				"  letsencrypt:",
+				"    acme:",
+				"      email: ops@example.com",
+				"      tlsChallenge: {}",
+				"      storage: /etc/traefik/acme.json",
+				"  staging:",
+				"    acme:",
+				"      email: ops@example.com",
+				"dynamic:",
+				"  directory: /etc/traefik/dynamic",
+			),
+		);
+		expect(run.backupBytes).toEqual(Buffer.from(original));
+	});
+
+	it("converts an inline httpChallenge in place", () => {
+		const original = textLines(
+			"certificatesResolvers:",
+			"  letsencrypt:",
+			"    acme:",
+			"      email: ops@example.com",
+			"      httpChallenge: {entryPoint: web}",
+			"      storage: /etc/traefik/acme.json",
+		);
+		const run = runMigrateTraefikAcme(original);
+
+		expect(run.result.status).toBe(0);
+		expect(run.configText).toBe(
+			textLines(
+				"certificatesResolvers:",
+				"  letsencrypt:",
+				"    acme:",
+				"      email: ops@example.com",
+				"      tlsChallenge: {}",
+				"      storage: /etc/traefik/acme.json",
+			),
+		);
+		expect(run.backupBytes).toEqual(Buffer.from(original));
+	});
+
+	it("leaves a config already on tlsChallenge untouched and makes no backup", () => {
+		const original = textLines(
+			"certificatesResolvers:",
+			"  letsencrypt:",
+			"    acme:",
+			"      email: ops@example.com",
+			"      tlsChallenge: {}",
+		);
+		const run = runMigrateTraefikAcme(original);
+
+		expect(run.result.status).toBe(0);
+		expect(run.result.stdout).toBe("");
+		expect(run.configText).toBe(original);
+		expect(run.backupName).toBeUndefined();
+	});
+
+	it("does nothing and creates no file when the config is missing", () => {
+		const run = runMigrateTraefikAcme(null);
+
+		expect(run.result.status).toBe(0);
+		expect(run.configText).toBeNull();
+		expect(run.backupName).toBeUndefined();
+	});
+
+	it("keeps the original config when the converted file fails verification", () => {
+		const original = textLines(
+			"certificatesResolvers:",
+			"  letsencrypt:",
+			"    acme:",
+			"      httpChallenge: {entryPoint: web} # old",
+		);
+		const run = runMigrateTraefikAcme(original);
+
+		expect(run.result.status).toBe(1);
+		expect(run.result.stderr).toMatch(
+			/could not convert \S+traefik\.yml to tlsChallenge\. The previous config is saved at \S+traefik\.yml\.bak-\d{14}\./,
+		);
+		expect(run.configText).toBe(original);
+		expect(run.backupBytes).toEqual(Buffer.from(original));
+		expect(run.entries).not.toContain("traefik.yml.tmp");
+	});
+
+	it("keeps a blank line inside a block-form httpChallenge and drops only its children", () => {
+		const original = textLines(
+			"certificatesResolvers:",
+			"  letsencrypt:",
+			"    acme:",
+			"      email: ops@example.com",
+			"      httpChallenge:",
+			"",
+			"        entryPoint: web",
+			"providers:",
+			"  docker:",
+			"    exposedByDefault: false",
+		);
+		const run = runMigrateTraefikAcme(original);
+
+		expect(run.result.status).toBe(0);
+		expect(run.configText).toBe(
+			textLines(
+				"certificatesResolvers:",
+				"  letsencrypt:",
+				"    acme:",
+				"      email: ops@example.com",
+				"      tlsChallenge: {}",
+				"",
+				"providers:",
+				"  docker:",
+				"    exposedByDefault: false",
+			),
+		);
+		expect(parse(run.configText ?? "")).toEqual({
+			certificatesResolvers: {
+				letsencrypt: {
+					acme: { email: "ops@example.com", tlsChallenge: {} },
+				},
+			},
+			providers: { docker: { exposedByDefault: false } },
+		});
+		expect(run.backupBytes).toEqual(Buffer.from(original));
+	});
+
+	it("uses TRAEFIK_CONFIG_FILE when it is called without a path", () => {
+		const original = textLines(
+			"certificatesResolvers:",
+			"  letsencrypt:",
+			"    acme:",
+			"      httpChallenge: {entryPoint: web}",
+		);
+		const run = runMigrateTraefikAcme(original, { passPath: false });
+
+		expect(run.result.status).toBe(0);
+		expect(run.configText).toBe(
+			textLines(
+				"certificatesResolvers:",
+				"  letsencrypt:",
+				"    acme:",
+				"      tlsChallenge: {}",
+			),
+		);
+		expect(run.backupBytes).toEqual(Buffer.from(original));
+	});
+
+	it("reads and restores the Traefik config only through TRAEFIK_CONFIG_FILE", () => {
+		const installer = readFileSync(installerScript, "utf8");
+		const migrate = shellFunctionText(installer, "migrate_traefik_acme_to_tls");
+		const swap = shellFunctionText(installer, "swap_dokploy_traefik");
+		const restore = shellFunctionText(installer, "traefik_restore");
+
+		expect(installer).toContain(
+			'TRAEFIK_CONFIG_FILE="${TRAEFIK_CONFIG_FILE:-/etc/dokploy/traefik/traefik.yml}"',
+		);
+		expect(migrate).toContain('local config="${1:-$TRAEFIK_CONFIG_FILE}"');
+		expect(swap).toContain('"$TRAEFIK_CONFIG_FILE" 2>/dev/null');
+		expect(restore).toContain('> "$TRAEFIK_CONFIG_FILE"');
+		for (const text of [migrate, swap, restore]) {
+			expect(text).not.toContain("/etc/dokploy/traefik/traefik.yml");
+		}
+	});
+
+	it("converts the Traefik config right after the default file is written, before any secret or service is created", () => {
+		const installer = readFileSync(installerScript, "utf8");
+		const install = shellFunctionText(installer, "install_agenthits_dokploy");
+		const defaults = install.indexOf("\tcreate_default_traefik_files\n");
+		const migrate = install.indexOf(
+			'\tif ! migrate_traefik_acme_to_tls "$TRAEFIK_CONFIG_FILE"; then echo "Error: could not convert the Traefik config to tlsChallenge. Check the file named above, then run the installer again." >&2; exit 1; fi\n',
+		);
+		const firstSecret = install.indexOf("create_secret_if_missing ");
+		const firstService = install.indexOf("docker service create");
+
+		expect(defaults).toBeGreaterThanOrEqual(0);
+		expect(migrate).toBeGreaterThan(defaults);
+		expect(firstSecret).toBeGreaterThan(migrate);
+		expect(firstService).toBeGreaterThan(migrate);
+	});
+
+	it(
+		"converts an httpChallenge config during an update and keeps the previous file",
+		() => {
+			const { result, configText, configBackupText } = runInstaller({
+				traefikImage: "traefik:v3.6.25",
+				traefikConfig: HTTP_TRAEFIK_CONFIG,
+			});
+
+			expect(result.status).toBe(0);
+			expect(result.stdout).toContain("Certificate renewal now uses port 443");
+			expect(configText).toBe(TLS_TRAEFIK_CONFIG);
+			expect(configBackupText).toBe(HTTP_TRAEFIK_CONFIG);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"restores the previous Traefik config when the new Traefik does not start",
+		() => {
+			const { result, configText } = runInstaller({
+				traefikImage: "traefik:v3.6.25",
+				traefikRunning: "false",
+				traefikConfig: HTTP_TRAEFIK_CONFIG,
+			});
+
+			expect(result.status).not.toBe(0);
+			expect(result.stderr).toContain(
+				"Restored the previous Traefik config from",
+			);
+			expect(configText).toBe(HTTP_TRAEFIK_CONFIG);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it("writes and mounts the static Traefik config through TRAEFIK_CONFIG_FILE", () => {
+		const installer = readFileSync(installerScript, "utf8");
+		const defaults = shellFunctionText(
+			installer,
+			"create_default_traefik_files",
+		);
+		const container = shellFunctionText(installer, "create_dokploy_traefik");
+
+		expect(defaults).toContain('if [ -d "$TRAEFIK_CONFIG_FILE" ]; then');
+		expect(defaults).toContain('rm -rf "$TRAEFIK_CONFIG_FILE"');
+		expect(defaults).toContain('if [ ! -f "$TRAEFIK_CONFIG_FILE" ]; then');
+		expect(defaults).toContain("cat >\"$TRAEFIK_CONFIG_FILE\" <<'EOF'");
+		expect(defaults).toContain("mkdir -p /etc/dokploy/traefik/dynamic");
+		expect(container).toContain(
+			'-v "$TRAEFIK_CONFIG_FILE:/etc/traefik/traefik.yml" \\',
+		);
+		expect(container).toContain(
+			"-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \\",
+		);
+		for (const text of [defaults, container]) {
+			expect(text).not.toContain("/etc/dokploy/traefik/traefik.yml");
+		}
+	});
 });

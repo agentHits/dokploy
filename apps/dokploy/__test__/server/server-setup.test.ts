@@ -9,11 +9,20 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { defaultCommand, reportDockerVersion } from "@dokploy/server";
+import {
+	createTraefikInstance,
+	defaultCommand,
+	reportDockerVersion,
+} from "@dokploy/server";
 import {
 	NIXPACKS_VERSION,
 	RAILPACK_VERSION,
 } from "@dokploy/server/setup/component-versions";
+import {
+	buildTraefikRunCommand,
+	buildTraefikTlsMigrationStep,
+	TRAEFIK_VERSION,
+} from "@dokploy/server/setup/traefik-setup";
 import { describe, expect, it } from "vitest";
 
 const resolveBin = (name: string) =>
@@ -162,6 +171,19 @@ printf '%s\\n' 'echo fake installer "$NIXPACKS_VERSION$RAILPACK_VERSION"' > "$ou
 		rmSync(dir, { recursive: true, force: true });
 	}
 };
+
+describe("createTraefikInstance", () => {
+	it("converts the Traefik config before a missing container is created, and stops if that fails", () => {
+		const command = createTraefikInstance();
+		const migration = command.indexOf(buildTraefikTlsMigrationStep());
+
+		expect(migration).toBeGreaterThanOrEqual(0);
+		expect(migration).toBeLessThan(
+			command.indexOf(buildTraefikRunCommand(TRAEFIK_VERSION)),
+		);
+		expect(command).toMatch(/\}; then\s+echo "[^"]*" >&2\s+exit 1\s+fi\s/);
+	});
+});
 
 describe("install scripts in the server setup", () => {
 	it.each([false, true])(

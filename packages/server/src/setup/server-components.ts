@@ -6,7 +6,11 @@ import {
 } from "../utils/servers/destination";
 import { PINNED_VERSIONS } from "./component-versions";
 import { rcloneInstallCommand } from "./server-setup";
-import { buildTraefikCreateWithImage, TRAEFIK_VERSION } from "./traefik-setup";
+import {
+	buildTraefikCreateWithImage,
+	buildTraefikTlsMigrationStep,
+	TRAEFIK_VERSION,
+} from "./traefik-setup";
 
 export const COMPONENT_NAMES = [
 	"docker",
@@ -453,6 +457,7 @@ traefik_existed=0
 traefik_old_stopped=0
 traefik_old_image=""
 traefik_extra_networks=""
+traefik_acme_backup=""
 if $SUDO_CMD docker inspect dokploy-traefik >/dev/null 2>&1; then
 	traefik_existed=1
 	traefik_old_image="$($SUDO_CMD docker inspect -f '{{.Config.Image}}' dokploy-traefik 2>/dev/null || true)"
@@ -495,6 +500,7 @@ traefik_restore() {
 	local failed_step="$1"
 	trap - HUP INT TERM
 	echo "Error: Traefik update failed while $failed_step." >&2
+	if [ -n "$traefik_acme_backup" ]; then $SUDO_CMD cat "$traefik_acme_backup" | $SUDO_CMD tee /etc/dokploy/traefik/traefik.yml >/dev/null && echo "Restored the previous Traefik config from $traefik_acme_backup." >&2; fi
 	if [ "$traefik_old_stopped" = 1 ]; then
 		echo "Restoring the previous Traefik container from $traefik_old_image." >&2
 		$SUDO_CMD docker rm -f dokploy-traefik >/dev/null 2>&1 || true
@@ -507,6 +513,11 @@ traefik_restore() {
 	exit 1
 }
 trap 'traefik_restore "being interrupted"' HUP INT TERM
+if ! {
+${buildTraefikTlsMigrationStep()}
+}; then
+	traefik_restore "converting the Traefik config to tlsChallenge"
+fi
 $SUDO_CMD docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
 if [ "$traefik_existed" = 1 ]; then
 	if ! $SUDO_CMD docker stop dokploy-traefik >/dev/null; then

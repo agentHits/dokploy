@@ -11,6 +11,7 @@ import {
 } from "@dokploy/server/services/server";
 import {
 	buildTraefikRunCommand,
+	buildTraefikTlsMigrationStep,
 	getDefaultMiddlewares,
 	getDefaultServerTraefikConfig,
 	TRAEFIK_HTTP3_PORT,
@@ -817,6 +818,12 @@ export const createTraefikInstance = () => {
 		else
 			# Create the dokploy-traefik container
 			TRAEFIK_VERSION=${TRAEFIK_VERSION}
+			if ! {
+${buildTraefikTlsMigrationStep()}
+}; then
+				echo "Error: the Traefik config could not be converted to tlsChallenge, so Traefik was not created." >&2
+				exit 1
+			fi
 			${buildTraefikRunCommand(TRAEFIK_VERSION)}
 			echo "Traefik version $TRAEFIK_VERSION installed ✅"
 		fi

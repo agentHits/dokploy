@@ -32,6 +32,7 @@ import {
 	buildTraefikCreateCommand,
 	buildTraefikCreateWithImage,
 	buildTraefikRunCommand,
+	buildTraefikTlsMigrationStep,
 	TRAEFIK_VERSION,
 } from "@dokploy/server/setup/traefik-setup";
 import { describe, expect, it } from "vitest";
@@ -183,6 +184,38 @@ describe("buildComponentUpdateScript", () => {
 		);
 		expect(check).toBeGreaterThanOrEqual(0);
 		expect(raise).toBeGreaterThan(check);
+	});
+	it("converts the Traefik config to tlsChallenge before the old container is stopped", () => {
+		const script = buildComponentUpdateScript(["traefik"]);
+		const migration = `if ! {\n${buildTraefikTlsMigrationStep()}\n}; then\n\ttraefik_restore "converting the Traefik config to tlsChallenge"\nfi\n`;
+
+		expect(script).toContain(migration);
+		expect(script.indexOf(migration)).toBeLessThan(
+			script.indexOf("if ! $SUDO_CMD docker stop dokploy-traefik >/dev/null;"),
+		);
+	});
+	it("restores the Traefik config from its backup inside the restore function, before any container is recreated", () => {
+		const script = buildComponentUpdateScript(["traefik"]);
+		const restore = script.indexOf(
+			'if [ -n "$traefik_acme_backup" ]; then $SUDO_CMD cat "$traefik_acme_backup" | $SUDO_CMD tee /etc/dokploy/traefik/traefik.yml >/dev/null && echo "Restored the previous Traefik config from $traefik_acme_backup." >&2; fi',
+		);
+		const trapSet = script.indexOf(
+			"trap 'traefik_restore \"being interrupted\"' HUP INT TERM",
+		);
+
+		expect(restore).toBeGreaterThan(script.indexOf("traefik_restore() {"));
+		expect(restore).toBeLessThan(trapSet);
+		expect(restore).toBeLessThan(
+			script.indexOf('echo "Restoring the previous Traefik container from'),
+		);
+		expect(script.indexOf('traefik_acme_backup=""')).toBeLessThan(trapSet);
+	});
+	it("keeps httpChallenge out of the Traefik step apart from the conversion", () => {
+		const script = buildComponentUpdateScript(["traefik"]);
+
+		expect(script.replace(buildTraefikTlsMigrationStep(), "")).not.toMatch(
+			/httpchallenge/i,
+		);
 	});
 	it("passes the pinned versions into the installers through env", () => {
 		const script = buildComponentUpdateScript(["nixpacks", "railpack"]);
@@ -552,6 +585,7 @@ const SYSTEM_TOOLS = [
 	"cut",
 	"wc",
 	"sort",
+	"test",
 ];
 
 const linkSystemTools = (binDir: string) => {
@@ -560,8 +594,13 @@ const linkSystemTools = (binDir: string) => {
 		const found = spawnSync("sh", ["-c", `command -v ${name}`], {
 			encoding: "utf8",
 		}).stdout.trim();
-		if (found) {
-			symlinkSync(found, path.join(binDir, name));
+		const executable = found.startsWith("/")
+			? found
+			: ["/usr/bin", "/bin"]
+					.map((dir) => path.join(dir, name))
+					.find((candidate) => existsSync(candidate));
+		if (executable) {
+			symlinkSync(executable, path.join(binDir, name));
 		}
 	}
 	return binDir;
@@ -580,6 +619,7 @@ type ScriptOptions = {
 	sourceFiles?: Record<string, string>;
 	withoutApt?: boolean;
 	preexistingKeyring?: string;
+	traefikConfig?: string;
 };
 
 const listBackups = (backups: string) => {
@@ -619,7 +659,17 @@ const runComponentScript = (
 		const sources = path.join(dir, "sources");
 		const keyring = path.join(dir, "keyrings", "docker.asc");
 		const backups = path.join(dir, "backups");
+		const traefikConfigPath = path.join(
+			dir,
+			"etc-root",
+			"traefik",
+			"traefik.yml",
+		);
 		mkdirSync(sources);
+		if (options.traefikConfig !== undefined) {
+			mkdirSync(path.dirname(traefikConfigPath), { recursive: true });
+			writeFileSync(traefikConfigPath, options.traefikConfig);
+		}
 		if (options.preexistingKeyring !== undefined) {
 			mkdirSync(path.dirname(keyring));
 			writeFileSync(keyring, options.preexistingKeyring);
@@ -643,8 +693,12 @@ const runComponentScript = (
 		const pathValue = options.withoutApt
 			? `${dir}:${linkSystemTools(path.join(dir, "bin"))}`
 			: `${dir}:${process.env.PATH}`;
+		// Config paths point into the temp dir, so a run never touches the host's real config.
 		const result = spawnSync(BASH, [], {
-			input: buildComponentUpdateScript(components),
+			input: buildComponentUpdateScript(components).replaceAll(
+				"/etc/dokploy",
+				path.join(dir, "etc-root"),
+			),
 			encoding: "utf8",
 			env: {
 				...process.env,
@@ -673,6 +727,14 @@ const runComponentScript = (
 			keyring: existsSync(keyring) ? readFileSync(keyring, "utf8") : null,
 			keyringDirExists: existsSync(path.dirname(keyring)),
 			sources: readSources(sources),
+			traefikConfigFile: existsSync(traefikConfigPath)
+				? readFileSync(traefikConfigPath, "utf8")
+				: null,
+			traefikBackups: existsSync(path.dirname(traefikConfigPath))
+				? readdirSync(path.dirname(traefikConfigPath)).filter((name) =>
+						name.includes(".bak-"),
+					)
+				: [],
 		};
 	} finally {
 		rmSync(dir, { force: true, recursive: true });
@@ -682,6 +744,12 @@ const runComponentScript = (
 const SPAWN_TEST_TIMEOUT_MS = 30_000;
 const DOCKER_OLD = "5:28.3.0-1~ubuntu.24.04~noble";
 const DOCKER_NEW = "5:29.8.2-1~ubuntu.24.04~noble";
+const HTTP_CHALLENGE_CONFIG =
+	"certificatesResolvers:\n  letsencrypt:\n    acme:\n      email: admin@example.com\n      httpChallenge:\n        entryPoint: web\n";
+const TLS_CHALLENGE_CONFIG =
+	"certificatesResolvers:\n  letsencrypt:\n    acme:\n      email: admin@example.com\n      tlsChallenge: {}\n";
+const UNCONVERTIBLE_CONFIG =
+	"certificatesResolvers:\n  letsencrypt:\n    acme:\n      httpChallenge:   # HTTP-01\n        entryPoint: web\n";
 
 describe("buildComponentUpdateScript run order", () => {
 	it(
@@ -814,6 +882,36 @@ describe("buildComponentUpdateScript run order", () => {
 			"docker update --restart always dokploy-traefik",
 		);
 	});
+	it(
+		"converts a Traefik config that still uses httpChallenge before the old container is stopped",
+		() => {
+			const run = runComponentScript(["traefik"], {
+				traefikConfig: HTTP_CHALLENGE_CONFIG,
+			});
+
+			expect(run.status).toBe(0);
+			expect(run.traefikConfigFile).toBe(TLS_CHALLENGE_CONFIG);
+			expect(run.traefikBackups).toHaveLength(1);
+			expect(run.calls).toContain("docker stop dokploy-traefik");
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+	it(
+		"leaves the old Traefik running when its config cannot be converted",
+		() => {
+			const run = runComponentScript(["traefik"], {
+				traefikConfig: UNCONVERTIBLE_CONFIG,
+			});
+
+			expect(run.status).not.toBe(0);
+			expect(run.stderr).toContain("could not convert");
+			expect(run.traefikConfigFile).toBe(UNCONVERTIBLE_CONFIG);
+			expect(run.calls.some((call) => call.startsWith("docker stop"))).toBe(
+				false,
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
 	it("creates the new Traefik with --restart no and raises the policy only after the start", () => {
 		const run = runComponentScript(["traefik"]);
 

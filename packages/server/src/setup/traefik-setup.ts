@@ -50,6 +50,98 @@ export const buildTraefikCreateWithImage = (image: string) => `
 export const buildTraefikCreateCommand = (version: string) =>
 	buildTraefikCreateWithImage(`traefik:v${version}`);
 
+export const HTTP_CHALLENGE_TO_TLS_AWK = String.raw`/^[[:space:]]*httpChallenge:[[:space:]]*$/ {
+	match($0, /[^[:space:]]/)
+	indent = RSTART - 1
+	print substr($0, 1, indent) "tlsChallenge: {}"
+	skipping = 1
+	next
+}
+/^[[:space:]]*httpChallenge:[[:space:]]*\{.*\}[[:space:]]*$/ {
+	match($0, /[^[:space:]]/)
+	print substr($0, 1, RSTART - 1) "tlsChallenge: {}"
+	next
+}
+skipping && /^[[:space:]]*$/ {
+	print
+	next
+}
+skipping {
+	if (match($0, /[^[:space:]]/) && RSTART - 1 > indent) next
+	skipping = 0
+}
+{ print }
+`;
+
+// The step runs as one command so the caller can branch on its status. The config is
+// rewritten in place because the Traefik container bind-mounts that file, and the backup
+// is recorded before the write so an interrupted or failed write can still be restored.
+export const buildTraefikTlsMigrationStep = (
+	configPath = "/etc/dokploy/traefik/traefik.yml",
+) => `traefik_acme_backup=""
+traefik_convert_acme_to_tls() {
+	local config="${configPath}"
+	local backup converted awk_status=0
+	local grep_status=0 exists_status=0
+	if ! $SUDO_CMD test -e /; then
+		echo "Error: could not run test as root. Nothing was changed." >&2
+		return 1
+	fi
+	$SUDO_CMD test -e "$config" || exists_status=$?
+	if [ "$exists_status" -eq 1 ]; then
+		return 0
+	fi
+	if [ "$exists_status" -ne 0 ]; then
+		echo "Error: could not check $config. Nothing was changed." >&2
+		return 1
+	fi
+	if ! $SUDO_CMD test -f "$config"; then
+		echo "Error: $config is not a regular file. Nothing was changed." >&2
+		return 1
+	fi
+	$SUDO_CMD grep -Eq '^[[:space:]]*httpChallenge:' "$config" || grep_status=$?
+	if [ "$grep_status" -eq 1 ]; then
+		return 0
+	fi
+	if [ "$grep_status" -ne 0 ]; then
+		echo "Error: could not read $config. Nothing was changed." >&2
+		return 1
+	fi
+	backup="$config.bak-$(date -u +%Y%m%d%H%M%S)"
+	if ! $SUDO_CMD cp -p "$config" "$backup"; then
+		echo "Error: could not back up $config to $backup. The Traefik config was not changed." >&2
+		return 1
+	fi
+	traefik_acme_backup="$backup"
+	if ! converted="$(mktemp "\${TMPDIR:-/tmp}/traefik-tls.XXXXXX")"; then
+		echo "Error: could not create a temporary file to convert $config. The original config was left unchanged. Previous config saved to $backup" >&2
+		return 1
+	fi
+	$SUDO_CMD awk '${HTTP_CHALLENGE_TO_TLS_AWK}' "$config" > "$converted" || awk_status=$?
+	if [ "$awk_status" -ne 0 ]; then
+		rm -f "$converted"
+		echo "Error: awk exited with status $awk_status while converting $config to tlsChallenge. The original config was left unchanged. Previous config saved to $backup" >&2
+		return 1
+	fi
+	if grep -Fq httpChallenge "$converted" || ! grep -Fq 'tlsChallenge: {}' "$converted"; then
+		rm -f "$converted"
+		echo "Error: could not convert $config to tlsChallenge. The original config was left unchanged. Previous config saved to $backup" >&2
+		return 1
+	fi
+	if ! $SUDO_CMD tee "$config" < "$converted" >/dev/null; then
+		rm -f "$converted"
+		if $SUDO_CMD cp -p "$backup" "$config"; then
+			echo "Error: could not write $config. The previous config was restored from $backup" >&2
+		else
+			echo "Error: could not write $config, and restoring it from $backup failed. Restore it from the backup before starting Traefik." >&2
+		fi
+		return 1
+	fi
+	rm -f "$converted"
+	echo "Certificate renewal now uses port 443 (tlsChallenge). Previous config saved to $backup"
+}
+traefik_convert_acme_to_tls`;
+
 export interface TraefikOptions {
 	env?: string[];
 	serverId?: string;
