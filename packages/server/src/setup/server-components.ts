@@ -514,37 +514,41 @@ traefik_restore() {
 	fi
 	exit 1
 }
-trap 'traefik_restore "being interrupted"' HUP INT TERM
-$SUDO_CMD docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
-if [ "$traefik_existed" = 1 ]; then
-	if ! $SUDO_CMD docker stop dokploy-traefik >/dev/null; then
-		traefik_restore "stopping the running Traefik container"
+if [ "$traefik_existed" = 1 ] && [ "\${traefik_old_image%%@*}" = "traefik:v${TRAEFIK_VERSION}" ] && traefik_check_running; then
+	echo "Traefik already runs traefik:v${TRAEFIK_VERSION}"
+else
+	trap 'traefik_restore "being interrupted"' HUP INT TERM
+	$SUDO_CMD docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
+	if [ "$traefik_existed" = 1 ]; then
+		if ! $SUDO_CMD docker stop dokploy-traefik >/dev/null; then
+			traefik_restore "stopping the running Traefik container"
+		fi
+		traefik_old_stopped=1
+		if ! $SUDO_CMD docker rm dokploy-traefik >/dev/null; then
+			traefik_restore "removing the stopped Traefik container"
+		fi
 	fi
-	traefik_old_stopped=1
-	if ! $SUDO_CMD docker rm dokploy-traefik >/dev/null; then
-		traefik_restore "removing the stopped Traefik container"
+	if ! traefik_create "traefik:v${TRAEFIK_VERSION}"; then
+		traefik_restore "creating the new Traefik container"
 	fi
+	if ! traefik_connect "$traefik_extra_networks"; then
+		traefik_restore "connecting the new Traefik container to its networks"
+	fi
+	if ! $SUDO_CMD docker start dokploy-traefik >/dev/null; then
+		traefik_restore "starting the new Traefik container"
+	fi
+	if ! traefik_wait_settled; then
+		traefik_restore "checking the new Traefik container (running, with no restarts)"
+	fi
+	if [ "$traefik_keep_bridge" = 0 ]; then
+		$SUDO_CMD docker network disconnect bridge dokploy-traefik >/dev/null 2>&1 || true
+	fi
+	if ! $SUDO_CMD docker update --restart always dokploy-traefik >/dev/null; then
+		traefik_restore "setting the restart policy of the new Traefik container"
+	fi
+	trap - HUP INT TERM
+	echo "Traefik version ${TRAEFIK_VERSION} installed ✅"
 fi
-if ! traefik_create "traefik:v${TRAEFIK_VERSION}"; then
-	traefik_restore "creating the new Traefik container"
-fi
-if ! traefik_connect "$traefik_extra_networks"; then
-	traefik_restore "connecting the new Traefik container to its networks"
-fi
-if ! $SUDO_CMD docker start dokploy-traefik >/dev/null; then
-	traefik_restore "starting the new Traefik container"
-fi
-if ! traefik_wait_settled; then
-	traefik_restore "checking the new Traefik container (running, with no restarts)"
-fi
-if [ "$traefik_keep_bridge" = 0 ]; then
-	$SUDO_CMD docker network disconnect bridge dokploy-traefik >/dev/null 2>&1 || true
-fi
-if ! $SUDO_CMD docker update --restart always dokploy-traefik >/dev/null; then
-	traefik_restore "setting the restart policy of the new Traefik container"
-fi
-trap - HUP INT TERM
-echo "Traefik version ${TRAEFIK_VERSION} installed ✅"
 `;
 		case "nixpacks":
 			return `

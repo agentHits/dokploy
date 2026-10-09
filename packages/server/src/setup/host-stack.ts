@@ -163,18 +163,11 @@ export const buildHostStackUpdateScript = (
 	components: HostStackUiComponent[],
 ) => wrapComponentUpdateSteps(hostStackSteps(components));
 
-let hostStackUpdating = false;
-
-export const isHostStackUpdateRunning = () => hostStackUpdating;
-
+// Callers hold the lock from acquireHostStackUpdateLock for the whole run.
 export const updateHostStackComponents = async (
 	components: HostStackUiComponent[],
 	onData?: (data: string) => void,
 ) => {
-	if (hostStackUpdating) {
-		throw new Error("Another panel host component update is already running.");
-	}
-	hostStackUpdating = true;
 	try {
 		await spawnAsync(
 			"bash",
@@ -189,7 +182,5 @@ export const updateHostStackComponents = async (
 				? `Panel host update failed with exit code ${code}`
 				: `Panel host update could not start: ${error instanceof Error ? error.message : String(error)}`,
 		);
-	} finally {
-		hostStackUpdating = false;
 	}
 };

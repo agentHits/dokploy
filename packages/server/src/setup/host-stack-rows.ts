@@ -85,10 +85,8 @@ const versionOf = (value: string | null) =>
 const imageVersion = (image: string | null) =>
 	versionOf(image ? imageTag(image) : null);
 
-const postgresMajor = (image: string | null) => {
-	const major = (image ? imageTag(image) : null)?.match(/^\d+/)?.[0];
-	return major === undefined ? null : Number(major);
-};
+const postgresVersion = (image: string | null) =>
+	(image ? imageTag(image) : null)?.match(/^\d+(?:\.\d+)*/)?.[0] ?? null;
 
 const compareVersions = (left: string, right: string) => {
 	const leftParts = left.split(".").map(Number);
@@ -191,22 +189,29 @@ const traefikRow = (image: string | null): HostStackRow => {
 const postgresRow = (image: string | null): HostStackRow => {
 	const target = PINNED_VERSIONS.postgres;
 	const targetMajor = Number(target.split(".")[0]);
-	const installedMajor = postgresMajor(image);
-	if (image === null || installedMajor === null) {
+	const installed = postgresVersion(image);
+	if (image === null || installed === null) {
 		return unknownRow("postgres", target, "manual");
 	}
-	const outdated = installedMajor < targetMajor;
+	const installedMajor = Number(installed.split(".")[0]);
+	const majorChanged = installedMajor !== targetMajor;
+	const outdated = majorChanged
+		? installedMajor < targetMajor
+		: compareVersions(installed, target) < 0;
 	return {
 		name: "postgres",
-		installed: String(installedMajor),
+		installed,
 		target,
 		status: outdated ? "outdated" : "current",
 		outdated,
 		action: "manual",
-		reason: outdated
-			? `Major version change (${installedMajor} to ${targetMajor}) needs a migration. The panel never changes the Postgres major version.`
-			: POSTGRES_REASON,
-		command: `POSTGRES_IMAGE=${withoutDigest(image)} ${INSTALLER_UPDATE}`,
+		reason:
+			majorChanged && outdated
+				? `Major version change (${installedMajor} to ${targetMajor}) needs a migration. The panel never changes the Postgres major version.`
+				: POSTGRES_REASON,
+		command: majorChanged
+			? `POSTGRES_IMAGE=${withoutDigest(image)} ${INSTALLER_UPDATE}`
+			: null,
 	};
 };
 

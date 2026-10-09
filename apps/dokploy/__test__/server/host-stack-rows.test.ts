@@ -15,7 +15,7 @@ const pinnedPostgresMajor = PINNED_VERSIONS.postgres.split(".")[0];
 const upToDate: HostStackReadings = {
 	docker: PINNED_VERSIONS.docker,
 	traefikImage: `traefik:v${TRAEFIK_VERSION}`,
-	postgresImage: `postgres:${pinnedPostgresMajor}`,
+	postgresImage: `postgres:${PINNED_VERSIONS.postgres}`,
 	redisImage: `redis:${PINNED_VERSIONS.redis}`,
 	panel: {
 		installed: "agenthits-dev",
@@ -53,7 +53,7 @@ describe("buildHostStackRows", () => {
 		}
 	});
 
-	it("keeps the reason and command of the maintenance-window steps even when they are current", () => {
+	it("keeps the reason of the maintenance-window steps even when they are current", () => {
 		const rows = rowsFor({});
 
 		expect(rowNamed(rows, "docker")).toMatchObject({
@@ -63,8 +63,9 @@ describe("buildHostStackRows", () => {
 		expect(rowNamed(rows, "docker").reason).toContain("maintenance window");
 		expect(rowNamed(rows, "postgres")).toMatchObject({
 			action: "manual",
-			command: `POSTGRES_IMAGE=postgres:${pinnedPostgresMajor} bash install-agenthits.sh update`,
+			command: null,
 		});
+		expect(rowNamed(rows, "postgres").reason).toContain("maintenance window");
 	});
 
 	it("gives Traefik and Redis no reason or command, since the panel runs them", () => {
@@ -147,19 +148,42 @@ describe("buildHostStackRows", () => {
 		);
 	});
 
-	it("does not flag Postgres whose major version matches the pin, whatever the minor and suffix", () => {
-		const postgres = rowNamed(
-			rowsFor({ postgresImage: `postgres:${pinnedPostgresMajor}.5-alpine` }),
+	it("compares the full Postgres version within the pinned major", () => {
+		const current = rowNamed(
+			rowsFor({ postgresImage: `postgres:${PINNED_VERSIONS.postgres}-alpine` }),
 			"postgres",
 		);
 
-		expect(postgres).toMatchObject({
-			installed: pinnedPostgresMajor,
+		expect(current).toMatchObject({
+			installed: PINNED_VERSIONS.postgres,
 			status: "current",
 			outdated: false,
-			command: `POSTGRES_IMAGE=postgres:${pinnedPostgresMajor}.5-alpine bash install-agenthits.sh update`,
+			command: null,
 		});
-		expect(postgres.reason).toContain("maintenance window");
+
+		const minorBehind = rowNamed(
+			rowsFor({ postgresImage: `postgres:${pinnedPostgresMajor}` }),
+			"postgres",
+		);
+
+		expect(minorBehind).toMatchObject({
+			installed: pinnedPostgresMajor,
+			target: PINNED_VERSIONS.postgres,
+			status: "outdated",
+			outdated: true,
+			action: "manual",
+			command: null,
+		});
+		expect(minorBehind.reason).toContain("maintenance window");
+	});
+
+	it("compares Postgres minor versions numerically", () => {
+		expect(
+			rowNamed(
+				rowsFor({ postgresImage: `postgres:${pinnedPostgresMajor}.10` }),
+				"postgres",
+			).outdated,
+		).toBe(false);
 	});
 
 	it("keeps the image digest out of the Postgres command", () => {

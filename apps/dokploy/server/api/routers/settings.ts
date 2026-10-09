@@ -1,4 +1,5 @@
 import {
+	acquireHostStackUpdateLock,
 	CLEANUP_CRON_JOB,
 	COMPONENTS_UPDATE_FAILED,
 	checkGPUStatus,
@@ -237,7 +238,10 @@ export const settingsRouter = createTRPCRouter({
 					message: refusals.join(" "),
 				});
 			}
-			if (isServerUpdateRunning() || isHostStackUpdateRunning()) {
+			const releaseHostStackLock = isServerUpdateRunning()
+				? null
+				: acquireHostStackUpdateLock();
+			if (!releaseHostStackLock) {
 				throw new TRPCError({
 					code: "CONFLICT",
 					message:
@@ -245,12 +249,17 @@ export const settingsRouter = createTRPCRouter({
 				});
 			}
 			const components = input.components.filter(isHostStackUiComponent);
-			await audit(ctx, {
-				action: "update",
-				resourceType: "settings",
-				resourceName: "panel-host",
-				metadata: { components },
-			});
+			try {
+				await audit(ctx, {
+					action: "update",
+					resourceType: "settings",
+					resourceName: "panel-host",
+					metadata: { components },
+				});
+			} catch (error) {
+				releaseHostStackLock();
+				throw error;
+			}
 			return observable<string>((emit) => {
 				updateHostStackComponents(components, (log) => {
 					emit.next(log);
@@ -261,6 +270,7 @@ export const settingsRouter = createTRPCRouter({
 						);
 					})
 					.finally(() => {
+						releaseHostStackLock();
 						emit.complete();
 					});
 			});
@@ -729,6 +739,9 @@ export const settingsRouter = createTRPCRouter({
 				return true;
 			}
 
+			const keepImages = input?.keepImages;
+			const data = await getUpdateData(packageInfo.version);
+			// After the await: a host-stack update can start while the update check runs.
 			if (isHostStackUpdateRunning()) {
 				throw new TRPCError({
 					code: "CONFLICT",
@@ -736,9 +749,6 @@ export const settingsRouter = createTRPCRouter({
 						"The panel host components are being updated. Try again when they finish.",
 				});
 			}
-
-			const keepImages = input?.keepImages;
-			const data = await getUpdateData(packageInfo.version);
 			if (data.updateAvailable) {
 				startServerUpdate(
 					data.updateSource === "agenthits"
