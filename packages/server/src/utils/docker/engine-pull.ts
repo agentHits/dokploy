@@ -1,5 +1,10 @@
+import type { Readable } from "node:stream";
 import { docker } from "../../constants";
 import type { EnginePullEvent } from "./pull-progress";
+
+// Docker reports progress several times a second while it moves bytes, so a
+// longer silence means the connection stalled.
+const ENGINE_PULL_IDLE_MS = 90_000;
 
 export interface EnginePullClient {
 	pull(repoTag: string): Promise<NodeJS.ReadableStream>;
@@ -28,13 +33,30 @@ const findReportedError = (events: EnginePullEvent[]) => {
 	);
 };
 
+const destroyStream = (stream: NodeJS.ReadableStream) => {
+	(stream as Partial<Readable>).destroy?.();
+};
+
 export const pullImageThroughEngine = async (
 	image: string,
 	onEvent: (event: EnginePullEvent) => void,
 	client: EnginePullClient = docker,
 ) => {
 	const stream = await client.pull(image);
+	let idleTimer: ReturnType<typeof setTimeout> | undefined;
 	const events = await new Promise<EnginePullEvent[]>((resolve, reject) => {
+		const armIdleTimer = () => {
+			clearTimeout(idleTimer);
+			idleTimer = setTimeout(() => {
+				reject(
+					new Error(
+						`Docker sent no pull progress for ${ENGINE_PULL_IDLE_MS / 1000} seconds.`,
+					),
+				);
+				destroyStream(stream);
+			}, ENGINE_PULL_IDLE_MS);
+		};
+		armIdleTimer();
 		client.modem.followProgress(
 			stream,
 			(error, output) => {
@@ -44,9 +66,12 @@ export const pullImageThroughEngine = async (
 				}
 				resolve(output);
 			},
-			onEvent,
+			(event) => {
+				armIdleTimer();
+				onEvent(event);
+			},
 		);
-	});
+	}).finally(() => clearTimeout(idleTimer));
 	const reported = findReportedError(events);
 	if (reported) {
 		throw reported;

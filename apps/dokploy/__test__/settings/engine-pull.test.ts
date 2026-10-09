@@ -86,6 +86,44 @@ describe("pullImageThroughEngine", () => {
 		).rejects.toThrow("no such image");
 	});
 
+	it("gives up after 90 seconds without an event and destroys the stream", async () => {
+		vi.useFakeTimers();
+		try {
+			const stream = Readable.from([]);
+			const destroy = vi.spyOn(stream, "destroy");
+			let reportProgress: (event: EnginePullEvent) => void = () => {};
+			const client = {
+				pull: vi.fn(async () => stream),
+				modem: {
+					followProgress: (
+						_stream: NodeJS.ReadableStream,
+						_onFinished: unknown,
+						onProgress: (event: EnginePullEvent) => void,
+					) => {
+						reportProgress = onProgress;
+					},
+				},
+			};
+			const onEvent = vi.fn();
+			const outcome = expect(
+				pullImageThroughEngine(IMAGE, onEvent, client),
+			).rejects.toThrow("no pull progress for 90 seconds");
+
+			await vi.advanceTimersByTimeAsync(60_000);
+			reportProgress({ status: "Pulling fs layer" });
+			await vi.advanceTimersByTimeAsync(89_999);
+			expect(destroy).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+
+			await outcome;
+			expect(onEvent).toHaveBeenCalledTimes(1);
+			expect(destroy).toHaveBeenCalledOnce();
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("rejects when the stream fails", async () => {
 		const client = clientReplaying(RECORDED_PULL, {
 			streamError: new Error("socket hang up"),

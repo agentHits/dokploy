@@ -69,8 +69,14 @@ const DownloadProgress = ({
 		/>
 		<div className="flex flex-wrap gap-x-4 gap-y-0.5">
 			<span>{percent}% downloaded</span>
-			<span>Speed {formatSpeed(bytesPerSecond)}</span>
-			<span>Time left {formatRemaining(remainingSeconds)}</span>
+			{percent >= 100 ? (
+				<span>Finishing</span>
+			) : (
+				<>
+					<span>Speed {formatSpeed(bytesPerSecond)}</span>
+					<span>Time left {formatRemaining(remainingSeconds)}</span>
+				</>
+			)}
 		</div>
 	</div>
 );

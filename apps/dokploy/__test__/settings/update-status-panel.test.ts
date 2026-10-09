@@ -61,6 +61,28 @@ describe("update status panel", () => {
 		expect(html).toContain("Time left unknown");
 	});
 
+	it("exposes the download percentage as the bar value", () => {
+		const html = render(serverStatus());
+		const bar = html.match(/<div[^>]*role="progressbar"[^>]*>/)?.[0];
+
+		expect(bar).toContain('aria-valuenow="36"');
+	});
+
+	it("shows finishing instead of speed and time left at 100 percent", () => {
+		const html = render(
+			serverStatus({
+				downloadPercent: 100,
+				downloadBytesPerSecond: 0,
+				downloadRemainingSeconds: 0,
+			}),
+		);
+
+		expect(html).toContain("100% downloaded");
+		expect(html).toContain("Finishing");
+		expect(html).not.toContain("Speed");
+		expect(html).not.toContain("Time left");
+	});
+
 	it("hides the download bar once the image is pulled", () => {
 		const html = render(serverStatus({ phase: "updating", pulledAt: 5_000 }));
 

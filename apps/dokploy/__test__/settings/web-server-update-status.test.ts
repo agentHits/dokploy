@@ -247,7 +247,7 @@ describe("web server update status", () => {
 
 			script.write("cccccccccccc: Pulling fs layer\n");
 			expect(getServerUpdateStatus()).toMatchObject({
-				downloadPercent: 33,
+				downloadPercent: 84,
 				downloadRemainingSeconds: null,
 			});
 		} finally {

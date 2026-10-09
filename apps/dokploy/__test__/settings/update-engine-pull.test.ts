@@ -107,6 +107,44 @@ const PARTIAL_PULL: Recorded[] = [
 	],
 ];
 
+const layerEvent = (
+	id: string,
+	status: string,
+	progressDetail: Record<string, number> = {},
+) => JSON.stringify({ id, status, progressDetail });
+
+const SMALL_LAYERS = [
+	"aaaaaaaaaaaa",
+	"bbbbbbbbbbbb",
+	"cccccccccccc",
+	"dddddddddddd",
+];
+const LATE_LAYER = "eeeeeeeeeeee";
+
+// The byte share drops once the late layer is sized, which the shown percent
+// must not follow.
+const LATE_SIZE_PULL: Recorded[] = [
+	...SMALL_LAYERS.map(
+		(id): Recorded => [10_200, layerEvent(id, "Pulling fs layer")],
+	),
+	[10_200, layerEvent(LATE_LAYER, "Pulling fs layer")],
+	...SMALL_LAYERS.flatMap((id, index): Recorded[] => [
+		[
+			11_000 + index,
+			layerEvent(id, "Downloading", { current: 1_000_000, total: 1_000_000 }),
+		],
+		[11_100 + index, layerEvent(id, "Pull complete")],
+	]),
+	[12_000, layerEvent(LATE_LAYER, "Downloading", { current: 1_000_000 })],
+	[
+		12_100,
+		layerEvent(LATE_LAYER, "Downloading", {
+			current: 5_000_000,
+			total: 500_000_000,
+		}),
+	],
+];
+
 const replayPull = (recording: Recorded[], failure?: Error) => {
 	pullImageThroughEngine.mockImplementation(
 		async (_image: string, onEvent: (event: EnginePullEvent) => void) => {
@@ -130,11 +168,15 @@ describe("update through the Docker Engine API", () => {
 		vi.setSystemTime(START);
 		resetServerUpdateStatus();
 		spawnAsync.mockImplementation(() => new Promise(() => {}));
+		// Keeps a Docker host from the developer's shell from turning off the engine pull.
+		vi.stubEnv("DOCKER_HOST", "");
+		vi.stubEnv("DOKPLOY_DOCKER_HOST", "");
 	});
 
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.restoreAllMocks();
+		vi.unstubAllEnvs();
 	});
 
 	it("reports bytes, speed and time left from a recorded pull, then runs the script", async () => {
@@ -238,6 +280,48 @@ describe("update through the Docker Engine API", () => {
 			layersTotal: 1,
 		});
 	});
+
+	it("does not step the shown percent back when a late layer gets its size", async () => {
+		const shown: number[] = [];
+		pullImageThroughEngine.mockImplementation(
+			async (_image: string, onEvent: (event: EnginePullEvent) => void) => {
+				for (const [at, line] of LATE_SIZE_PULL) {
+					vi.setSystemTime(at);
+					onEvent(JSON.parse(line) as EnginePullEvent);
+					const percent = getServerUpdateStatus().downloadPercent;
+					if (percent !== null) {
+						shown.push(percent);
+					}
+				}
+			},
+		);
+
+		startServerUpdate(COMMAND, IMAGE);
+		await settle();
+
+		expect(shown.at(-1)).toBe(80);
+		expect([...shown].sort((a, b) => a - b)).toEqual(shown);
+	});
+
+	it.each([
+		["DOCKER_HOST", "tcp://docker.example.com:2376"],
+		["DOKPLOY_DOCKER_HOST", "docker.example.com"],
+	])(
+		"runs the script without the engine pull when %s is set",
+		(name, value) => {
+			vi.stubEnv(name, value);
+
+			startServerUpdate(COMMAND, IMAGE);
+
+			expect(pullImageThroughEngine).not.toHaveBeenCalled();
+			expect(spawnAsync).toHaveBeenCalledWith(
+				"sh",
+				["-c", COMMAND],
+				expect.any(Function),
+			);
+			expect(getServerUpdateStatus().downloadPercent).toBeNull();
+		},
+	);
 
 	it("runs the script directly when no image is given", () => {
 		startServerUpdate(COMMAND);

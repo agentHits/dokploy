@@ -126,9 +126,19 @@ export const downloadedBytes = (
 	return bytes;
 };
 
+// The byte share can fall when a layer gets its size, and the bar must not step back.
+const keepHighWater = (
+	percent: number | null,
+	highWaterPercent: number | null,
+) =>
+	percent === null
+		? highWaterPercent
+		: Math.max(percent, highWaterPercent ?? percent);
+
 export const summarizeDownload = (
 	layerStates: ReadonlyMap<string, string>,
 	downloads: ReadonlyMap<string, LayerDownload>,
+	highWaterPercent: number | null = null,
 ): DownloadSummary => {
 	let finishedLayers = 0;
 	let hasUnsizedUnfinishedLayer = false;
@@ -151,15 +161,20 @@ export const summarizeDownload = (
 	}
 	if (totalBytes > 0 && !hasUnsizedUnfinishedLayer) {
 		return {
-			percent: Math.floor((doneBytes / totalBytes) * 100),
+			percent: keepHighWater(
+				Math.floor((doneBytes / totalBytes) * 100),
+				highWaterPercent,
+			),
 			remainingBytes: totalBytes - doneBytes,
 		};
 	}
 	return {
-		percent:
+		percent: keepHighWater(
 			layerStates.size > 0
 				? Math.floor((finishedLayers / layerStates.size) * 100)
 				: null,
+			highWaterPercent,
+		),
 		remainingBytes: null,
 	};
 };

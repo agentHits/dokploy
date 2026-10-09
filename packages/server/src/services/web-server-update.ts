@@ -71,11 +71,17 @@ const createIdleStatus = (): ServerUpdateStatus => ({
 let status = createIdleStatus();
 let layers = new Map<string, string>();
 let layerDownloads = new Map<string, LayerDownload>();
+let downloadPercentHighWater: number | null = null;
 let downloadSamples: readonly ByteSample[] = [];
 let pendingOutput = "";
 
 const getDownloadEstimates = (now: number) => {
-	const { percent, remainingBytes } = summarizeDownload(layers, layerDownloads);
+	const { percent, remainingBytes } = summarizeDownload(
+		layers,
+		layerDownloads,
+		downloadPercentHighWater,
+	);
+	downloadPercentHighWater = percent;
 	// Without any byte counts the rate would read as zero instead of unknown.
 	const bytesPerSecond =
 		layerDownloads.size > 0 ? downloadRate(downloadSamples, now) : null;
@@ -99,6 +105,7 @@ export const resetServerUpdateStatus = () => {
 	status = createIdleStatus();
 	layers = new Map();
 	layerDownloads = new Map();
+	downloadPercentHighWater = null;
 	downloadSamples = [];
 	pendingOutput = "";
 };
@@ -250,6 +257,11 @@ const runUpdateCommand = (command: string) => {
 	);
 };
 
+// Engine progress only describes the script's pull when both use the local daemon,
+// and a configured Docker host may not be that daemon.
+const hasRemoteDockerHost = () =>
+	Boolean(process.env.DOKPLOY_DOCKER_HOST || process.env.DOCKER_HOST);
+
 /**
  * Runs an update script from `getAgentHitsUpdateCommand` or
  * `getOfficialUpdateCommand` in the background and tracks it in
@@ -257,7 +269,8 @@ const runUpdateCommand = (command: string) => {
  *
  * With `image`, that image is pulled through the Docker Engine API first, since
  * the script's piped output carries no byte counts. The script's own pull then
- * finds the image present, or pulls it itself if the engine pull failed.
+ * finds the image present, or pulls it itself if the engine pull failed. The
+ * engine pull is skipped when a Docker host is configured through the environment.
  */
 export const startServerUpdate = (command: string, image?: string) => {
 	if (isServerUpdateRunning()) {
@@ -271,7 +284,7 @@ export const startServerUpdate = (command: string, image?: string) => {
 	// The first progress line is measured against zero bytes at the start.
 	downloadSamples = [{ at: startedAt, bytes: 0 }];
 
-	if (image) {
+	if (image && !hasRemoteDockerHost()) {
 		pullThroughEngine(image)
 			.then(() => runUpdateCommand(command))
 			.catch(() => finish("Could not start the update script."));
