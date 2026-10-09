@@ -24,7 +24,9 @@ const mocks = vi.hoisted(() => ({
 	generateOpenApiDocument: vi.fn(),
 	getAccessibleServerIds: vi.fn(),
 	getAgentHitsUpdateCommand: vi.fn(),
+	getAgentHitsUpdateImage: vi.fn(() => "update image"),
 	getOfficialUpdateCommand: vi.fn(),
+	getOfficialUpdateImage: vi.fn(() => "official image"),
 	getDockerDiskUsage: vi.fn(),
 	getDokployImageTag: vi.fn(),
 	getDokployVersionData: vi.fn(),
@@ -104,6 +106,8 @@ vi.mock("@dokploy/server", async () => ({
 	getAccessibleServerIds: mocks.getAccessibleServerIds,
 	getAgentHitsUpdateCommand: mocks.getAgentHitsUpdateCommand,
 	getOfficialUpdateCommand: mocks.getOfficialUpdateCommand,
+	getAgentHitsUpdateImage: mocks.getAgentHitsUpdateImage,
+	getOfficialUpdateImage: mocks.getOfficialUpdateImage,
 	getDockerDiskUsage: mocks.getDockerDiskUsage,
 	getDokployImageTag: mocks.getDokployImageTag,
 	getDokployVersionData: mocks.getDokployVersionData,
@@ -494,6 +498,7 @@ describe("settings Docker server boundary", () => {
 		);
 		expect(mocks.startServerUpdate).toHaveBeenCalledWith(
 			"agenthits update command",
+			"update image",
 		);
 	});
 
@@ -545,6 +550,7 @@ describe("settings Docker server boundary", () => {
 		);
 		expect(mocks.startServerUpdate).toHaveBeenCalledWith(
 			"official update command",
+			"official image",
 		);
 		expect(mocks.getAgentHitsUpdateCommand).not.toHaveBeenCalled();
 	});

@@ -659,11 +659,14 @@ docker service update --force \\
 `;
 };
 
+export const getOfficialUpdateImage = (version: string) =>
+	`dokploy/dokploy:${version}`;
+
 export const getOfficialUpdateCommand = (
 	version: string,
 	keepImages?: number | null,
 ) => {
-	const image = quoteShellArg(`dokploy/dokploy:${version}`);
+	const image = quoteShellArg(getOfficialUpdateImage(version));
 	const keepImagesArg =
 		keepImages === undefined ? "" : getDokployKeepImagesEnvArg(keepImages);
 

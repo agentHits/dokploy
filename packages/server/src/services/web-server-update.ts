@@ -1,3 +1,19 @@
+import { pullImageThroughEngine } from "../utils/docker/engine-pull";
+import {
+	addByteSample,
+	type ByteSample,
+	downloadedBytes,
+	downloadRate,
+	type EnginePullEvent,
+	estimateRemainingSeconds,
+	isLayerId,
+	type LayerDownload,
+	parseDownloadProgress,
+	parseEngineDownloadProgress,
+	parsePullLine,
+	recordLayerDownload,
+	summarizeDownload,
+} from "../utils/docker/pull-progress";
 import { spawnAsync } from "../utils/process/spawnAsync";
 
 /** Printed by the update scripts once `docker pull` succeeded. */
@@ -19,6 +35,12 @@ export interface ServerUpdateStatus {
 	layersTotal: number;
 	layersDownloaded: number;
 	layersExtracted: number;
+	/** Share of the image downloaded: by bytes once every unfinished layer has a known size, otherwise by layers. */
+	downloadPercent: number | null;
+	/** Download rate over the last five seconds; null until there is enough data. */
+	downloadBytesPerSecond: number | null;
+	/** Estimated seconds until the download finishes; null while unknown. */
+	downloadRemainingSeconds: number | null;
 	/** Docker reported "no space left on device" while the update ran. */
 	diskFull: boolean;
 	/** Last lines of the update script output: image refs and layer ids only. */
@@ -37,6 +59,9 @@ const createIdleStatus = (): ServerUpdateStatus => ({
 	layersTotal: 0,
 	layersDownloaded: 0,
 	layersExtracted: 0,
+	downloadPercent: null,
+	downloadBytesPerSecond: null,
+	downloadRemainingSeconds: null,
 	diskFull: false,
 	output: [],
 });
@@ -45,23 +70,49 @@ const createIdleStatus = (): ServerUpdateStatus => ({
 // process starting from "idle" is how the UI knows the restart happened.
 let status = createIdleStatus();
 let layers = new Map<string, string>();
+let layerDownloads = new Map<string, LayerDownload>();
+let downloadPercentHighWater: number | null = null;
+let downloadSamples: readonly ByteSample[] = [];
 let pendingOutput = "";
+
+const getDownloadEstimates = (now: number) => {
+	const { percent, remainingBytes } = summarizeDownload(
+		layers,
+		layerDownloads,
+		downloadPercentHighWater,
+	);
+	downloadPercentHighWater = percent;
+	// Without any byte counts the rate would read as zero instead of unknown.
+	const bytesPerSecond =
+		layerDownloads.size > 0 ? downloadRate(downloadSamples, now) : null;
+	return {
+		downloadPercent: percent,
+		downloadBytesPerSecond: bytesPerSecond,
+		downloadRemainingSeconds: estimateRemainingSeconds(
+			remainingBytes,
+			bytesPerSecond,
+		),
+	};
+};
 
 export const getServerUpdateStatus = (): ServerUpdateStatus => ({
 	...status,
 	output: [...status.output],
+	...getDownloadEstimates(Date.now()),
 });
 
 export const resetServerUpdateStatus = () => {
 	status = createIdleStatus();
 	layers = new Map();
+	layerDownloads = new Map();
+	downloadPercentHighWater = null;
+	downloadSamples = [];
 	pendingOutput = "";
 };
 
 export const isServerUpdateRunning = () =>
 	status.phase === "pulling" || status.phase === "updating";
 
-const LAYER_LINE = /^([0-9a-f]{12,64}): (.+)$/;
 const DOWNLOADED_LAYER_STATES = new Set([
 	"Download complete",
 	"Pull complete",
@@ -71,6 +122,30 @@ const EXTRACTED_LAYER_STATES = new Set(["Pull complete", "Already exists"]);
 
 const countLayers = (states: Set<string>) =>
 	[...layers.values()].filter((state) => states.has(state)).length;
+
+const updateLayerCounts = () => {
+	status.layersTotal = layers.size;
+	status.layersDownloaded = countLayers(DOWNLOADED_LAYER_STATES);
+	status.layersExtracted = countLayers(EXTRACTED_LAYER_STATES);
+};
+
+const recordLayerState = (
+	id: string,
+	state: string,
+	progress: LayerDownload | null,
+) => {
+	// Docker repeats a layer's earlier states while it is retried, so a
+	// layer that already finished must not go back to "downloading".
+	if (!EXTRACTED_LAYER_STATES.has(layers.get(id) ?? "")) {
+		layers.set(id, state);
+		recordLayerDownload(layerDownloads, id, state, progress);
+		downloadSamples = addByteSample(downloadSamples, {
+			at: Date.now(),
+			bytes: downloadedBytes(layerDownloads),
+		});
+	}
+	updateLayerCounts();
+};
 
 const handleOutputLine = (rawLine: string) => {
 	const line = rawLine.trim();
@@ -90,17 +165,13 @@ const handleOutputLine = (rawLine: string) => {
 		status.diskFull = true;
 	}
 
-	const layer = line.match(LAYER_LINE);
+	const layer = parsePullLine(line);
 	if (layer && status.phase === "pulling") {
-		const [, id, state] = layer as unknown as [string, string, string];
-		// Docker repeats a layer's earlier states while it is retried, so a
-		// layer that already finished must not go back to "downloading".
-		if (!EXTRACTED_LAYER_STATES.has(layers.get(id) ?? "")) {
-			layers.set(id, state);
-		}
-		status.layersTotal = layers.size;
-		status.layersDownloaded = countLayers(DOWNLOADED_LAYER_STATES);
-		status.layersExtracted = countLayers(EXTRACTED_LAYER_STATES);
+		recordLayerState(
+			layer.id,
+			layer.status,
+			parseDownloadProgress(layer.status),
+		);
 	}
 
 	status.output = [
@@ -118,6 +189,39 @@ const handleOutput = (chunk: string) => {
 	}
 };
 
+const handleEnginePullEvent = (event: EnginePullEvent) => {
+	if (
+		status.phase !== "pulling" ||
+		!event.id ||
+		!event.status ||
+		!isLayerId(event.id)
+	) {
+		return;
+	}
+	recordLayerState(event.id, event.status, parseEngineDownloadProgress(event));
+};
+
+// A failed engine pull leaves partial layer states and bytes behind; dropping
+// them keeps the layer share to what the update script reports.
+const clearLayerProgress = () => {
+	layers = new Map();
+	layerDownloads = new Map();
+	downloadSamples = [{ at: status.startedAt ?? Date.now(), bytes: 0 }];
+	updateLayerCounts();
+};
+
+const pullThroughEngine = async (image: string) => {
+	try {
+		await pullImageThroughEngine(image, handleEnginePullEvent);
+	} catch (error) {
+		clearLayerProgress();
+		console.error(
+			`Could not pull ${image} through the Docker API; the update script will pull it.`,
+			error,
+		);
+	}
+};
+
 const finish = (error: string | null) => {
 	if (pendingOutput) {
 		handleOutputLine(pendingOutput);
@@ -132,20 +236,7 @@ const finish = (error: string | null) => {
 	}
 };
 
-/**
- * Runs an update script from `getAgentHitsUpdateCommand` or
- * `getOfficialUpdateCommand` in the background and tracks it in
- * `getServerUpdateStatus`. Returns false when an update is already running.
- */
-export const startServerUpdate = (command: string) => {
-	if (isServerUpdateRunning()) {
-		return false;
-	}
-
-	resetServerUpdateStatus();
-	status.phase = "pulling";
-	status.startedAt = Date.now();
-
+const runUpdateCommand = (command: string) => {
 	spawnAsync("sh", ["-c", command], handleOutput).then(
 		() => finish(null),
 		(error: unknown) => {
@@ -164,6 +255,42 @@ export const startServerUpdate = (command: string) => {
 			}
 		},
 	);
+};
+
+// Engine progress only describes the script's pull when both use the local daemon,
+// and a configured Docker host may not be that daemon.
+const hasRemoteDockerHost = () =>
+	Boolean(process.env.DOKPLOY_DOCKER_HOST || process.env.DOCKER_HOST);
+
+/**
+ * Runs an update script from `getAgentHitsUpdateCommand` or
+ * `getOfficialUpdateCommand` in the background and tracks it in
+ * `getServerUpdateStatus`. Returns false when an update is already running.
+ *
+ * With `image`, that image is pulled through the Docker Engine API first, since
+ * the script's piped output carries no byte counts. The script's own pull then
+ * finds the image present, or pulls it itself if the engine pull failed. The
+ * engine pull is skipped when a Docker host is configured through the environment.
+ */
+export const startServerUpdate = (command: string, image?: string) => {
+	if (isServerUpdateRunning()) {
+		return false;
+	}
+
+	resetServerUpdateStatus();
+	status.phase = "pulling";
+	const startedAt = Date.now();
+	status.startedAt = startedAt;
+	// The first progress line is measured against zero bytes at the start.
+	downloadSamples = [{ at: startedAt, bytes: 0 }];
+
+	if (image && !hasRemoteDockerHost()) {
+		pullThroughEngine(image)
+			.then(() => runUpdateCommand(command))
+			.catch(() => finish("Could not start the update script."));
+	} else {
+		runUpdateCommand(command);
+	}
 
 	return true;
 };

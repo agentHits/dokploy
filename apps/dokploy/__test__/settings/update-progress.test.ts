@@ -7,6 +7,8 @@ import {
 	DOWNLOAD_LIMIT_MS,
 	failUpdateProgress,
 	formatElapsed,
+	formatRemaining,
+	formatSpeed,
 	getUpdateStepState,
 	RESTART_LIMIT_MS,
 	UPDATE_STEPS,
@@ -25,6 +27,9 @@ const serverStatus = (
 	layersTotal: 0,
 	layersDownloaded: 0,
 	layersExtracted: 0,
+	downloadPercent: null,
+	downloadBytesPerSecond: null,
+	downloadRemainingSeconds: null,
 	diskFull: false,
 	output: [],
 	...overrides,
@@ -237,6 +242,24 @@ describe("update progress", () => {
 		expect(advanceUpdateProgress(failed, { type: "down", at: 2_000 })).toBe(
 			failed,
 		);
+	});
+});
+
+describe("download figures", () => {
+	it("shows the speed in MB/s, or unknown without a measurement", () => {
+		expect(formatSpeed(12_400_000)).toBe("12.4 MB/s");
+		expect(formatSpeed(0)).toBe("0.0 MB/s");
+		expect(formatSpeed(null)).toBe("unknown");
+		expect(formatSpeed(-1)).toBe("unknown");
+		expect(formatSpeed(Number.POSITIVE_INFINITY)).toBe("unknown");
+	});
+
+	it("shows the time left like the elapsed time, or unknown", () => {
+		expect(formatRemaining(80)).toBe("1 min 20 s");
+		expect(formatRemaining(0)).toBe("0 s");
+		expect(formatRemaining(null)).toBe("unknown");
+		expect(formatRemaining(-3)).toBe("unknown");
+		expect(formatRemaining(Number.POSITIVE_INFINITY)).toBe("unknown");
 	});
 });
 
