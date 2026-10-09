@@ -27,13 +27,14 @@ export const TRAEFIK_VERSION =
 const traefikContainerOptions = (
 	image: string,
 	restart: string,
+	httpPublish = `-p ${TRAEFIK_PORT}:${TRAEFIK_PORT}`,
 ) => `--name dokploy-traefik \
 	--restart ${restart} \
 	-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
 	-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
-	-v /var/run/docker.sock:/var/run/docker.sock \
+	-v /var/run/docker.sock:/var/run/docker.sock:ro \
 	-p ${TRAEFIK_SSL_PORT}:${TRAEFIK_SSL_PORT} \
-	-p ${TRAEFIK_PORT}:${TRAEFIK_PORT} \
+	${httpPublish} \
 	-p ${TRAEFIK_HTTP3_PORT}:${TRAEFIK_HTTP3_PORT}/udp \
 	${image}`;
 
@@ -44,8 +45,11 @@ export const buildTraefikRunCommand = (version: string) => `
 
 // Created with no restart policy and not started: networks are attached before the
 // ports are taken, and the policy is raised only after the new container runs.
-export const buildTraefikCreateWithImage = (image: string) => `
-		$SUDO_CMD docker create ${traefikContainerOptions(image, "no")}
+export const buildTraefikCreateWithImage = (
+	image: string,
+	httpPublish?: string,
+) => `
+		$SUDO_CMD docker create ${traefikContainerOptions(image, "no", httpPublish)}
 `;
 
 export const buildTraefikCreateCommand = (version: string) =>

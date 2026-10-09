@@ -48,7 +48,14 @@ case "$1" in
 		exit 0
 		;;
 	ps)
-		echo fake-task-container
+		case "$*" in
+			*"name=dokploy-postgres"*"ancestor="*)
+				case "$*" in
+					*"ancestor=$FAKE_POSTGRES_IMAGE") echo fake-task-container ;;
+				esac
+				;;
+			*) echo fake-task-container ;;
+		esac
 		exit 0
 		;;
 	exec)
@@ -629,19 +636,42 @@ describe("install-agenthits.sh update", () => {
 		SPAWN_TEST_TIMEOUT_MS,
 	);
 	it(
-		"refuses a Postgres major version change before anything runs",
+		"keeps an installed Postgres whose major differs from the pin and runs the other steps",
 		() => {
-			const { result, calls } = runInstaller({
+			const { result, calls, backups } = runInstaller({
 				postgresImage: "postgres:17.5",
+				redisImage: "redis:8.10.1",
+				traefikImage: "traefik:v3.6.25",
 			});
 
-			expect(result.status).not.toBe(0);
-			expect(result.stderr).toContain("changes the major version");
-			expect(result.stderr).toContain("Nothing was changed");
-			expect(calls.some((call) => call.startsWith("pull "))).toBe(false);
-			expect(calls.some((call) => call.startsWith("service update"))).toBe(
-				false,
+			expect(result.status).toBe(0);
+			expect(result.stdout).toContain(
+				"Postgres 17 stays. A major upgrade is a separate migration; this update does not change it.",
 			);
+			expect(result.stderr).not.toContain("changes the major version");
+			expect(backups).toEqual([]);
+			expect(calls.some((call) => call.includes("pg_dumpall"))).toBe(false);
+			expect(calls).not.toContain("pull postgres:18.6");
+			expect(
+				calls.some(
+					(call) =>
+						call.startsWith("service update") &&
+						call.includes("dokploy-postgres"),
+				),
+			).toBe(false);
+
+			const redis = firstIndex(
+				calls,
+				"service update --detach --update-order stop-first --update-failure-action rollback --image redis:8.10.2 dokploy-redis",
+			);
+			const traefikStop = firstIndex(calls, "stop dokploy-traefik");
+			const traefikStart = firstIndex(calls, "start dokploy-traefik");
+			const panel = firstIndex(calls, "buildx imagetools inspect");
+			expect(redis).toBeGreaterThanOrEqual(0);
+			expect(redis).toBeLessThan(traefikStop);
+			expect(traefikStop).toBeLessThan(traefikStart);
+			expect(traefikStart).toBeLessThan(panel);
+			expect(result.stdout).toContain("Panel host update finished.");
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);
@@ -705,6 +735,29 @@ describe("install-agenthits.sh Docker Engine upgrade", () => {
 			expect(backupEntries[0]?.files.every((file) => file.mode === 0o600)).toBe(
 				true,
 			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"finishes the Docker Engine upgrade while Postgres keeps its major version",
+		() => {
+			const { result, calls } = runInstaller({
+				postgresImage: "postgres:17.5",
+				upgradeEngine: true,
+				engineVersion: "28.3.0",
+			});
+
+			expect(result.status).toBe(0);
+			expect(result.stdout).toContain("Postgres 17 stays.");
+			expect(result.stdout).toContain("Docker Engine is 29.8.2");
+			expect(result.stdout).toContain("Panel host update finished.");
+			expect(result.stderr).not.toContain("rolled back");
+			expect(
+				calls.includes(
+					`apt-get install -y -qq --no-download docker-ce=${DOCKER_NEW} docker-ce-cli=${DOCKER_NEW} containerd.io docker-buildx-plugin docker-compose-plugin`,
+				),
+			).toBe(true);
 		},
 		SPAWN_TEST_TIMEOUT_MS,
 	);

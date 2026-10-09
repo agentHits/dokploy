@@ -6,7 +6,11 @@ import {
 } from "../utils/servers/destination";
 import { PINNED_VERSIONS } from "./component-versions";
 import { rcloneInstallCommand } from "./server-setup";
-import { buildTraefikCreateWithImage, TRAEFIK_VERSION } from "./traefik-setup";
+import {
+	buildTraefikCreateWithImage,
+	TRAEFIK_PORT,
+	TRAEFIK_VERSION,
+} from "./traefik-setup";
 
 export const COMPONENT_NAMES = [
 	"docker",
@@ -458,8 +462,16 @@ if $SUDO_CMD docker inspect dokploy-traefik >/dev/null 2>&1; then
 	traefik_old_image="$($SUDO_CMD docker inspect -f '{{.Config.Image}}' dokploy-traefik 2>/dev/null || true)"
 	traefik_extra_networks="$($SUDO_CMD docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' dokploy-traefik 2>/dev/null || true)"
 fi
+traefik_keep_bridge=1
+if [ "$traefik_existed" = 1 ] && ! echo " $traefik_extra_networks " | grep -q " bridge "; then
+	traefik_keep_bridge=0
+fi
+traefik_http_publish="-p ${TRAEFIK_PORT}:${TRAEFIK_PORT}"
+if [ "$traefik_existed" = 1 ] && ! $SUDO_CMD docker inspect -f '{{json .HostConfig.PortBindings}}' dokploy-traefik | grep -q '"${TRAEFIK_PORT}/tcp"'; then
+	traefik_http_publish=""
+fi
 traefik_create() {
-${buildTraefikCreateWithImage('"$1"')}
+${buildTraefikCreateWithImage('"$1"', "$traefik_http_publish")}
 }
 traefik_connect() {
 	$SUDO_CMD docker network connect dokploy-network dokploy-traefik || return 1
@@ -502,34 +514,41 @@ traefik_restore() {
 	fi
 	exit 1
 }
-trap 'traefik_restore "being interrupted"' HUP INT TERM
-$SUDO_CMD docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
-if [ "$traefik_existed" = 1 ]; then
-	if ! $SUDO_CMD docker stop dokploy-traefik >/dev/null; then
-		traefik_restore "stopping the running Traefik container"
+if [ "$traefik_existed" = 1 ] && [ "\${traefik_old_image%%@*}" = "traefik:v${TRAEFIK_VERSION}" ] && traefik_check_running; then
+	echo "Traefik already runs traefik:v${TRAEFIK_VERSION}"
+else
+	trap 'traefik_restore "being interrupted"' HUP INT TERM
+	$SUDO_CMD docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
+	if [ "$traefik_existed" = 1 ]; then
+		if ! $SUDO_CMD docker stop dokploy-traefik >/dev/null; then
+			traefik_restore "stopping the running Traefik container"
+		fi
+		traefik_old_stopped=1
+		if ! $SUDO_CMD docker rm dokploy-traefik >/dev/null; then
+			traefik_restore "removing the stopped Traefik container"
+		fi
 	fi
-	traefik_old_stopped=1
-	if ! $SUDO_CMD docker rm dokploy-traefik >/dev/null; then
-		traefik_restore "removing the stopped Traefik container"
+	if ! traefik_create "traefik:v${TRAEFIK_VERSION}"; then
+		traefik_restore "creating the new Traefik container"
 	fi
+	if ! traefik_connect "$traefik_extra_networks"; then
+		traefik_restore "connecting the new Traefik container to its networks"
+	fi
+	if ! $SUDO_CMD docker start dokploy-traefik >/dev/null; then
+		traefik_restore "starting the new Traefik container"
+	fi
+	if ! traefik_wait_settled; then
+		traefik_restore "checking the new Traefik container (running, with no restarts)"
+	fi
+	if [ "$traefik_keep_bridge" = 0 ]; then
+		$SUDO_CMD docker network disconnect bridge dokploy-traefik >/dev/null 2>&1 || true
+	fi
+	if ! $SUDO_CMD docker update --restart always dokploy-traefik >/dev/null; then
+		traefik_restore "setting the restart policy of the new Traefik container"
+	fi
+	trap - HUP INT TERM
+	echo "Traefik version ${TRAEFIK_VERSION} installed ✅"
 fi
-if ! traefik_create "traefik:v${TRAEFIK_VERSION}"; then
-	traefik_restore "creating the new Traefik container"
-fi
-if ! traefik_connect "$traefik_extra_networks"; then
-	traefik_restore "connecting the new Traefik container to its networks"
-fi
-if ! $SUDO_CMD docker start dokploy-traefik >/dev/null; then
-	traefik_restore "starting the new Traefik container"
-fi
-if ! traefik_wait_settled; then
-	traefik_restore "checking the new Traefik container (running, with no restarts)"
-fi
-if ! $SUDO_CMD docker update --restart always dokploy-traefik >/dev/null; then
-	traefik_restore "setting the restart policy of the new Traefik container"
-fi
-trap - HUP INT TERM
-echo "Traefik version ${TRAEFIK_VERSION} installed ✅"
 `;
 		case "nixpacks":
 			return `
@@ -579,15 +598,20 @@ echo "Buildpacks version ${PINNED_VERSIONS.buildpacks} installed ✅"
 	}
 };
 
-export const buildComponentUpdateScript = (
-	components: UpdatableComponent[],
-) => `
-set -e
-if [ "$(id -u)" -eq 0 ]; then SUDO_CMD=""; else SUDO_CMD="sudo"; fi
+export const buildComponentUpdateSteps = (components: UpdatableComponent[]) => `
 ${predownloadGate(components)}
 ${components.map(updateStepFor).join("\n")}
+`;
+
+export const wrapComponentUpdateSteps = (steps: string) => `
+set -e
+if [ "$(id -u)" -eq 0 ]; then SUDO_CMD=""; else SUDO_CMD="sudo"; fi
+${steps}
 echo "${COMPONENTS_UPDATE_DONE}"
 `;
+
+export const buildComponentUpdateScript = (components: UpdatableComponent[]) =>
+	wrapComponentUpdateSteps(buildComponentUpdateSteps(components));
 
 const runSshCommand = async (
 	serverId: string,

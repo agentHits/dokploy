@@ -99,6 +99,7 @@ vi.mock("@dokploy/server", async () => ({
 	getDokployImageKeepCount: vi.fn(),
 	getDokployImages: vi.fn(),
 	IS_CLOUD: false,
+	HOST_STACK_COMPONENTS: ["panel", "docker", "traefik", "postgres", "redis"],
 	checkGPUStatus: mocks.checkGPUStatus,
 	checkPortInUse: mocks.checkPortInUse,
 	checkPostgresHealth: mocks.checkPostgresHealth,

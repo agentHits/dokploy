@@ -61,8 +61,10 @@ DOCKER_ENGINE_PREVIOUS_VERSION=""
 DOCKER_ROLLBACK_DIR=""
 DOCKER_ROLLBACK_DIR_CREATED=0
 TRAEFIK_EXTRA_NETWORKS=""
+TRAEFIK_HTTP_PUBLISH=1
 TRAEFIK_OLD_IMAGE=""
 TRAEFIK_OLD_STOPPED=0
+POSTGRES_KEPT=0
 
 command_exists() {
 	command -v "$@" >/dev/null 2>&1
@@ -1168,7 +1170,11 @@ resolve_panel_update_script() {
 predownload_update_artifacts() {
 	resolve_panel_update_script
 	local image=""
-	for image in "$POSTGRES_IMAGE" "$REDIS_IMAGE" "$TRAEFIK_IMAGE" "$DOKPLOY_IMAGE"; do
+	local images=("$REDIS_IMAGE" "$TRAEFIK_IMAGE" "$DOKPLOY_IMAGE")
+	if [ "$POSTGRES_KEPT" = "0" ]; then
+		images=("$POSTGRES_IMAGE" "${images[@]}")
+	fi
+	for image in "${images[@]}"; do
 		if ! download_with_retry docker pull "$image"; then
 			echo "Pre-download failed: $image. Nothing was changed." >&2
 			exit 1
@@ -1207,9 +1213,10 @@ redis_ready() {
 	[ -n "$container" ] && [ "$(docker exec "$container" redis-cli ping 2>/dev/null)" = "PONG" ]
 }
 
+# A kept Postgres runs its installed major, so readiness follows the service's image, not the pinned one.
 postgres_ready() {
 	local container=""
-	container="$(task_container dokploy-postgres "$POSTGRES_IMAGE")"
+	container="$(task_container dokploy-postgres "$(service_image dokploy-postgres)")"
 	[ -n "$container" ] && docker exec "$container" pg_isready -U dokploy -d dokploy >/dev/null 2>&1
 }
 
@@ -1334,13 +1341,17 @@ traefik_extra_networks() {
 create_dokploy_traefik() {
 	local image="$1"
 	local restart="$2"
+	local http_publish=()
+	if [ "${TRAEFIK_HTTP_PUBLISH:-1}" = "1" ]; then
+		http_publish=(-p 80:80/tcp)
+	fi
 	docker create \
 		--name dokploy-traefik \
 		--restart "$restart" \
 		-v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
 		-v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
 		-v /var/run/docker.sock:/var/run/docker.sock:ro \
-		-p 80:80/tcp \
+		${http_publish[@]+"${http_publish[@]}"} \
 		-p 443:443/tcp \
 		-p 443:443/udp \
 		"$image" >/dev/null || return 1
@@ -1407,6 +1418,10 @@ swap_dokploy_traefik() {
 	fi
 	TRAEFIK_OLD_IMAGE="$current"
 	TRAEFIK_EXTRA_NETWORKS="$(traefik_extra_networks)"
+	TRAEFIK_HTTP_PUBLISH=1
+	if [ "$existed" = "1" ] && ! docker inspect -f '{{json .HostConfig.PortBindings}}' dokploy-traefik | grep -q '"80/tcp"'; then
+		TRAEFIK_HTTP_PUBLISH=0
+	fi
 	TRAEFIK_OLD_STOPPED=0
 	trap 'traefik_restore "being interrupted"' HUP INT TERM
 	docker rm -f dokploy-traefik-previous >/dev/null 2>&1 || true
@@ -1527,16 +1542,18 @@ update_agenthits_dokploy() {
 	require_update_services
 
 	local current_postgres=""
+	local current_postgres_major=""
 	current_postgres="$(image_without_digest "$(service_image dokploy-postgres)")"
-	if [ "$(get_postgres_major_version "$current_postgres" || true)" != "$(get_postgres_major_version || true)" ]; then
-		echo "Error: Postgres $current_postgres -> $POSTGRES_IMAGE changes the major version, which this update does not migrate. Nothing was changed." >&2
-		exit 1
+	current_postgres_major="$(get_postgres_major_version "$current_postgres" || true)"
+	if [ "$current_postgres_major" != "$(get_postgres_major_version || true)" ]; then
+		POSTGRES_KEPT=1
+		echo "Postgres ${current_postgres_major:-$current_postgres} stays. A major upgrade is a separate migration; this update does not change it."
 	fi
 
 	predownload_update_artifacts
 
 	local postgres_swap=0
-	if [ "$(image_without_digest "$(service_image dokploy-postgres)")" != "$(image_without_digest "$POSTGRES_IMAGE")" ]; then
+	if [ "$POSTGRES_KEPT" = "0" ] && [ "$(image_without_digest "$(service_image dokploy-postgres)")" != "$(image_without_digest "$POSTGRES_IMAGE")" ]; then
 		postgres_swap=1
 		backup_postgres
 	fi
