@@ -11,9 +11,12 @@ import {
 	XCircle,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import {
 	formatElapsed,
+	formatRemaining,
+	formatSpeed,
 	getUpdateStepState,
 	type UpdatePanelStep,
 	type UpdateProgress,
@@ -49,6 +52,35 @@ const StateIcon = ({ state }: { state: UpdateStepState }) => {
 	}
 };
 
+const DownloadProgress = ({
+	percent,
+	bytesPerSecond,
+	remainingSeconds,
+}: {
+	percent: number;
+	bytesPerSecond: number | null;
+	remainingSeconds: number | null;
+}) => (
+	<div className="flex flex-col gap-1.5">
+		<Progress
+			value={percent}
+			className="h-2"
+			aria-label="Image download progress"
+		/>
+		<div className="flex flex-wrap gap-x-4 gap-y-0.5">
+			<span>{percent}% downloaded</span>
+			{percent >= 100 ? (
+				<span>Finishing</span>
+			) : (
+				<>
+					<span>Speed {formatSpeed(bytesPerSecond)}</span>
+					<span>Time left {formatRemaining(remainingSeconds)}</span>
+				</>
+			)}
+		</div>
+	</div>
+);
+
 const getDownloadDetails = (
 	progress: UpdateProgress,
 	state: UpdateStepState,
@@ -76,6 +108,18 @@ const getDownloadDetails = (
 	if (server?.phase === "pulling" && server.layersTotal > 0) {
 		details.push(
 			`${server.layersDownloaded} of ${server.layersTotal} layers downloaded, ${server.layersExtracted} extracted`,
+		);
+	}
+	if (
+		server?.phase === "pulling" &&
+		typeof server.downloadPercent === "number"
+	) {
+		details.push(
+			<DownloadProgress
+				percent={server.downloadPercent}
+				bytesPerSecond={server.downloadBytesPerSecond}
+				remainingSeconds={server.downloadRemainingSeconds}
+			/>,
 		);
 	}
 	if (server?.phase === "updating" || server?.phase === "done") {
@@ -163,7 +207,7 @@ export const UpdateStatusPanel = ({
 							aria-current={state === "active" ? "step" : undefined}
 						>
 							<StateIcon state={state} />
-							<div className="flex min-w-0 flex-col gap-0.5">
+							<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 								<span
 									className={cn(
 										"flex items-center gap-2 text-sm font-medium",
@@ -177,9 +221,9 @@ export const UpdateStatusPanel = ({
 									{title}
 								</span>
 								{details.map((detail, index) => (
-									<span key={index} className="text-xs text-muted-foreground">
+									<div key={index} className="text-xs text-muted-foreground">
 										{detail}
-									</span>
+									</div>
 								))}
 							</div>
 						</li>
