@@ -15,6 +15,7 @@ import {
 	buildComponentUpdateSteps,
 	COMPONENTS_UPDATE_DONE,
 } from "@dokploy/server/setup/server-components";
+import { TRAEFIK_VERSION } from "@dokploy/server/setup/traefik-setup";
 import { describe, expect, it } from "vitest";
 
 const SPAWN_TEST_TIMEOUT_MS = 30_000;
@@ -22,6 +23,12 @@ const SPAWN_TEST_TIMEOUT_MS = 30_000;
 const FAKE_DOCKER = `#!/bin/sh
 printf 'docker %s\\n' "$*" >> "$CALL_LOG"
 case "$1" in
+	inspect)
+		case "$*" in
+			*Config.Image*) cat "$STATE_DIR/traefik_image" ;;
+			*RestartCount*) echo "true 0" ;;
+		esac
+		;;
 	pull) [ "$FAKE_PULL_FAILS" = 1 ] && exit 1 ;;
 	ps) echo cid-redis ;;
 	exec) [ "$FAKE_PING_FAILS" = 1 ] || echo PONG ;;
@@ -63,20 +70,25 @@ const FAKE_SLEEP = `#!/bin/sh
 exit 0
 `;
 
-type RedisFixture = {
+type HostFixture = {
 	image?: string;
+	traefikImage?: string;
 	env?: Record<string, string>;
 };
 
 const runHostScript = (
 	components: HostStackUiComponent[],
-	fixture: RedisFixture = {},
+	fixture: HostFixture = {},
 ) => {
 	const dir = mkdtempSync(path.join(tmpdir(), "host-stack-"));
 	try {
 		const callLog = path.join(dir, "calls.log");
 		writeFileSync(callLog, "");
 		writeFileSync(path.join(dir, "image"), `${fixture.image ?? "redis:7"}\n`);
+		writeFileSync(
+			path.join(dir, "traefik_image"),
+			`${fixture.traefikImage ?? "traefik:v1.0.0"}\n`,
+		);
 		writeFileSync(path.join(dir, "index"), "1\n");
 		writeFileSync(path.join(dir, "state"), "\n");
 		for (const [name, body] of Object.entries({
@@ -166,6 +178,52 @@ describe("buildHostStackUpdateScript", () => {
 		expect(script).not.toContain("dokploy-postgres");
 		expect(script).not.toMatch(/service update [^\n]* dokploy\n/);
 	});
+});
+
+describe("Traefik update run", () => {
+	it(
+		"leaves Traefik alone when its container already runs the target image, digest aside",
+		() => {
+			const run = runHostScript(["traefik"], {
+				traefikImage: `traefik:v${TRAEFIK_VERSION}@sha256:0123abcd`,
+			});
+
+			expect(run.status).toBe(0);
+			expect(
+				run.calls.filter((call) =>
+					/^docker (stop|create|start) |^docker rm dokploy-traefik$/.test(call),
+				),
+			).toEqual([]);
+			expect(run.stdout).toContain(
+				`Traefik already runs traefik:v${TRAEFIK_VERSION}`,
+			);
+			expect(run.stdout).toContain(COMPONENTS_UPDATE_DONE);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"replaces the Traefik container when it runs another image",
+		() => {
+			const run = runHostScript(["traefik"], {
+				traefikImage: "traefik:v1.0.0",
+			});
+
+			expect(run.status).toBe(0);
+			expect(run.calls).toContain("docker stop dokploy-traefik");
+			expect(
+				run.calls.some(
+					(call) =>
+						call.startsWith("docker create ") &&
+						call.includes(`traefik:v${TRAEFIK_VERSION}`),
+				),
+			).toBe(true);
+			expect(run.stdout).toContain(
+				`Traefik version ${TRAEFIK_VERSION} installed`,
+			);
+		},
+		SPAWN_TEST_TIMEOUT_MS,
+	);
 });
 
 describe("Redis update run", () => {

@@ -9,7 +9,7 @@ import {
 	RefreshCw,
 	Server,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import {
 	AlertDialog,
@@ -43,9 +43,8 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { api } from "@/utils/api";
 import { UpdateServer } from "../web-server/update-server";
+import { updateOutcome } from "./host-stack-log";
 
-const UPDATE_DONE = "Components update finished ✅";
-const UPDATE_FAILED = "Components update failed ❌";
 const TRAEFIK_CONNECTION_NOTE =
 	"If the connection to the panel dropped while Traefik was recreated, the update can still finish on the host. Reload this page to see the result.";
 
@@ -159,6 +158,7 @@ const PanelHostCard = ({
 	const [isUpdating, setIsUpdating] = useState(false);
 	const [runComponents, setRunComponents] = useState<HostStackComponent[]>([]);
 	const [logs, setLogs] = useState("");
+	const logBuffer = useRef("");
 
 	const outdatedCount = rows.filter((row) => row.outdated).length;
 	const unknownCount = rows.filter((row) => row.status === "unknown").length;
@@ -178,24 +178,27 @@ const PanelHostCard = ({
 		{
 			enabled: isUpdating,
 			onData(log) {
-				setLogs((prev) => `${prev}${log}`);
-				if (log.includes(UPDATE_DONE) || log.includes(UPDATE_FAILED)) {
-					setIsUpdating(false);
-					if (log.includes(UPDATE_DONE)) {
-						toast.success("Panel host components updated");
-					} else {
-						toast.error("Panel host update failed, see the log");
-					}
-					void refetch();
+				const previous = logBuffer.current;
+				logBuffer.current = `${previous}${log}`;
+				setLogs(logBuffer.current);
+				const outcome = updateOutcome(previous, logBuffer.current);
+				if (outcome === null) {
+					return;
 				}
+				setIsUpdating(false);
+				if (outcome === "done") {
+					toast.success("Panel host components updated");
+				} else {
+					toast.error("Panel host update failed, see the log");
+				}
+				void refetch();
 			},
 			onError(err) {
-				setLogs((prev) => {
-					const note = runComponents.includes("traefik")
-						? `\n${TRAEFIK_CONNECTION_NOTE}`
-						: "";
-					return `${prev}${err.message}${note}\n`;
-				});
+				const note = runComponents.includes("traefik")
+					? `\n${TRAEFIK_CONNECTION_NOTE}`
+					: "";
+				logBuffer.current = `${logBuffer.current}${err.message}${note}\n`;
+				setLogs(logBuffer.current);
 				setIsUpdating(false);
 				toast.error("Panel host update did not finish");
 				void refetch();
@@ -204,6 +207,7 @@ const PanelHostCard = ({
 	);
 
 	const startUpdate = () => {
+		logBuffer.current = "";
 		setLogs("");
 		setRunComponents(selected);
 		setIsConfirmOpen(false);

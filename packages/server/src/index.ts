@@ -65,6 +65,7 @@ export * from "./services/web-server-update";
 export * from "./setup/config-paths";
 export * from "./setup/forward-auth-setup";
 export * from "./setup/host-stack";
+export * from "./setup/host-stack-lock";
 export * from "./setup/host-stack-rows";
 export * from "./setup/monitoring-setup";
 export * from "./setup/postgres-setup";

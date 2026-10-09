@@ -80,9 +80,12 @@ vi.mock("@dokploy/server", async () => ({
 	getDokployImages: vi.fn(),
 	IS_CLOUD: false,
 	HOST_STACK_COMPONENTS: ["panel", "docker", "traefik", "postgres", "redis"],
-	isHostStackUpdateRunning: vi.fn(() => false),
+	...(await import("@dokploy/server/setup/host-stack-lock")),
+	hostStackRefusals: () => [],
+	isHostStackUiComponent: (component: string) =>
+		component === "traefik" || component === "redis",
 	readHostStackRows: vi.fn(),
-	updateHostStackComponents: vi.fn(),
+	updateHostStackComponents: vi.fn(() => Promise.resolve()),
 	checkGPUStatus: mocks.checkGPUStatus,
 	checkPortInUse: mocks.checkPortInUse,
 	checkPostgresHealth: mocks.checkPostgresHealth,
@@ -816,5 +819,79 @@ describe("settings Traefik file access", () => {
 			);
 			expect(mocks.filterProtectedTraefikEntries).not.toHaveBeenCalled();
 		});
+	});
+});
+
+describe("panel host update lock", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.isServerUpdateRunning.mockReturnValue(false);
+		mocks.getUpdateData.mockResolvedValue({
+			updateAvailable: true,
+			updateSource: "official",
+			latestVersion: "v2.0.0",
+			latestOfficialVersion: "v2.0.0",
+		});
+	});
+
+	const startHostUpdate = () =>
+		createCaller().updateHostStack({ components: ["redis"] });
+
+	const runToCompletion = (
+		stream: Awaited<ReturnType<typeof startHostUpdate>>,
+	) =>
+		new Promise<void>((resolve, reject) => {
+			stream.subscribe({
+				next: () => {},
+				error: reject,
+				complete: () => resolve(),
+			});
+		});
+
+	const holdAudit = () => {
+		let recorded = () => {};
+		mocks.audit.mockReturnValueOnce(
+			new Promise<void>((resolve) => {
+				recorded = resolve;
+			}),
+		);
+		return () => recorded();
+	};
+
+	it("admits one host-stack update while another is still being recorded", async () => {
+		const recorded = holdAudit();
+		const first = startHostUpdate();
+		const second = startHostUpdate();
+
+		await expect(second).rejects.toMatchObject({ code: "CONFLICT" });
+		recorded();
+		await runToCompletion(await first);
+		await runToCompletion(await startHostUpdate());
+	});
+
+	it("frees the lock when recording the update fails", async () => {
+		mocks.audit.mockRejectedValueOnce(new Error("audit store is down"));
+
+		await expect(startHostUpdate()).rejects.toThrow("audit store is down");
+		await runToCompletion(await startHostUpdate());
+	});
+
+	it("keeps a panel update out while a host-stack update holds the lock", async () => {
+		const recorded = holdAudit();
+		const hostUpdate = startHostUpdate();
+		await vi.waitFor(() => expect(mocks.audit).toHaveBeenCalledTimes(1));
+
+		await expect(createCaller().updateServer()).rejects.toMatchObject({
+			code: "CONFLICT",
+		});
+		expect(mocks.startServerUpdate).not.toHaveBeenCalled();
+
+		recorded();
+		await runToCompletion(await hostUpdate);
+	});
+
+	it("starts a panel update when no host-stack update is running", async () => {
+		await expect(createCaller().updateServer()).resolves.toBe(true);
+		expect(mocks.startServerUpdate).toHaveBeenCalledTimes(1);
 	});
 });
