@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
 
 const repoRoot = path.resolve(
@@ -25,6 +25,10 @@ const installerScript = path.join(repoRoot, "install-agenthits.sh");
 const powershellScript = path.join(repoRoot, "install-agenthits.ps1");
 
 const SPAWN_TEST_TIMEOUT_MS = 60_000;
+
+// The update tests run the installer, which waits for Traefik for several seconds.
+// The default limit of 5 seconds fails on a loaded CI runner.
+vi.setConfig({ testTimeout: SPAWN_TEST_TIMEOUT_MS });
 
 const realPath = (command: string) =>
 	spawnSync("sh", ["-c", `command -v ${command}`], {
